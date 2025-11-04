@@ -10,6 +10,7 @@ import random
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -17,6 +18,7 @@ import can
 import cantools
 from cantools.database import errors as cantools_errors
 import yaml
+import pyqtgraph as pg
 from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
@@ -45,11 +47,14 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTextBrowser,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QMenu,
+    QAction,
 )
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -294,6 +299,79 @@ CHANNEL_SCHEMA = {
         "write": [],
         "status": [("value", "Value (mA)")],
     },
+}
+
+
+CHANNEL_PLOT_COMMAND_SEMANTICS = {
+    "HighSide": ("pwm", "setpoint", "state"),
+    "LowSide": ("pwm", "setpoint", "state"),
+    "HBridge": ("pwm", "enable", "select"),
+    "AO_0_10V": ("setpoint",),
+    "AO_4_20mA": ("setpoint",),
+    "DO": ("state", "enable"),
+    "DI": ("state",),
+    "AI_V": ("value",),
+    "AI_I": ("value",),
+}
+
+
+CHANNEL_PLOT_FEEDBACK_SEMANTICS = {
+    "HighSide": ("current", "pwm_feedback", "feedback", "value"),
+    "LowSide": ("current", "feedback", "value"),
+    "HBridge": ("current", "feedback", "value"),
+    "AO_0_10V": ("feedback", "value"),
+    "AO_4_20mA": ("feedback", "value"),
+    "DO": ("feedback", "state"),
+    "DI": ("state",),
+    "AI_V": ("value",),
+    "AI_I": ("value",),
+}
+
+
+CHANNEL_SIM_FIELDS = {
+    "HighSide": [
+        ("tau", "Tau (s)", 0.05, 5.0, 0.05),
+        ("current_gain", "Current gain", 0.0, 50.0, 0.1),
+        ("noise", "Noise", 0.0, 5.0, 0.01),
+        ("overcurrent", "Overcurrent threshold", 0.0, 100.0, 0.1),
+    ],
+    "LowSide": [
+        ("tau", "Tau (s)", 0.05, 5.0, 0.05),
+        ("current_gain", "Current gain", 0.0, 50.0, 0.1),
+        ("noise", "Noise", 0.0, 5.0, 0.01),
+    ],
+    "HBridge": [
+        ("tau", "Tau (s)", 0.05, 5.0, 0.05),
+        ("current_gain", "Current gain", 0.0, 50.0, 0.1),
+        ("noise", "Noise", 0.0, 5.0, 0.01),
+    ],
+    "AO_0_10V": [
+        ("tau", "Tau (s)", 0.01, 5.0, 0.01),
+        ("noise", "Noise", 0.0, 1.0, 0.01),
+        ("target", "Default target", -100.0, 100.0, 0.1),
+    ],
+    "AO_4_20mA": [
+        ("tau", "Tau (s)", 0.01, 5.0, 0.01),
+        ("noise", "Noise", 0.0, 1.0, 0.01),
+        ("target", "Default target", 0.0, 40.0, 0.1),
+    ],
+    "DO": [
+        ("noise", "Noise", 0.0, 1.0, 0.01),
+        ("pattern_period", "Pattern period (s)", 0.1, 10.0, 0.1),
+        ("pattern_duty", "Pattern duty", 0.0, 1.0, 0.05),
+    ],
+    "DI": [
+        ("pattern_period", "Pattern period (s)", 0.1, 10.0, 0.1),
+        ("pattern_duty", "Pattern duty", 0.0, 1.0, 0.05),
+    ],
+    "AI_V": [
+        ("noise", "Noise", 0.0, 5.0, 0.01),
+        ("slope", "Slope", -10.0, 10.0, 0.1),
+    ],
+    "AI_I": [
+        ("noise", "Noise", 0.0, 5.0, 0.01),
+        ("slope", "Slope", -10.0, 10.0, 0.1),
+    ],
 }
 
 
@@ -684,11 +762,34 @@ class DummyBackend(BackendBase):
         elif channel_type in {"AO_0_10V", "AO_4_20mA"}:
             tau = float(sim_params.get("tau", 0.2))
             noise = float(sim_params.get("noise", 0.02))
-            runtime.current_value += (runtime.setpoint - runtime.current_value) * min(dt / max(tau, 1e-3), 1.0)
+            if "setpoint" in runtime.last_command:
+                target = runtime.setpoint
+            else:
+                target = float(sim_params.get("target", runtime.current_value))
+            runtime.current_value += (target - runtime.current_value) * min(dt / max(tau, 1e-3), 1.0)
             runtime.current_value += random.uniform(-noise, noise)
             runtime.status_cache["feedback"] = runtime.current_value
-        elif channel_type in {"DO", "DI"}:
-            runtime.status_cache["state"] = 1.0 if runtime.enabled else 0.0
+        elif channel_type == "DO":
+            noise = float(sim_params.get("noise", 0.0))
+            period = float(sim_params.get("pattern_period", 1.0))
+            duty = float(sim_params.get("pattern_duty", 0.5))
+            if runtime.enabled:
+                value = 1.0
+            elif period > 0:
+                phase = (self._time % period) / max(period, 1e-6)
+                value = 1.0 if phase < duty else 0.0
+            else:
+                value = 0.0
+            value += random.uniform(-noise, noise)
+            runtime.status_cache["feedback"] = max(0.0, min(1.0, value))
+        elif channel_type == "DI":
+            period = float(sim_params.get("pattern_period", 1.0))
+            duty = float(sim_params.get("pattern_duty", 0.5))
+            if period > 0:
+                phase = (self._time % period) / max(period, 1e-6)
+                runtime.status_cache["state"] = 1.0 if phase < duty else 0.0
+            else:
+                runtime.status_cache["state"] = 0.0
         elif channel_type in {"AI_V", "AI_I"}:
             pass
 
@@ -920,10 +1021,13 @@ class Logger:
 
 class SignalBrowserWidget(QWidget):
     add_requested = pyqtSignal(list)
+    plot_requested = pyqtSignal(list)
+    simulate_requested = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
         self._signals: Dict[str, List[SignalDefinition]] = {}
+        self._allow_simulation = False
         layout = QVBoxLayout(self)
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("Search:"))
@@ -936,6 +1040,8 @@ class SignalBrowserWidget(QWidget):
         self.tree.setHeaderLabels(["Signal", "Unit", "Min", "Max", "Scaling"])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.itemDoubleClicked.connect(self._on_double_clicked)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self.tree)
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
@@ -1012,18 +1118,41 @@ class SignalBrowserWidget(QWidget):
             definition: SignalDefinition = data[1]
             self.add_requested.emit([definition.name])
 
+    def _on_context_menu(self, position) -> None:
+        item = self.tree.itemAt(position)
+        if not item:
+            return
+        data = item.data(0, Qt.UserRole)
+        if not isinstance(data, tuple) or data[0] != "signal":
+            return
+        definition: SignalDefinition = data[1]
+        menu = QMenu(self)
+        plot_action = QAction("→ Plot", self)
+        plot_action.triggered.connect(lambda: self.plot_requested.emit([definition.name]))
+        menu.addAction(plot_action)
+        if self._allow_simulation:
+            sim_action = QAction("→ Simulate…", self)
+            sim_action.triggered.connect(lambda: self.simulate_requested.emit(definition.name))
+            menu.addAction(sim_action)
+        menu.exec_(self.tree.viewport().mapToGlobal(position))
+
+    def set_allow_simulation(self, enabled: bool) -> None:
+        self._allow_simulation = enabled
+
 
 class WatchlistWidget(QWidget):
     remove_requested = pyqtSignal(list)
+    plot_toggled = pyqtSignal(str, bool)
 
     def __init__(self) -> None:
         super().__init__()
         self._order: List[str] = []
         self._units: Dict[str, str] = {}
         self._last_update: Dict[str, datetime.datetime] = {}
+        self._plot_checkboxes: Dict[str, QCheckBox] = {}
         layout = QVBoxLayout(self)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update"])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         header = self.table.horizontalHeader()
@@ -1032,6 +1161,7 @@ class WatchlistWidget(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         layout.addWidget(self.table)
         button_layout = QHBoxLayout()
         remove_button = QPushButton("Remove Selected")
@@ -1057,9 +1187,18 @@ class WatchlistWidget(QWidget):
             self._update_cell(row, 1, "0.0000")
             self._update_cell(row, 2, self._units.get(name, ""))
             self._update_cell(row, 3, "-")
+            checkbox = QCheckBox()
+            checkbox.stateChanged.connect(lambda state, signal=name: self._on_plot_toggle(signal, state))
+            self.table.setCellWidget(row, 4, checkbox)
+            self._plot_checkboxes[name] = checkbox
             self._order.append(name)
             added.append(name)
         return added
+
+    def set_plot_enabled(self, name: str, enabled: bool) -> None:
+        checkbox = self._plot_checkboxes.get(name)
+        if checkbox:
+            checkbox.setChecked(enabled)
 
     def remove_signals(self, names: Iterable[str]) -> None:
         to_remove = {name for name in names}
@@ -1068,6 +1207,9 @@ class WatchlistWidget(QWidget):
             name = self._order.pop(row)
             self.table.removeRow(row)
             self._last_update.pop(name, None)
+            checkbox = self._plot_checkboxes.pop(name, None)
+            if checkbox:
+                checkbox.deleteLater()
 
     def update_values(self, values: Dict[str, float]) -> None:
         now = datetime.datetime.now()
@@ -1096,9 +1238,104 @@ class WatchlistWidget(QWidget):
         if names:
             self.remove_requested.emit(names)
 
+    def _on_plot_toggle(self, name: str, state: int) -> None:
+        self.plot_toggled.emit(name, state == Qt.Checked)
+
     @property
     def signal_names(self) -> List[str]:
         return list(self._order)
+
+    @property
+    def plot_signal_names(self) -> List[str]:
+        return [name for name, checkbox in self._plot_checkboxes.items() if checkbox.isChecked()]
+
+
+class SignalSimulationDialog(QDialog):
+    def __init__(self, config: SignalSimulationConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Simulate – {config.name}")
+        self._config = config.clone()
+        self.result_profile: Optional[SignalSimulationConfig] = None
+        layout = QVBoxLayout(self)
+        self.form = QFormLayout()
+        layout.addLayout(self.form)
+        if self._config.category == "analog":
+            self._build_analog_controls()
+        else:
+            self._build_digital_controls()
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _build_analog_controls(self) -> None:
+        profile = self._config.analog or AnalogSimulationProfile()
+        self._config.analog = profile
+        self.analog_generator = QComboBox()
+        self.analog_generator.addItems(["hold", "sine", "ramp", "noise"])
+        self.analog_generator.setCurrentText(profile.generator)
+        self.form.addRow("Generator", self.analog_generator)
+        self.analog_offset = self._spin_box(profile.offset, -1_000_000.0, 1_000_000.0, 0.1)
+        self.form.addRow("Offset", self.analog_offset)
+        self.analog_amplitude = self._spin_box(profile.amplitude, 0.0, 1_000_000.0, 0.1)
+        self.form.addRow("Amplitude", self.analog_amplitude)
+        self.analog_frequency = self._spin_box(profile.frequency, 0.0, 10.0, 0.01)
+        self.form.addRow("Frequency", self.analog_frequency)
+        self.analog_slope = self._spin_box(profile.slope, -1_000.0, 1_000.0, 0.1)
+        self.form.addRow("Slope", self.analog_slope)
+        self.analog_noise = self._spin_box(profile.noise, 0.0, 1_000_000.0, 0.1)
+        self.form.addRow("Noise", self.analog_noise)
+        self.analog_hold = self._spin_box(profile.hold_value, -1_000_000.0, 1_000_000.0, 0.1)
+        self.form.addRow("Hold value", self.analog_hold)
+        self.analog_phase = self._spin_box(profile.phase, -math.pi, math.pi, 0.01)
+        self.form.addRow("Phase", self.analog_phase)
+
+    def _build_digital_controls(self) -> None:
+        profile = self._config.digital or DigitalSimulationProfile()
+        self._config.digital = profile
+        self.digital_mode = QComboBox()
+        self.digital_mode.addItems(["pattern", "manual"])
+        self.digital_mode.setCurrentText(profile.mode)
+        self.form.addRow("Mode", self.digital_mode)
+        self.digital_period = self._spin_box(profile.period, 0.01, 100.0, 0.01)
+        self.form.addRow("Period (s)", self.digital_period)
+        self.digital_duty = self._spin_box(profile.duty_cycle, 0.0, 1.0, 0.01)
+        self.form.addRow("Duty", self.digital_duty)
+        self.digital_high = self._spin_box(profile.high_value, -1_000_000.0, 1_000_000.0, 0.1)
+        self.form.addRow("High value", self.digital_high)
+        self.digital_low = self._spin_box(profile.low_value, -1_000_000.0, 1_000_000.0, 0.1)
+        self.form.addRow("Low value", self.digital_low)
+        self.digital_manual = self._spin_box(profile.manual_value, -1_000_000.0, 1_000_000.0, 0.1)
+        self.form.addRow("Manual value", self.digital_manual)
+
+    def _spin_box(self, value: float, minimum: float, maximum: float, step: float) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setDecimals(4)
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(step)
+        spin.setValue(value)
+        return spin
+
+    def _accept(self) -> None:
+        updated = self._config.clone()
+        if updated.category == "analog" and updated.analog:
+            updated.analog.generator = self.analog_generator.currentText()
+            updated.analog.offset = float(self.analog_offset.value())
+            updated.analog.amplitude = float(self.analog_amplitude.value())
+            updated.analog.frequency = float(self.analog_frequency.value())
+            updated.analog.slope = float(self.analog_slope.value())
+            updated.analog.noise = float(self.analog_noise.value())
+            updated.analog.hold_value = float(self.analog_hold.value())
+            updated.analog.phase = float(self.analog_phase.value())
+        elif updated.category == "digital" and updated.digital:
+            updated.digital.mode = self.digital_mode.currentText()
+            updated.digital.period = float(self.digital_period.value())
+            updated.digital.duty_cycle = float(self.digital_duty.value())
+            updated.digital.high_value = float(self.digital_high.value())
+            updated.digital.low_value = float(self.digital_low.value())
+            updated.digital.manual_value = float(self.digital_manual.value())
+        self.result_profile = updated
+        self.accept()
 
 class DummySimulationWidget(QGroupBox):
     profile_changed = pyqtSignal(object)
@@ -1334,6 +1571,8 @@ class DummySimulationWidget(QGroupBox):
 class ChannelCardWidget(QGroupBox):
     command_requested = pyqtSignal(str, dict)
     sequencer_requested = pyqtSignal(str, bool, float, float, float)
+    plot_visibility_changed = pyqtSignal(str, bool)
+    simulation_changed = pyqtSignal(str, dict)
 
     def __init__(self, profile: ChannelProfile) -> None:
         super().__init__(profile.name)
@@ -1348,11 +1587,12 @@ class ChannelCardWidget(QGroupBox):
         self.setpoint_spin = QDoubleSpinBox()
         self.setpoint_spin.setDecimals(2)
         self.setpoint_spin.setRange(-1_000.0, 1_000.0)
-        self.quick_zero = QPushButton("Set 0")
-        self.quick_mid = QPushButton("Set 50%")
-        self.quick_max = QPushButton("Set 100%")
+        self.quick_off = QPushButton("OFF")
+        self.quick_low = QPushButton("20 %")
+        self.quick_mid = QPushButton("50 %")
+        self.quick_max = QPushButton("100 %")
         self.apply_button = QPushButton("Apply")
-        self.off_button = QPushButton("Off")
+        self.off_button = QPushButton("All OFF")
         self.sequence_on = QDoubleSpinBox()
         self.sequence_on.setRange(0.1, 3600.0)
         self.sequence_on.setValue(5.0)
@@ -1368,6 +1608,20 @@ class ChannelCardWidget(QGroupBox):
         self.sequence_status = QLabel("Sequence idle")
         self.values_view = QTextBrowser()
         self.values_view.setFixedHeight(90)
+        self.plot_checkbox = QCheckBox("Show plot")
+        self.sim_button = QToolButton()
+        self.sim_button.setText("⚙ Sim")
+        self.sim_button.clicked.connect(self._open_sim_dialog)
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setMinimumHeight(140)
+        self.plot_widget.showGrid(x=True, y=True)
+        self.plot_widget.addLegend()
+        self.plot_widget.hide()
+        self.command_curve = self.plot_widget.plot(name="Command", pen=pg.mkPen(QColor("orange"), width=2))
+        self.feedback_curve = self.plot_widget.plot(name="Feedback", pen=pg.mkPen(QColor("steelblue"), width=2))
+        self._plot_times: deque[float] = deque(maxlen=1_200)
+        self._plot_command: deque[float] = deque(maxlen=1_200)
+        self._plot_feedback: deque[float] = deque(maxlen=1_200)
         self._build_layout()
         self._connect_signals()
         self._update_visibility()
@@ -1378,6 +1632,7 @@ class ChannelCardWidget(QGroupBox):
         control_layout = QGridLayout()
         row = 0
         control_layout.addWidget(self.enabled_checkbox, row, 0, 1, 2)
+        control_layout.addWidget(self.plot_checkbox, row, 2)
         row += 1
         control_layout.addWidget(QLabel("PWM"), row, 0)
         control_layout.addWidget(self.pwm_slider, row, 1)
@@ -1390,14 +1645,18 @@ class ChannelCardWidget(QGroupBox):
         control_layout.addWidget(self.setpoint_spin, row, 1)
         row += 1
         buttons_layout = QHBoxLayout()
-        buttons_layout.addWidget(self.quick_zero)
+        buttons_layout.addWidget(self.quick_off)
+        buttons_layout.addWidget(self.quick_low)
         buttons_layout.addWidget(self.quick_mid)
         buttons_layout.addWidget(self.quick_max)
+        buttons_layout.addStretch(1)
         control_layout.addLayout(buttons_layout, row, 0, 1, 3)
         row += 1
         action_layout = QHBoxLayout()
         action_layout.addWidget(self.apply_button)
         action_layout.addWidget(self.off_button)
+        action_layout.addStretch(1)
+        action_layout.addWidget(self.sim_button)
         control_layout.addLayout(action_layout, row, 0, 1, 3)
         layout.addLayout(control_layout)
         sequencer_group = QGroupBox("Sequencer")
@@ -1415,16 +1674,19 @@ class ChannelCardWidget(QGroupBox):
         layout.addWidget(sequencer_group)
         layout.addWidget(QLabel("Status signals"))
         layout.addWidget(self.values_view)
+        layout.addWidget(self.plot_widget)
 
     def _connect_signals(self) -> None:
         self.pwm_slider.valueChanged.connect(lambda value: self.pwm_value.setText(f"{value} %"))
         self.apply_button.clicked.connect(self._emit_command)
         self.off_button.clicked.connect(self._emit_off)
-        self.quick_zero.clicked.connect(lambda: self._set_pwm_slider(0))
+        self.quick_off.clicked.connect(self._emit_off)
+        self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
         self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
         self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
         self.sequence_start.clicked.connect(self._start_sequence)
         self.sequence_stop.clicked.connect(self._stop_sequence)
+        self.plot_checkbox.toggled.connect(lambda checked: self._on_plot_toggled(checked))
 
     def _set_pwm_slider(self, value: int) -> None:
         self.pwm_slider.setValue(value)
@@ -1484,10 +1746,11 @@ class ChannelCardWidget(QGroupBox):
         self.pwm_value.setVisible(is_pwm)
         self.direction_combo.setVisible(is_direction)
         self.setpoint_spin.setVisible(is_setpoint)
-        self.quick_zero.setVisible(is_pwm or is_setpoint)
+        self.quick_low.setVisible(is_pwm)
         self.quick_mid.setVisible(is_pwm)
         self.quick_max.setVisible(is_pwm)
-        self.enabled_checkbox.setVisible(is_toggle)
+        self.quick_off.setVisible(is_pwm or is_setpoint or channel_type == "DO")
+        self.enabled_checkbox.setVisible(is_toggle or channel_type == "DO")
 
     def update_status(self, status: Dict[str, float]) -> None:
         lines = [f"{key}: {value:.4f}" for key, value in sorted(status.items())]
@@ -1500,6 +1763,86 @@ class ChannelCardWidget(QGroupBox):
         self.sequence_status.setText(text)
         self.sequence_start.setEnabled(not running)
         self.sequence_stop.setEnabled(running)
+
+    def set_dummy_mode(self, enabled: bool) -> None:
+        self.sim_button.setVisible(enabled)
+
+    def set_plot_checked(self, checked: bool) -> None:
+        self.plot_checkbox.setChecked(checked)
+
+    def plot_checked(self) -> bool:
+        return self.plot_checkbox.isChecked()
+
+    def record_sample(self, timestamp: float, command_value: Optional[float], feedback_value: Optional[float]) -> None:
+        if command_value is None and feedback_value is None:
+            return
+        if command_value is None:
+            command_value = 0.0
+        if feedback_value is None:
+            feedback_value = 0.0
+        self._plot_times.append(timestamp)
+        self._plot_command.append(float(command_value))
+        self._plot_feedback.append(float(feedback_value))
+        if not self.plot_checkbox.isChecked():
+            return
+        if not self._plot_times:
+            return
+        base_time = self._plot_times[0]
+        times = [value - base_time for value in self._plot_times]
+        self.command_curve.setData(times, list(self._plot_command))
+        self.feedback_curve.setData(times, list(self._plot_feedback))
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+    def reset_plot(self) -> None:
+        self._plot_times.clear()
+        self._plot_command.clear()
+        self._plot_feedback.clear()
+        self.command_curve.clear()
+        self.feedback_curve.clear()
+
+    def _on_plot_toggled(self, checked: bool) -> None:
+        self.plot_widget.setVisible(checked)
+        if not checked:
+            self.reset_plot()
+        self.plot_visibility_changed.emit(self.profile.name, checked)
+
+    def _open_sim_dialog(self) -> None:
+        dialog = ChannelSimulationDialog(self.profile, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            updated = dialog.result_parameters
+            if updated is not None:
+                self.profile.sim.update(updated)
+                self.simulation_changed.emit(self.profile.name, dict(self.profile.sim))
+
+
+class ChannelSimulationDialog(QDialog):
+    def __init__(self, profile: ChannelProfile, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Simulation – {profile.name}")
+        self.profile = profile
+        self.result_parameters: Optional[Dict[str, float]] = None
+        self._spins: Dict[str, QDoubleSpinBox] = {}
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        for key, label, minimum, maximum, step in CHANNEL_SIM_FIELDS.get(profile.type, []):
+            spin = QDoubleSpinBox()
+            spin.setDecimals(3)
+            spin.setRange(minimum, maximum)
+            spin.setSingleStep(step)
+            spin.setValue(float(profile.sim.get(key, 0.0)))
+            form.addRow(label, spin)
+            self._spins[key] = spin
+        if not self._spins:
+            form.addRow(QLabel("No simulation parameters defined for this channel type."))
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept(self) -> None:
+        self.result_parameters = {key: float(spin.value()) for key, spin in self._spins.items()}
+        self.accept()
 
 class ChannelBuilderDialog(QDialog):
     def __init__(self, database, profile: Optional[ChannelProfile] = None, parent: Optional[QWidget] = None) -> None:
@@ -1732,12 +2075,20 @@ class MainWindow(QMainWindow):
         self._channel_profiles: Dict[str, ChannelProfile] = {}
         self._channel_cards: Dict[str, ChannelCardWidget] = {}
         self._channel_status: Dict[str, Dict[str, float]] = {}
+        self._channel_commands: Dict[str, Dict[str, float]] = {}
         self._sequencers: Dict[str, SequencerState] = {}
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
         self._manual_log_signals: List[str] = []
         self._pending_watchlist: List[str] = []
+        self._pending_plot_signals: List[str] = []
+        self._channel_plot_settings: Dict[str, bool] = {}
+        self._multi_plot_buffers: Dict[str, deque[Tuple[float, float]]] = {}
+        self._multi_plot_curves: Dict[str, pg.PlotDataItem] = {}
+        self._multi_plot_paused = False
+        self._show_dummy_advanced = False
+        self._multi_plot_enabled = False
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -1816,6 +2167,10 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.emergency_button)
         action_layout.addStretch(1)
         layout.addLayout(action_layout)
+        self.show_dummy_checkbox = QCheckBox("Show Dummy Advanced tab")
+        self.show_dummy_checkbox.setChecked(self._show_dummy_advanced)
+        self.show_dummy_checkbox.stateChanged.connect(self._on_show_dummy_tab_changed)
+        layout.addWidget(self.show_dummy_checkbox)
         layout.addStretch(1)
         self.tab_widget.addTab(widget, "Dashboard")
 
@@ -1851,9 +2206,34 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(widget)
         self.signal_browser = SignalBrowserWidget()
         self.watchlist_widget = WatchlistWidget()
+        self.watchlist_widget.plot_toggled.connect(self._on_watchlist_plot_toggled)
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(self.watchlist_widget)
+        controls_layout = QHBoxLayout()
+        self.multi_plot_enable = QCheckBox("Enable multi-plot")
+        self.multi_plot_enable.setChecked(self._multi_plot_enabled)
+        self.multi_plot_enable.stateChanged.connect(self._on_multi_plot_enable_changed)
+        self.multi_plot_pause = QPushButton("Pause Plot" if not self._multi_plot_paused else "Resume Plot")
+        self.multi_plot_pause.clicked.connect(self._toggle_multi_plot_pause)
+        self.multi_plot_save = QPushButton("Save PNG")
+        self.multi_plot_save.clicked.connect(self._save_multi_plot_png)
+        controls_layout.addWidget(self.multi_plot_enable)
+        controls_layout.addWidget(self.multi_plot_pause)
+        controls_layout.addWidget(self.multi_plot_save)
+        controls_layout.addStretch(1)
+        right_layout.addLayout(controls_layout)
+        self.multi_plot_widget = pg.PlotWidget()
+        self.multi_plot_widget.setMinimumHeight(220)
+        self.multi_plot_widget.addLegend()
+        self.multi_plot_widget.showGrid(x=True, y=True)
+        if not self._multi_plot_enabled:
+            self.multi_plot_widget.hide()
+        right_layout.addWidget(self.multi_plot_widget, 1)
         layout.addWidget(self.signal_browser, 2)
-        layout.addWidget(self.watchlist_widget, 3)
+        layout.addLayout(right_layout, 3)
         self.signal_browser.add_requested.connect(self._on_add_to_watchlist)
+        self.signal_browser.plot_requested.connect(self._on_plot_requested)
+        self.signal_browser.simulate_requested.connect(self._on_signal_simulate)
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
         self.tab_widget.addTab(widget, "Signals")
 
@@ -1863,7 +2243,7 @@ class MainWindow(QMainWindow):
         self.simulation_widget = DummySimulationWidget()
         self.simulation_widget.profile_changed.connect(self._apply_simulation_profile)
         layout.addWidget(self.simulation_widget)
-        self.tab_widget.addTab(self.dummy_tab, "Dummy Sim")
+        self.tab_widget.addTab(self.dummy_tab, "Dummy Advanced")
 
     def _build_logging_tab(self) -> None:
         widget = QWidget()
@@ -1918,6 +2298,8 @@ class MainWindow(QMainWindow):
             self.backend.set_channel_profiles(self._channel_profiles)
             self.simulation_widget.set_profiles(self.backend.simulation_profiles())
         self._update_status_indicator(False)
+        self._update_channel_card_modes()
+        self.signal_browser.set_allow_simulation(isinstance(self.backend, DummyBackend))
 
     def _apply_backend_configuration(self) -> None:
         if isinstance(self.backend, RealBackend):
@@ -1998,20 +2380,50 @@ class MainWindow(QMainWindow):
             card = ChannelCardWidget(profile)
             card.command_requested.connect(self._on_channel_command)
             card.sequencer_requested.connect(self._on_sequencer_request)
+            card.plot_visibility_changed.connect(self._on_channel_plot_visibility)
+            card.simulation_changed.connect(self._on_channel_simulation)
             self.channel_layout.addWidget(card)
             self._channel_cards[name] = card
             self._sequencers.setdefault(name, SequencerState())
+            card.set_plot_checked(self._channel_plot_settings.get(name, False))
+        self._update_channel_card_modes()
         self.channel_layout.addStretch(1)
         self.channel_selector.clear()
         self.channel_selector.addItems(sorted(self._channel_profiles))
 
+    def _update_channel_card_modes(self) -> None:
+        is_dummy = isinstance(self.backend, DummyBackend)
+        for name, card in self._channel_cards.items():
+            card.set_dummy_mode(is_dummy)
+            if name not in self._channel_plot_settings:
+                self._channel_plot_settings[name] = card.plot_checked()
+
     def _on_channel_command(self, channel: str, command: Dict[str, float]) -> None:
         if not self.backend:
             return
+        self._channel_commands[channel] = {key: float(value) for key, value in command.items()}
         try:
             self.backend.apply_channel_command(channel, command)
         except BackendError as exc:
             self._show_error(str(exc))
+
+    def _on_channel_plot_visibility(self, name: str, checked: bool) -> None:
+        self._channel_plot_settings[name] = checked
+        if not checked:
+            card = self._channel_cards.get(name)
+            if card:
+                card.reset_plot()
+        self._save_settings()
+
+    def _on_channel_simulation(self, name: str, parameters: Dict[str, float]) -> None:
+        profile = self._channel_profiles.get(name)
+        if not profile:
+            return
+        profile.sim.update(parameters)
+        save_channel_profiles(list(self._channel_profiles.values()))
+        if isinstance(self.backend, DummyBackend):
+            self.backend.set_channel_profiles(self._channel_profiles)
+        self._save_settings()
 
     def _add_channel(self) -> None:
         dialog = ChannelBuilderDialog(self._dbc, parent=self)
@@ -2078,12 +2490,83 @@ class MainWindow(QMainWindow):
         for name in added:
             if name not in self._pending_watchlist:
                 self._pending_watchlist.append(name)
+            if self.multi_plot_enable.isChecked():
+                self.watchlist_widget.set_plot_enabled(name, True)
         self._save_settings()
 
     def _on_remove_from_watchlist(self, names: List[str]) -> None:
         self.watchlist_widget.remove_signals(names)
         self._pending_watchlist = [name for name in self._pending_watchlist if name not in names]
         self._save_settings()
+
+    def _apply_watchlist_plot_settings(self) -> None:
+        if not self._pending_plot_signals:
+            return
+        for name in self.watchlist_widget.signal_names:
+            self.watchlist_widget.set_plot_enabled(name, name in self._pending_plot_signals)
+        self._pending_plot_signals = []
+
+    def _on_watchlist_plot_toggled(self, name: str, enabled: bool) -> None:
+        if enabled and not self.multi_plot_enable.isChecked():
+            # Allow selection but keep widget hidden until enabled by user.
+            pass
+        if not enabled:
+            self._multi_plot_buffers.pop(name, None)
+            curve = self._multi_plot_curves.pop(name, None)
+            if curve and getattr(self, "multi_plot_widget", None):
+                self.multi_plot_widget.removeItem(curve)
+        self._save_settings()
+
+    def _on_multi_plot_enable_changed(self, state: int) -> None:
+        self._multi_plot_enabled = state == Qt.Checked
+        if self._multi_plot_enabled:
+            self.multi_plot_widget.show()
+        else:
+            self.multi_plot_widget.hide()
+            for curve in self._multi_plot_curves.values():
+                self.multi_plot_widget.removeItem(curve)
+            self._multi_plot_curves.clear()
+            self._multi_plot_buffers.clear()
+        self._save_settings()
+
+    def _toggle_multi_plot_pause(self) -> None:
+        self._multi_plot_paused = not self._multi_plot_paused
+        self.multi_plot_pause.setText("Resume Plot" if self._multi_plot_paused else "Pause Plot")
+        self._save_settings()
+
+    def _save_multi_plot_png(self) -> None:
+        if not getattr(self, "multi_plot_widget", None):
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save plot", os.path.join(BASE_DIR, "watchlist.png"), "PNG Files (*.png)")
+        if not path:
+            return
+        pixmap = self.multi_plot_widget.grab()
+        pixmap.save(path, "PNG")
+
+    def _on_plot_requested(self, names: List[str]) -> None:
+        self._on_add_to_watchlist(names)
+        for name in names:
+            self.watchlist_widget.set_plot_enabled(name, True)
+        if not self.multi_plot_enable.isChecked():
+            self.multi_plot_enable.setChecked(True)
+
+    def _on_signal_simulate(self, name: str) -> None:
+        if not isinstance(self.backend, DummyBackend):
+            self._show_error("Signal simulation is only available in Dummy mode.")
+            return
+        profiles = self.backend.simulation_profiles()
+        config = profiles.get(name)
+        if not config:
+            self._show_error(f"Signal {name} is not available for simulation")
+            return
+        dialog = SignalSimulationDialog(config, parent=self)
+        if dialog.exec_() == QDialog.Accepted and dialog.result_profile is not None:
+            try:
+                self.backend.update_simulation_profile(dialog.result_profile)
+            except BackendError as exc:
+                self._show_error(str(exc))
+                return
+            self.simulation_widget.set_profiles(self.backend.simulation_profiles())
 
     # Dummy simulation profiles
     def _apply_simulation_profile(self, profile: SignalSimulationConfig) -> None:
@@ -2175,6 +2658,7 @@ class MainWindow(QMainWindow):
         if self.logger.is_running():
             requested.update(self.logger.signal_names)
         values = self.backend.read_signal_values(requested)
+        timestamp = time.monotonic()
         for channel, profile in self._channel_profiles.items():
             status = {semantic: values.get(signal, 0.0) for semantic, signal in profile.status.fields.items()}
             self._channel_status[channel] = status
@@ -2182,9 +2666,13 @@ class MainWindow(QMainWindow):
             if card:
                 card.update_status(status)
                 card.update_state_label(f"Signals: {len(status)}")
+                command_value = self._extract_command_value(profile, self._channel_commands.get(channel, {}))
+                feedback_value = self._extract_feedback_value(profile, status)
+                card.record_sample(timestamp, command_value, feedback_value)
         watch_values = {name: values.get(name, 0.0) for name in self.watchlist_widget.signal_names}
         self.watchlist_widget.update_values(watch_values)
         self._pending_watchlist = self.watchlist_widget.signal_names
+        self._update_multi_plot(timestamp, watch_values)
 
     def _handle_logging(self, dt: float) -> None:
         if not self.logger.is_running():
@@ -2201,6 +2689,57 @@ class MainWindow(QMainWindow):
         values = self.backend.read_signal_values(signals)
         timestamp = datetime.datetime.now().isoformat()
         self.logger.log_row(timestamp, values)
+
+    def _extract_command_value(self, profile: ChannelProfile, command: Dict[str, float]) -> Optional[float]:
+        for semantic in CHANNEL_PLOT_COMMAND_SEMANTICS.get(profile.type, ()): 
+            if semantic in command:
+                return command[semantic]
+        return None
+
+    def _extract_feedback_value(self, profile: ChannelProfile, status: Dict[str, float]) -> Optional[float]:
+        for semantic in CHANNEL_PLOT_FEEDBACK_SEMANTICS.get(profile.type, ()): 
+            if semantic in status:
+                return status[semantic]
+        return None
+
+    def _update_multi_plot(self, timestamp: float, values: Dict[str, float]) -> None:
+        if not getattr(self, "multi_plot_widget", None):
+            return
+        if not self._multi_plot_enabled:
+            return
+        active = set(self.watchlist_widget.plot_signal_names)
+        for name in list(self._multi_plot_buffers.keys()):
+            if name not in active:
+                self._multi_plot_buffers.pop(name, None)
+                curve = self._multi_plot_curves.pop(name, None)
+                if curve:
+                    self.multi_plot_widget.removeItem(curve)
+        for name in active:
+            value = values.get(name)
+            if value is None:
+                continue
+            buffer = self._multi_plot_buffers.setdefault(name, deque(maxlen=1_200))
+            buffer.append((timestamp, float(value)))
+            if name not in self._multi_plot_curves:
+                pen = pg.intColor(len(self._multi_plot_curves))
+                curve = self.multi_plot_widget.plot(name=name, pen=pen)
+                self._multi_plot_curves[name] = curve
+        if self._multi_plot_paused:
+            return
+        if not self._multi_plot_buffers:
+            return
+        base_time = min((entries[0] for buffer in self._multi_plot_buffers.values() for entries in buffer), default=None)
+        if base_time is None:
+            return
+        for name, buffer in self._multi_plot_buffers.items():
+            if not buffer:
+                continue
+            times = [entry[0] - base_time for entry in buffer]
+            samples = [entry[1] for entry in buffer]
+            curve = self._multi_plot_curves.get(name)
+            if curve:
+                curve.setData(times, samples)
+        self.multi_plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     # Helpers
     def _update_status_indicator(self, connected: bool) -> None:
@@ -2252,6 +2791,7 @@ class MainWindow(QMainWindow):
         if self._pending_watchlist:
             self.watchlist_widget.add_signals(self._pending_watchlist)
             self._pending_watchlist = self.watchlist_widget.signal_names
+        self._apply_watchlist_plot_settings()
         if self.backend:
             self.backend.apply_database(database)
             self.backend.set_channel_profiles(self._channel_profiles)
@@ -2262,7 +2802,17 @@ class MainWindow(QMainWindow):
     def _update_dummy_tab_visibility(self) -> None:
         index = self.tab_widget.indexOf(self.dummy_tab)
         if index >= 0:
-            self.tab_widget.setTabEnabled(index, isinstance(self.backend, DummyBackend))
+            visible = isinstance(self.backend, DummyBackend) and self._show_dummy_advanced
+            if hasattr(self.tab_widget, "setTabVisible"):
+                self.tab_widget.setTabVisible(index, visible)
+            else:
+                self.tab_widget.setTabEnabled(index, visible)
+                self.dummy_tab.setVisible(visible)
+
+    def _on_show_dummy_tab_changed(self, state: int) -> None:
+        self._show_dummy_advanced = state == Qt.Checked
+        self._update_dummy_tab_visibility()
+        self._save_settings()
 
     # Settings persistence
     def _restore_settings(self) -> None:
@@ -2270,6 +2820,15 @@ class MainWindow(QMainWindow):
         watchlist = self._qt_settings.value("watchlist", [])
         if isinstance(watchlist, list):
             self._pending_watchlist = [str(name) for name in watchlist]
+        plot_signals = self._qt_settings.value("plot_signals", [])
+        if isinstance(plot_signals, list):
+            self._pending_plot_signals = [str(name) for name in plot_signals]
+        plots = self._qt_settings.value("channel_plots", {})
+        if isinstance(plots, dict):
+            self._channel_plot_settings = {str(key): bool(value) for key, value in plots.items()}
+        self._multi_plot_paused = bool(self._qt_settings.value("multi_plot_paused", False))
+        self._show_dummy_advanced = bool(self._qt_settings.value("show_dummy_tab", False))
+        self._multi_plot_enabled = bool(self._qt_settings.value("multi_plot_enabled", False))
 
     def _save_settings(self) -> None:
         self._qt_settings.setValue("mode", self.backend_name)
@@ -2278,8 +2837,15 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("channel", self.channel_edit.text())
         self._qt_settings.setValue("bitrate", int(self.bitrate_spin.value()))
         self._qt_settings.setValue("watchlist", self.watchlist_widget.signal_names)
+        self._qt_settings.setValue("plot_signals", self.watchlist_widget.plot_signal_names)
         self._qt_settings.setValue("log_rate", self.logging_rate_spin.value())
         self._qt_settings.setValue("log_path", self.logging_path_edit.text())
+        self._qt_settings.setValue("channel_plots", self._channel_plot_settings)
+        self._qt_settings.setValue("multi_plot_paused", self._multi_plot_paused)
+        if hasattr(self, "show_dummy_checkbox"):
+            self._qt_settings.setValue("show_dummy_tab", self.show_dummy_checkbox.isChecked())
+        if hasattr(self, "multi_plot_enable"):
+            self._qt_settings.setValue("multi_plot_enabled", self.multi_plot_enable.isChecked())
 
     def closeEvent(self, event) -> None:
         self._save_settings()

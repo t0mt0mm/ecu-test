@@ -22,7 +22,7 @@ The main window is organised into tabs so you can reach common tasks without scr
 | **Dashboard** | Select Dummy or Real mode, choose the DBC, configure bus parameters (bustype/channel/bitrate), and issue connection or emergency-stop actions. A coloured status indicator (green/yellow/red) shows the current connection state. |
 | **Channels** | Displays channel cards generated from `profiles/channels.yaml`. Each card adapts to its channel type (HighSide, HBridge, analog output, digital I/O, etc.), exposes quick actions, and integrates a sequencer (ON seconds, OFF seconds, duration). |
 | **Signals** | Combines the DBC-driven browser and the watchlist. Double-click or select and press “Add to Watchlist” to monitor any signal. The watchlist table shows value, unit, and last update timestamp. |
-| **Dummy Sim** | Available in Dummy mode only. Presents the full signal simulation tree so you can tweak analog (hold, sine, ramp, noise) and digital (pattern/manual) generators that back the dummy telemetry. |
+| **Dummy Advanced** | Available in Dummy mode only (toggle via Dashboard). Presents the full signal simulation tree so you can tweak analog (hold, sine, ramp, noise) and digital (pattern/manual) generators that back the dummy telemetry. |
 | **Logging** | Configure CSV capture: select whether to log the watchlist or a manual list of signals, set the rate (1–50 Hz), choose the output path, and start/stop logging. CSV files contain ISO timestamps and the selected signals as columns. |
 
 ## Channel Profiles
@@ -63,7 +63,12 @@ The **Channels** tab offers an editor dialog (“Add Channel” / “Edit Channe
 - Connection errors or decoding issues surface through dialogs and the status bar instead of terminating the application.
 
 ## Signal Browser & Watchlist
-All signals from the active DBC are shown in the browser. Search filters both message names and signal metadata. Double-clicking a signal adds it to the watchlist. Watchlist entries refresh at 10 Hz and include the unit and the timestamp of the most recent update. Selected watchlist signals can be logged directly from the Logging tab.
+All signals from the active DBC are shown in the browser. Search filters both message names and signal metadata. Double-clicking a signal adds it to the watchlist. The context menu offers **→ Plot** (adds the signal to the multi-plot) and, in Dummy mode, **→ Simulate…** for a compact signal generator dialog. Watchlist entries refresh at 10 Hz, show unit and last-update timestamps, and expose a per-row “Plot” checkbox that feeds the multi-plot panel. Selected watchlist signals can be logged directly from the Logging tab.
+
+## Plots & Simulation in Channel Cards
+Each channel card now includes quick action buttons (OFF/20/50/100 %) and a **Show plot** toggle. When enabled, the card renders a 60-second ring buffer of the command and feedback values using pyqtgraph. The **⚙ Sim** button (visible in Dummy mode) opens a channel-specific dialog so you can adjust parameters such as time constants, noise levels, and gain; updates persist to `profiles/channels.yaml` and immediately influence the dummy physics.
+
+The Signals tab also features a shared multi-plot area. Check the global **Enable multi-plot** box to reveal it, toggle individual watchlist rows into the plot, and pause or resume rendering without interrupting data capture. Use **Save PNG** to export the current curves with ISO-formatted timestamps. Plot selections, pause state, and channel-level plot toggles are stored in `QSettings` so your layout is restored on the next launch.
 
 ## Sequencer
 Every channel card embeds its own sequencer. Provide ON seconds, OFF seconds, and total duration (minutes) and press **Start Sequence**. The backend receives deterministic commands at the UI tick rate while manual controls are locked. **Stop** halts immediately, and switching backends automatically stops all sequencers. Logging continues uninterrupted during sequencer operation.
@@ -72,7 +77,7 @@ Every channel card embeds its own sequencer. Provide ON seconds, OFF seconds, an
 Choose between logging the watchlist or a custom list of signal names. Logging writes ISO 8601 timestamps and the requested signals at the chosen frequency. File creation errors are reported through a dialog and the status bar. Stopping logging flushes and closes the file safely.
 
 ## Persistence
-`QSettings` stores the selected mode, DBC path, bus parameters, watchlist contents, logging rate/path, and window geometry so the UI restores your previous session. Channel profiles are stored separately in `profiles/channels.yaml` to simplify sharing and version control.
+`QSettings` stores the selected mode, DBC path, bus parameters, watchlist contents, plot selections (per-channel and multi-plot), logging rate/path, Dummy Advanced visibility, and window geometry so the UI restores your previous session. Channel profiles are stored separately in `profiles/channels.yaml` to simplify sharing and version control.
 
 ## Writable Signals
 The helper `is_signal_writable()` uses two checks before the Real backend transmits a value:
