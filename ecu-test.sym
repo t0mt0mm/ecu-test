@@ -1,0 +1,1005 @@
+FormatVersion=6.0 // Do not edit this line!
+Title="fccu-b-test"
+
+{ENUMS}
+Enum=fst_status(0="status_ok", 1="status_value_na", 2="status_error", 3="status_wire_break", 4="status_short_circuit", 5="status_timeout", 6="initialized", 7="override_active", 8="override_not_active", 9="over_range", 10="under_range", 11="status_disabled", 12="access_not_allowed", 13="no_calibration", 14="not_initialized", 15="short_to_battery")
+Enum=hs_outmode(0="hs_outmode_pwm", 1="hs_outmode_current_control")
+Enum=h_bridge_mode(0="h_bridge_mode_pwm", 1="h_bridge_mode_position_control")
+Enum=h_bridge_direction(0="h_bridge_direction_forward", 1="h_bridge_direction_reverse")
+Enum=h_bridge_current_limit(0="h_bridge_current_limit_1A5", 1="h_bridge_current_limit_4A0",2="h_bridge_current_limit_6A6", 3="h_bridge_current_limit_8A6")
+Enum=h_bridge_slew_rate(0="h_bridge_slew_rate_fast", 1="h_bridge_slew_rate_slow")
+Enum=h_bridge_sensor_curve_direction(0="h_bridge_sensor_curve_dir_rising", 1="h_bridge_sensor_curve_dir_falling")
+Enum=h_bridge_motor_polarity(0="h_bridge_motor_polarity_normal", 1="h_bridge_motor_polarity_inverted")
+Enum=an_input_mode(0="mode_none", 1="mode_pu_voltage", 2="mode_temperature", 3="mode_current", 4="mode_voltage_0_5V", 5="mode_voltage_0_10V", 6="mode_digital")
+Enum=analog_out_mode(0="output_dac_mode_none", 1="output_dac_mode_0_5V", 2="output_dac_mode_0_10V", 3="output_dac_mode_0_20mA", 4="output_dac_mode_4_20mA", 5="output_dac_mode_0_24mA")
+Enum=flex_input_mode(0="flex_in_mode_none", 1="flex_in_mode_dig_open_collector", 2="flex_in_mode_dig_push_pull", 3="flex_in_mode_frequency_open_collector", 4="flex_in_mode_frequency_push_pull")
+Enum=can_peripheral_mode(0="can_peripheral_disable", 1="can_peripheral_disable")
+Enum=can_baud_rate(0="500K/2M", 1="250K", 2="500K", 3="1M")
+Enum=can_peripheral_can_mapping(0="not_active", 1="active_can_3", 2="active_can_4", 3="active_can_5", 4="active_can_6")
+Enum=pierburg_pump_status(0="pierburg_pump_status_init", 1="pierburg_pump_status_selftest", 2="pierburg_pump_status_waiting_for_start", 3="pierburg_pump_status_error", 4="pierburg_pump_status_running", 5="pierburg_pump_status_heating", 6="pierburg_pump_status_wait_hv", 7="pierburg_pump_status_open_loop", 8="pierburg_pump_status_closed_loop", 9="pierburg_pump_status_deblock", 10="pierburg_pump_status_sna")
+
+Enum=output_ctrl(0="output_off", 1="output_on")
+
+
+
+{SENDRECEIVE}
+
+[QM_Board_Temp_status]
+ID=00000001h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=ch_01_address unsigned 0,8 -h // A0 low , A1 low,  A2 low
+Var=ch_02_address unsigned 8,8 -h // A0 high, A1 low,  A2 low
+Var=ch_03_address unsigned 16,8 -h // A0 low,  A1 high, A2 low
+Var=ch_04_address unsigned 24,8 -h // A0 high, A1 high, A2 low
+Var=ch_05_address unsigned 32,8 -h // A0 low,  A1 low,  A2 high
+Var=ch_06_address unsigned 40,8 -h // A0 high, A1 low,  A2 high
+Var=ch_07_address unsigned 48,8 -h // A0 low,  A1 high, A2 high
+Var=ch_08_address unsigned 56,8 -h // A0 high, A1 high, A2 high
+Var=ch_01_status fst_status 64,8
+Var=ch_02_status fst_status 72,8
+Var=ch_03_status fst_status 80,8
+Var=ch_04_status fst_status 88,8
+Var=ch_05_status fst_status 96,8
+Var=ch_06_status fst_status 104,8
+Var=ch_07_status fst_status 112,8
+Var=ch_08_status fst_status 120,8
+Var=ch_01_temp signed 128,16 /u:deg /f:0.1
+Var=ch_02_temp signed 144,16 /u:deg /f:0.1
+Var=ch_03_temp signed 160,16 /u:deg /f:0.1
+Var=ch_04_temp signed 176,16 /u:deg /f:0.1
+Var=ch_05_temp signed 192,16 /u:deg /f:0.1
+Var=ch_06_temp signed 208,16 /u:deg /f:0.1
+Var=ch_07_temp signed 224,16 /u:deg /f:0.1
+Var=ch_08_temp signed 240,16 /u:deg /f:0.1
+Var=die_temperature signed 256,16 /u:deg /f:0.1
+
+[QM_Board_Supply_status]
+ID=00000003h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=U_UB2 unsigned 0,16 /u:mV
+Var=I_UB2 unsigned 16,16 /u:mA
+Var=U_UB3 unsigned 32,16 /u:mV
+Var=I_UB3 unsigned 48,16 /u:mA
+Var=U_Actuator unsigned 64,16 /u:mV
+Var=U_Sensor unsigned 80,16 /u:mV
+Var=I_UB1 unsigned 96,16 /u:mA
+Var=I_UE unsigned 112,16 /u:mA
+Var=U_5V_OUT unsigned 128,16 /u:mV
+Var=U_5V unsigned 144,16 /u:mV
+Var=U_3V3 unsigned 160,16 /u:mV
+Var=U_12V_OUT unsigned 176,16 /u:mV
+Var=I_SENSOR_OUT_1 unsigned 192,16 /u:mA
+Var=I_SENSOR_OUT_2 unsigned 208,16 /u:mA
+Var=I_SENSOR_OUT_SUM unsigned 224,16 /u:mA
+Var=I_ACTUATOR_OUT_1 unsigned 240,16 /u:mA
+Var=I_ACTUATOR_OUT_2 unsigned 256,16 /u:mA
+Var=I_ACTUATOR_OUT_3 unsigned 272,16 /u:mA
+Var=I_ACTUATOR_OUT_4 unsigned 288,16 /u:mA
+Var=I_ACTUATOR_OUT_SUM unsigned 304,16 /u:mA
+
+[QM_Ecu_status]
+ID=00000004h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=sw_version_major unsigned 0,8
+Var=sw_version_minor unsigned 8,8
+Var=sw_version_step unsigned 16,8
+Var=main_switch_ub1_enabled bit 32,1
+Var=main_switch_ub2_enabled bit 33,1
+Var=main_switch_ub3_enabled bit 34,1
+Var=main_switch_actuator_enabled bit 35,1
+Var=main_switch_sensor_enabled bit 36,1
+Var=main_switch_fault_ub1 bit 37,1
+Var=main_switch_fault_ub2 bit 38,1
+Var=main_switch_fault_ub3 bit 39,1
+
+[QM_Main_switch_control]
+ID=0000000Fh
+Type=FDExtended
+Len=64
+Var=enable_ub1 bit 0,1
+Var=enable_ub2 bit 1,1
+Var=enable_ub3 bit 2,1
+Var=enable_actuator_supply bit 3,1
+Var=enable_sensor_supply bit 4,1
+
+[QM_Port_Expander_status]
+ID=00000010h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=device_01_status fst_status 0,8
+Var=device_02_status fst_status 8,8
+Var=device_03_status fst_status 16,8
+Var=device_04_status fst_status 24,8
+
+[QM_High_side_output_init_01]
+ID=00000013h
+Type=FDExtended
+Len=64
+Var=hs_out01_frequency float 0,32 /u:Hz /p:5 /d:1000
+Var=hs_out01_pwm_min unsigned 32,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out01_pwm_max unsigned 48,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out01_Kp float 64,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out01_Ki float 96,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out01_Kd float 128,32 /p:5 // only for "current" mode
+Var=hs_out02_frequency float 160,32 /u:Hz /d:1000
+Var=hs_out02_pwm_min unsigned 192,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out02_pwm_max unsigned 208,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out02_Kp float 224,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out02_Ki float 256,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out02_Kd float 288,32 /p:5 // only for "current" mode
+Var=hs_out03_frequency float 320,32 /u:Hz /d:1000
+Var=hs_out03_pwm_min unsigned 352,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out03_pwm_max unsigned 368,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out03_Kp float 384,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out03_Ki float 416,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out03_Kd float 448,32 /p:5 // only for "current" mode
+
+[QM_High_side_output_init_02]
+ID=00000014h
+Type=FDExtended
+Len=64
+Var=hs_out04_frequency float 0,32 /u:Hz /d:1000
+Var=hs_out04_pwm_min unsigned 32,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out04_pwm_max unsigned 48,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out04_Kp float 64,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out04_Ki float 96,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out04_Kd float 128,32 /p:5 // only for "current" mode
+Var=hs_out05_frequency float 160,32 /u:Hz /d:1000
+Var=hs_out05_pwm_min unsigned 192,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out05_pwm_max unsigned 208,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out05_Kp float 224,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out05_Ki float 256,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out05_Kd float 288,32 /p:5 // only for "current" mode
+Var=hs_out06_frequency float 320,32 /u:Hz /d:1000
+Var=hs_out06_pwm_min unsigned 352,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out06_pwm_max unsigned 368,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out06_Kp float 384,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out06_Ki float 416,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out06_Kd float 448,32 /p:5 // only for "current" mode
+
+[QM_High_side_output_init_03]
+ID=00000015h
+Type=FDExtended
+Len=64
+Var=hs_out07_frequency float 0,32 /u:Hz /d:1000
+Var=hs_out07_pwm_min unsigned 32,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out07_pwm_max unsigned 48,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out07_Kp float 64,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out07_Ki float 96,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out07_Kd float 128,32 /p:5 // only for "current" mode
+Var=hs_out08_frequency float 160,32 /u:Hz /d:1000
+Var=hs_out08_pwm_min unsigned 192,16 /u:% /f:0.1 // only for "current" mode
+Var=hs_out08_pwm_max unsigned 208,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=hs_out08_Kp float 224,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out08_Ki float 256,32 /p:5 /d:1 // only for "current" mode
+Var=hs_out08_Kd float 288,32 /p:5 // only for "current" mode
+
+[QM_High_side_output_write]
+ID=00000016h
+Type=FDExtended
+Len=64
+Var=hs_out01_select bit 0,1 /d:1
+Var=hs_out02_select bit 1,1 /d:1
+Var=hs_out03_select bit 2,1 /d:1
+Var=hs_out04_select bit 3,1 /d:1
+Var=hs_out05_select bit 4,1 /d:1
+Var=hs_out06_select bit 5,1 /d:1
+Var=hs_out07_select bit 6,1 /d:1
+Var=hs_out08_select bit 7,1 /d:1
+Var=hs_out01_mode hs_outmode 8,8
+Var=hs_out02_mode hs_outmode 16,8
+Var=hs_out03_mode hs_outmode 24,8
+Var=hs_out04_mode hs_outmode 32,8
+Var=hs_out05_mode hs_outmode 40,8
+Var=hs_out06_mode hs_outmode 48,8
+Var=hs_out07_mode hs_outmode 56,8
+Var=hs_out08_mode hs_outmode 64,8
+Var=hs_out01_value_pwm unsigned 72,16 /u:% /f:0.1
+Var=hs_out01_value_current unsigned 72,16 /u:mA
+Var=hs_out02_value_pwm unsigned 88,16 /u:% /f:0.1
+Var=hs_out02_value_current unsigned 88,16 /u:mA
+Var=hs_out03_value_pwm unsigned 104,16 /u:% /f:0.1
+Var=hs_out03_value_current unsigned 104,16 /u:mA
+Var=hs_out04_value_pwm unsigned 120,16 /u:% /f:0.1
+Var=hs_out04_value_current unsigned 120,16 /u:mA
+Var=hs_out05_value_pwm unsigned 136,16 /u:% /f:0.1
+Var=hs_out05_value_current unsigned 136,16 /u:mA
+Var=hs_out06_value_pwm unsigned 152,16 /u:% /f:0.1
+Var=hs_out06_value_current unsigned 152,16 /u:mA
+Var=hs_out07_value_pwm unsigned 168,16 /u:% /f:0.1
+Var=hs_out07_value_current unsigned 168,16 /u:mA
+Var=hs_out08_value_pwm unsigned 184,16 /u:% /f:0.1
+Var=hs_out08_value_current unsigned 184,16 /u:mA
+
+[QM_High_side_output_status]
+ID=00000017h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=hs_out01_current unsigned 0,16 /u:mA
+Var=hs_out02_current unsigned 16,16 /u:mA
+Var=hs_out03_current unsigned 32,16 /u:mA
+Var=hs_out04_current unsigned 48,16 /u:mA
+Var=hs_out05_current unsigned 64,16 /u:mA
+Var=hs_out06_current unsigned 80,16 /u:mA
+Var=hs_out07_current unsigned 96,16 /u:mA
+Var=hs_out08_current unsigned 112,16 /u:mA
+Var=hs_out01_pwm unsigned 128,16 /u:% /f:0.1
+Var=hs_out02_pwm unsigned 144,16 /u:% /f:0.1
+Var=hs_out03_pwm unsigned 160,16 /u:% /f:0.1
+Var=hs_out04_pwm unsigned 176,16 /u:% /f:0.1
+Var=hs_out05_pwm unsigned 192,16 /u:% /f:0.1
+Var=hs_out06_pwm unsigned 208,16 /u:% /f:0.1
+Var=hs_out07_pwm unsigned 224,16 /u:% /f:0.1
+Var=hs_out08_pwm unsigned 240,16 /u:% /f:0.1
+
+[QM_Analog_out_write]
+ID=00000018h
+Type=FDExtended
+Len=64
+Var=analog_out_01_select bit 0,1 /d:1
+Var=analog_out_02_select bit 1,1 /d:1
+Var=analog_out_03_select bit 2,1 /d:1
+Var=analog_out_04_select bit 3,1 /d:1
+Var=analog_out_05_select bit 4,1 /d:1
+Var=analog_out_06_select bit 5,1 /d:1
+Var=analog_out_01_mode analog_out_mode 8,8
+Var=analog_out_02_mode analog_out_mode 16,8
+Var=analog_out_03_mode analog_out_mode 24,8
+Var=analog_out_04_mode analog_out_mode 32,8
+Var=analog_out_01_value unsigned 40,16 /u:mV_or_microA
+Var=analog_out_02_value unsigned 56,16 /u:mV_or_microA
+Var=analog_out_03_value unsigned 72,16 /u:mV_or_microA
+Var=analog_out_04_value unsigned 88,16 /u:mV_or_microA
+Var=analog_out_05_value unsigned 104,16 /u:mV
+Var=analog_out_06_value unsigned 120,16 /u:mV
+
+[QM_H_bridge_init_01]
+ID=00000019h
+Type=FDExtended
+Len=64
+Var="h_bridge_01_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_01_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_01_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_01_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_01_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_01_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_01_max_speed" float 160,32 /u:%/s
+Var="h_bridge_01_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_01_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_01_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_01_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_01_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_01_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_01_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_01_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_01_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_01_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_init_02]
+ID=0000001Ah
+Type=FDExtended
+Len=64
+Var="h_bridge_02_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_02_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_02_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_02_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_02_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_02_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_02_max_speed" float 160,32 /u:%/s
+Var="h_bridge_02_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_02_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_02_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_02_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_02_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_02_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_02_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_02_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_02_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_02_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_init_03]
+ID=0000001Bh
+Type=FDExtended
+Len=64
+Var="h_bridge_03_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_03_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_03_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_03_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_03_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_03_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_03_max_speed" float 160,32 /u:%/s
+Var="h_bridge_03_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_03_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_03_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_03_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_03_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_03_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_03_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_03_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_03_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_03_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_init_04]
+ID=0000001Ch
+Type=FDExtended
+Len=64
+Var="h_bridge_04_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_04_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_04_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_04_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_04_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_04_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_04_max_speed" float 160,32 /u:%/s
+Var="h_bridge_04_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_04_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_04_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_04_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_04_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_04_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_04_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_04_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_04_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_04_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_init_05]
+ID=0000001Dh
+Type=FDExtended
+Len=64
+Var="h_bridge_05_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_05_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_05_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_05_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_05_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_05_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_05_max_speed" float 160,32 /u:%/s
+Var="h_bridge_05_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_05_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_05_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_05_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_05_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_05_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_05_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_05_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_05_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_05_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_init_06]
+ID=0000001Eh
+Type=FDExtended
+Len=64
+Var="h_bridge_06_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_06_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_06_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_06_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_06_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_06_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_06_max_speed" float 160,32 /u:%/s
+Var="h_bridge_06_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_06_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_06_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_06_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_06_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_06_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_06_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_06_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_06_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_06_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_init_07]
+ID=0000001Fh
+Type=FDExtended
+Len=64
+Var="h_bridge_07_frequency" float 0,32 /u:Hz /p:5 /d:1000
+Var="h_bridge_07_Kp" float 32,32 /p:5 /d:1
+Var="h_bridge_07_Ki" float 64,32 /p:5 /d:1
+Var="h_bridge_07_Kd" float 96,32 /p:5 /d:0
+Var="h_bridge_07_duty_min" signed 128,16 /u:% /f:0.1 /d:0
+Var="h_bridge_07_duty_max" signed 144,16 /u:% /f:0.1 /d:100
+Var="h_bridge_07_max_speed" float 160,32 /u:%/s
+Var="h_bridge_07_dist_mech_stop" unsigned 192,16 /u:% /f:0.1
+Var="h_bridge_07_valve_closed_pos" unsigned 208,16 /u:% /f:0.1 /d:100
+Var="h_bridge_07_valve_opened_pos" unsigned 224,16 /u:% /f:0.1 /d:100
+Var="h_bridge_07_close_valve_duration" unsigned 240,16 /u:ms
+Var="h_bridge_07_close_valve_duty" unsigned 256,16 /u:% /f:0.1
+Var="h_bridge_07_sensor_curve_dir " unsigned 272,8 /e:h_bridge_sensor_curve_direction
+Var="h_bridge_07_motor_polarity" unsigned 280,8 /e:h_bridge_motor_polarity
+Var="h_bridge_07_current_limit " unsigned 296,8 /e:h_bridge_current_limit
+Var="h_bridge_07_slew_rate" unsigned 304,8 /e:h_bridge_slew_rate
+Var="h_bridge_07_pos_ctrl_input_no" unsigned 312,8
+
+[QM_H_bridge_write]
+ID=00000020h
+Type=FDExtended
+Len=64
+Var=h_bridge_01_select bit 0,1 /d:1
+Var=h_bridge_02_select bit 1,1 /d:1
+Var=h_bridge_03_select bit 2,1 /d:1
+Var=h_bridge_04_select bit 3,1 /d:1
+Var=h_bridge_05_select bit 4,1 /d:1
+Var=h_bridge_06_select bit 5,1 /d:1
+Var=h_bridge_07_select bit 6,1 /d:1
+Var=h_bridge_01_mode h_bridge_mode 8,8
+Var=h_bridge_02_mode h_bridge_mode 16,8
+Var=h_bridge_03_mode h_bridge_mode 24,8
+Var=h_bridge_04_mode h_bridge_mode 32,8
+Var=h_bridge_05_mode h_bridge_mode 40,8
+Var=h_bridge_06_mode h_bridge_mode 48,8
+Var=h_bridge_07_mode h_bridge_mode 56,8
+Var=h_bridge_01_direction h_bridge_direction 64,8
+Var=h_bridge_02_direction h_bridge_direction 72,8
+Var=h_bridge_03_direction h_bridge_direction 80,8
+Var=h_bridge_04_direction h_bridge_direction 88,8
+Var=h_bridge_05_direction h_bridge_direction 96,8
+Var=h_bridge_06_direction h_bridge_direction 104,8
+Var=h_bridge_07_direction h_bridge_direction 112,8
+Var=h_bridge_01_duty unsigned 120,16 /u:% /f:0.1
+Var=h_bridge_01_position unsigned 120,16 /u:% /f:0.1
+Var=h_bridge_02_duty unsigned 136,16 /u:% /f:0.1
+Var=h_bridge_02_position unsigned 136,16 /u:% /f:0.1
+Var=h_bridge_03_duty unsigned 152,16 /u:% /f:0.1
+Var=h_bridge_03_position unsigned 152,16 /u:% /f:0.1
+Var=h_bridge_04_duty unsigned 168,16 /u:% /f:0.1
+Var=h_bridge_04_position unsigned 168,16 /u:% /f:0.1
+Var=h_bridge_05_duty unsigned 184,16 /u:% /f:0.1
+Var=h_bridge_05_position unsigned 184,16 /u:% /f:0.1
+Var=h_bridge_06_duty unsigned 200,16 /u:% /f:0.1
+Var=h_bridge_06_position unsigned 200,16 /u:% /f:0.1
+Var=h_bridge_07_duty unsigned 216,16 /u:% /f:0.1
+Var=h_bridge_07_position unsigned 216,16 /u:% /f:0.1
+
+[QM_H_bridge_status]
+ID=00000021h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=bridge_01_communication_ok bit 0,1
+Var=bridge_01_disabled bit 1,1
+Var=bridge_01_vs_undervoltage bit 2,1
+Var=bridge_01_over_temperature bit 3,1
+Var=bridge_01_current_limit_temp bit 4,1
+Var=bridge_01_current_limit bit 5,1
+Var=bridge_01_open_load_out1 bit 10,1
+Var=bridge_01_open_load_out2 bit 11,1
+Var=bridge_01_actual_direction bit 12,1 /e:h_bridge_direction
+Var=bridge_01_actual_duty unsigned 16,8 /u:%
+Var=bridge_01_actual_position unsigned 24,8 /u:%
+Var=bridge_01_pos_ctrl_status fst_status 32,8
+Var=bridge_02_communication_ok bit 40,1
+Var=bridge_02_disabled bit 41,1
+Var=bridge_02_vs_undervoltage bit 42,1
+Var=bridge_02_over_temperature bit 43,1
+Var=bridge_02_current_limit_temp bit 44,1
+Var=bridge_02_current_limit bit 45,1
+Var=bridge_02_open_load_out1 bit 50,1
+Var=bridge_02_open_load_out2 bit 51,1
+Var=bridge_02_actual_direction bit 52,1 /e:h_bridge_direction
+Var=bridge_02_actual_duty unsigned 56,8 /u:%
+Var=bridge_02_actual_position unsigned 64,8 /u:%
+Var=bridge_02_pos_ctrl_status fst_status 72,8
+Var=bridge_03_communication_ok bit 80,1
+Var=bridge_03_disabled bit 81,1
+Var=bridge_03_vs_undervoltage bit 82,1
+Var=bridge_03_over_temperature bit 83,1
+Var=bridge_03_current_limit_temp bit 84,1
+Var=bridge_03_current_limit bit 85,1
+Var=bridge_03_open_load_out1 bit 90,1
+Var=bridge_03_open_load_out2 bit 91,1
+Var=bridge_03_actual_direction bit 92,1 /e:h_bridge_direction
+Var=bridge_03_actual_duty unsigned 96,8 /u:%
+Var=bridge_03_actual_position unsigned 104,8 /u:%
+Var=bridge_03_pos_ctrl_status fst_status 112,8
+Var=bridge_04_communication_ok bit 120,1
+Var=bridge_04_disabled bit 121,1
+Var=bridge_04_vs_undervoltage bit 122,1
+Var=bridge_04_over_temperature bit 123,1
+Var=bridge_04_current_limit_temp bit 124,1
+Var=bridge_04_current_limit bit 125,1
+Var=bridge_04_open_load_out1 bit 130,1
+Var=bridge_04_open_load_out2 bit 131,1
+Var=bridge_04_actual_direction bit 132,1 /e:h_bridge_direction
+Var=bridge_04_actual_duty unsigned 136,8 /u:%
+Var=bridge_04_actual_position unsigned 144,8 /u:%
+Var=bridge_04_pos_ctrl_status fst_status 152,8
+Var=bridge_05_communication_ok bit 160,1
+Var=bridge_05_disabled bit 161,1
+Var=bridge_05_vs_undervoltage bit 162,1
+Var=bridge_05_over_temperature bit 163,1
+Var=bridge_05_current_limit_temp bit 164,1
+Var=bridge_05_current_limit bit 165,1
+Var=bridge_05_open_load_out1 bit 170,1
+Var=bridge_05_open_load_out2 bit 171,1
+Var=bridge_05_actual_direction bit 172,1 /e:h_bridge_direction
+Var=bridge_05_actual_duty unsigned 176,8 /u:%
+Var=bridge_05_actual_position unsigned 184,8 /u:%
+Var=bridge_05_pos_ctrl_status fst_status 192,8
+Var=bridge_06_communication_ok bit 200,1
+Var=bridge_06_disabled bit 201,1
+Var=bridge_06_vs_undervoltage bit 202,1
+Var=bridge_06_over_temperature bit 203,1
+Var=bridge_06_current_limit_temp bit 204,1
+Var=bridge_06_current_limit bit 205,1
+Var=bridge_06_open_load_out1 bit 210,1
+Var=bridge_06_open_load_out2 bit 211,1
+Var=bridge_06_actual_direction bit 212,1 /e:h_bridge_direction
+Var=bridge_06_actual_duty unsigned 216,8 /u:%
+Var=bridge_06_actual_position unsigned 224,8 /u:%
+Var=bridge_06_pos_ctrl_status fst_status 232,8
+Var=bridge_07_communication_ok bit 240,1
+Var=bridge_07_disabled bit 241,1
+Var=bridge_07_vs_undervoltage bit 242,1
+Var=bridge_07_over_temperature bit 243,1
+Var=bridge_07_current_limit_temp bit 244,1
+Var=bridge_07_current_limit bit 245,1
+Var=bridge_07_open_load_out1 bit 250,1
+Var=bridge_07_open_load_out2 bit 251,1
+Var=bridge_07_actual_direction bit 252,1 /e:h_bridge_direction
+Var=bridge_07_actual_duty unsigned 256,8 /u:%
+Var=bridge_07_actual_position unsigned 264,8 /u:%
+Var=bridge_07_pos_ctrl_status fst_status 272,8
+
+[FUSA_High_side_output_init_01]
+ID=00000022h
+Type=FDExtended
+Len=64
+Var=fusa_hs_out01_frequency float 0,32 /u:Hz /p:5 /d:1000
+Var=fusa_hs_out01_pwm_min unsigned 32,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out01_pwm_max unsigned 48,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out01_Kp float 64,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out01_Ki float 96,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out01_Kd float 128,32 /p:5 // only for "current" mode
+Var=fusa_hs_out02_frequency float 160,32 /u:Hz /d:1000
+Var=fusa_hs_out02_pwm_min unsigned 192,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out02_pwm_max unsigned 208,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out02_Kp float 224,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out02_Ki float 256,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out02_Kd float 288,32 /p:5 // only for "current" mode
+Var=fusa_hs_out03_frequency float 320,32 /u:Hz /d:1000
+Var=fusa_hs_out03_pwm_min unsigned 352,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out03_pwm_max unsigned 368,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out03_Kp float 384,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out03_Ki float 416,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out03_Kd float 448,32 /p:5 // only for "current" mode
+
+[FUSA_High_side_output_init_02]
+ID=00000023h
+Type=FDExtended
+Len=64
+Var=fusa_hs_out04_frequency float 0,32 /u:Hz /d:1000
+Var=fusa_hs_out04_pwm_min unsigned 32,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out04_pwm_max unsigned 48,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out04_Kp float 64,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out04_Ki float 96,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out04_Kd float 128,32 /p:5 // only for "current" mode
+Var=fusa_hs_out05_frequency float 160,32 /u:Hz /d:1000
+Var=fusa_hs_out05_pwm_min unsigned 192,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out05_pwm_max unsigned 208,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out05_Kp float 224,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out05_Ki float 256,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out05_Kd float 288,32 /p:5 // only for "current" mode
+Var=fusa_hs_out06_frequency float 320,32 /u:Hz /d:1000
+Var=fusa_hs_out06_pwm_min unsigned 352,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out06_pwm_max unsigned 368,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out06_Kp float 384,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out06_Ki float 416,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out06_Kd float 448,32 /p:5 // only for "current" mode
+
+[FUSA_High_side_output_init_03]
+ID=00000024h
+Type=FDExtended
+Len=64
+Var=fusa_hs_out07_frequency float 0,32 /u:Hz /d:1000
+Var=fusa_hs_out07_pwm_min unsigned 32,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out07_pwm_max unsigned 48,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out07_Kp float 64,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out07_Ki float 96,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out07_Kd float 128,32 /p:5 // only for "current" mode
+Var=fusa_hs_out08_frequency float 160,32 /u:Hz /d:1000
+Var=fusa_hs_out08_pwm_min unsigned 192,16 /u:% /f:0.1 // only for "current" mode
+Var=fusa_hs_out08_pwm_max unsigned 208,16 /u:% /f:0.1 /d:100 // only for "current" mode
+Var=fusa_hs_out08_Kp float 224,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out08_Ki float 256,32 /p:5 /d:1 // only for "current" mode
+Var=fusa_hs_out08_Kd float 288,32 /p:5 // only for "current" mode
+
+[FUSA_High_side_output_write]
+ID=00000025h
+Type=FDExtended
+Len=64
+Var=fusa_hs_out01_select bit 0,1 /d:1
+Var=fusa_hs_out02_select bit 1,1 /d:1
+Var=fusa_hs_out03_select bit 2,1 /d:1
+Var=fusa_hs_out04_select bit 3,1 /d:1
+Var=fusa_hs_out05_select bit 4,1 /d:1
+Var=fusa_hs_out06_select bit 5,1 /d:1
+Var=fusa_hs_out07_select bit 6,1 /d:1
+Var=fusa_hs_out08_select bit 7,1 /d:1
+Var=fusa_hs_out01_mode hs_outmode 8,8
+Var=fusa_hs_out02_mode hs_outmode 16,8
+Var=fusa_hs_out03_mode hs_outmode 24,8
+Var=fusa_hs_out04_mode hs_outmode 32,8
+Var=fusa_hs_out05_mode hs_outmode 40,8
+Var=fusa_hs_out06_mode hs_outmode 48,8
+Var=fusa_hs_out07_mode hs_outmode 56,8
+Var=fusa_hs_out08_mode hs_outmode 64,8
+Var=fusa_hs_out01_value_pwm unsigned 72,16 /u:% /f:0.1
+Var=fusa_hs_out01_value_current unsigned 72,16 /u:mA
+Var=fusa_hs_out02_value_pwm unsigned 88,16 /u:% /f:0.1
+Var=fusa_hs_out02_value_current unsigned 88,16 /u:mA
+Var=fusa_hs_out03_value_pwm unsigned 104,16 /u:% /f:0.1
+Var=fusa_hs_out03_value_current unsigned 104,16 /u:mA
+Var=fusa_hs_out04_value_pwm unsigned 120,16 /u:% /f:0.1
+Var=fusa_hs_out04_value_current unsigned 120,16 /u:mA
+Var=fusa_hs_out05_value_pwm unsigned 136,16 /u:% /f:0.1
+Var=fusa_hs_out05_value_current unsigned 136,16 /u:mA
+Var=fusa_hs_out06_value_pwm unsigned 152,16 /u:% /f:0.1
+Var=fusa_hs_out06_value_current unsigned 152,16 /u:mA
+Var=fusa_hs_out07_value_pwm unsigned 168,16 /u:% /f:0.1
+Var=fusa_hs_out07_value_current unsigned 168,16 /u:mA
+Var=fusa_hs_out08_value_pwm unsigned 184,16 /u:% /f:0.1
+Var=fusa_hs_out08_value_current unsigned 184,16 /u:mA
+
+[FUSA_High_side_output_status]
+ID=00000026h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=hs_out01_current unsigned 0,16 /u:mA
+Var=hs_out02_current unsigned 16,16 /u:mA
+Var=hs_out03_current unsigned 32,16 /u:mA
+Var=hs_out04_current unsigned 48,16 /u:mA
+Var=hs_out05_current unsigned 64,16 /u:mA
+Var=hs_out06_current unsigned 80,16 /u:mA
+Var=hs_out07_current unsigned 96,16 /u:mA
+Var=hs_out08_current unsigned 112,16 /u:mA
+Var=hs_out01_pwm unsigned 128,16 /u:% /f:0.1
+Var=hs_out02_pwm unsigned 144,16 /u:% /f:0.1
+Var=hs_out03_pwm unsigned 160,16 /u:% /f:0.1
+Var=hs_out04_pwm unsigned 176,16 /u:% /f:0.1
+Var=hs_out05_pwm unsigned 192,16 /u:% /f:0.1
+Var=hs_out06_pwm unsigned 208,16 /u:% /f:0.1
+Var=hs_out07_pwm unsigned 224,16 /u:% /f:0.1
+Var=hs_out08_pwm unsigned 240,16 /u:% /f:0.1
+
+[QM_PT1000_status]
+ID=00000030h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=ch_01_status fst_status 0,8
+Var=ch_02_status fst_status 8,8
+Var=ch_03_status fst_status 16,8
+Var=ch_04_status fst_status 24,8
+Var=ch_05_status fst_status 32,8
+Var=ch_06_status fst_status 40,8
+Var=ch_07_status fst_status 48,8
+Var=ch_08_status fst_status 56,8
+Var=ch_01_temperature signed 64,16 /u:deg /f:0.1
+Var=ch_02_temperature signed 80,16 /u:deg /f:0.1
+Var=ch_03_temperature signed 96,16 /u:deg /f:0.1
+Var=ch_04_temperature signed 112,16 /u:deg /f:0.1
+Var=ch_05_temperature signed 128,16 /u:deg /f:0.1
+Var=ch_06_temperature signed 144,16 /u:deg /f:0.1
+Var=ch_07_temperature signed 160,16 /u:deg /f:0.1
+Var=ch_08_temperature signed 176,16 /u:deg /f:0.1
+Var=ch_01_voltage unsigned 192,16 /u:mV
+Var=ch_02_voltage unsigned 208,16 /u:mV
+Var=ch_03_voltage unsigned 224,16 /u:mV
+Var=ch_04_voltage unsigned 240,16 /u:mV
+Var=ch_05_voltage unsigned 256,16 /u:mV
+Var=ch_06_voltage unsigned 272,16 /u:mV
+Var=ch_07_voltage unsigned 288,16 /u:mV
+Var=ch_08_voltage unsigned 304,16 /u:mV
+Var=ch_01_current unsigned 320,16 /u:microA
+Var=ch_02_current unsigned 336,16 /u:microA
+Var=ch_03_current unsigned 352,16 /u:microA
+Var=ch_04_current unsigned 368,16 /u:microA
+Var=ch_05_current unsigned 384,16 /u:microA
+Var=ch_06_current unsigned 400,16 /u:microA
+Var=ch_07_current unsigned 416,16 /u:microA
+Var=ch_08_current unsigned 432,16 /u:microA
+
+[QM_Analog_Input_status]
+ID=00000031h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=an_pin_01_mode an_input_mode 0,8
+Var=an_pin_02_mode an_input_mode 8,8
+Var=an_pin_03_mode an_input_mode 16,8
+Var=an_pin_04_mode an_input_mode 24,8
+Var=an_pin_05_mode an_input_mode 32,8
+Var=an_pin_06_mode an_input_mode 40,8
+Var=an_pin_07_mode an_input_mode 48,8
+Var=an_pin_08_mode an_input_mode 56,8
+Var=an_pin_09_mode an_input_mode 64,8
+Var=an_pin_10_mode an_input_mode 72,8
+Var=an_pin_11_mode an_input_mode 80,8
+Var=an_pin_12_mode an_input_mode 88,8
+Var=an_pin_13_mode an_input_mode 96,8
+Var=an_pin_14_mode an_input_mode 104,8
+Var=an_pin_15_mode an_input_mode 112,8
+Var=an_pin_16_mode an_input_mode 120,8
+Var=an_pin_01_voltage unsigned 128,16 /u:mV
+Var=an_pin_01_current unsigned 128,16 /u:mA /f:0.001
+Var=an_pin_01_temperature signed 128,16 /u:deg /f:0.01
+Var=an_pin_01_digital unsigned 128,16
+Var=an_pin_02_voltage unsigned 144,16 /u:mV
+Var=an_pin_02_current unsigned 144,16 /u:mA /f:0.001
+Var=an_pin_02_temperature signed 144,16 /u:deg /f:0.01
+Var=an_pin_02_digital unsigned 144,16
+Var=an_pin_03_voltage unsigned 160,16 /u:mV
+Var=an_pin_03_current unsigned 160,16 /u:mA /f:0.001
+Var=an_pin_03_temperature signed 160,16 /u:deg /f:0.01
+Var=an_pin_03_digital unsigned 160,16
+Var=an_pin_04_voltage unsigned 176,16 /u:mV
+Var=an_pin_04_current unsigned 176,16 /u:mA /f:0.001
+Var=an_pin_04_temperature signed 176,16 /u:deg /f:0.01
+Var=an_pin_04_digital unsigned 176,16
+Var=an_pin_05_voltage unsigned 192,16 /u:mV
+Var=an_pin_05_current unsigned 192,16 /u:mA /f:0.001
+Var=an_pin_05_temperature signed 192,16 /u:deg /f:0.01
+Var=an_pin_05_digital unsigned 192,16
+Var=an_pin_06_voltage unsigned 208,16 /u:mV
+Var=an_pin_06_current unsigned 208,16 /u:mA /f:0.001
+Var=an_pin_06_temperature signed 208,16 /u:deg /f:0.01
+Var=an_pin_06_digital unsigned 208,16
+Var=an_pin_07_voltage unsigned 224,16 /u:mV
+Var=an_pin_07_current unsigned 224,16 /u:mA /f:0.001
+Var=an_pin_07_temperature signed 224,16 /u:deg /f:0.01
+Var=an_pin_07_digital unsigned 224,16
+Var=an_pin_08_voltage unsigned 240,16 /u:mV
+Var=an_pin_08_current unsigned 240,16 /u:mA /f:0.001
+Var=an_pin_08_temperature signed 240,16 /u:deg /f:0.01
+Var=an_pin_08_digital unsigned 240,16
+Var=an_pin_09_voltage unsigned 256,16 /u:mV
+Var=an_pin_09_current unsigned 256,16 /u:mA /f:0.001
+Var=an_pin_09_temperature signed 256,16 /u:deg /f:0.01
+Var=an_pin_09_digital unsigned 256,16
+Var=an_pin_10_voltage unsigned 272,16 /u:mV
+Var=an_pin_10_current unsigned 272,16 /u:mA /f:0.001
+Var=an_pin_10_temperature signed 272,16 /u:deg /f:0.01
+Var=an_pin_10_digital unsigned 272,16
+Var=an_pin_11_voltage unsigned 288,16 /u:mV
+Var=an_pin_11_current unsigned 288,16 /u:mA /f:0.001
+Var=an_pin_11_temperature signed 288,16 /u:deg /f:0.01
+Var=an_pin_11_digital unsigned 288,16
+Var=an_pin_12_voltage unsigned 304,16 /u:mV
+Var=an_pin_12_current unsigned 304,16 /u:mA /f:0.001
+Var=an_pin_12_temperature signed 304,16 /u:deg /f:0.01
+Var=an_pin_12_digital unsigned 304,16
+Var=an_pin_13_voltage unsigned 320,16 /u:mV
+Var=an_pin_13_current unsigned 320,16 /u:mA /f:0.001
+Var=an_pin_13_temperature signed 320,16 /u:deg /f:0.01
+Var=an_pin_13_digital unsigned 320,16
+Var=an_pin_14_voltage unsigned 336,16 /u:mV
+Var=an_pin_14_current unsigned 336,16 /u:mA /f:0.001
+Var=an_pin_14_temperature signed 336,16 /u:deg /f:0.01
+Var=an_pin_14_digital unsigned 336,16
+Var=an_pin_15_voltage unsigned 352,16 /u:mV
+Var=an_pin_15_current unsigned 352,16 /u:mA /f:0.001
+Var=an_pin_15_temperature signed 352,16 /u:deg /f:0.01
+Var=an_pin_15_digital unsigned 352,16
+Var=an_pin_16_voltage unsigned 368,16 /u:mV
+Var=an_pin_16_current unsigned 368,16 /u:mA /f:0.001
+Var=an_pin_16_temperature signed 368,16 /u:deg /f:0.01
+Var=an_pin_16_digital unsigned 368,16
+Var=an_in_01_status fst_status 384,8
+Var=an_in_02_status fst_status 392,8
+Var=an_in_03_status fst_status 400,8
+Var=an_in_04_status fst_status 408,8
+Var=an_in_05_status fst_status 416,8
+Var=an_in_06_status fst_status 424,8
+Var=an_in_07_status fst_status 432,8
+Var=an_in_08_status fst_status 440,8
+Var=an_in_09_status fst_status 448,8
+Var=an_in_10_status fst_status 456,8
+Var=an_in_11_status fst_status 464,8
+Var=an_in_12_status fst_status 472,8
+Var=an_in_13_status fst_status 480,8
+Var=an_in_14_status fst_status 488,8
+Var=an_in_15_status fst_status 496,8
+Var=an_in_16_status fst_status 504,8
+
+[QM_analog_input_control]
+ID=00000032h
+Type=FDExtended
+Len=64
+Var=analog_input_01_mode an_input_mode 0,8
+Var=analog_input_02_mode an_input_mode 8,8
+Var=analog_input_03_mode an_input_mode 16,8
+Var=analog_input_04_mode an_input_mode 24,8
+Var=analog_input_05_mode an_input_mode 32,8
+Var=analog_input_06_mode an_input_mode 40,8
+Var=analog_input_07_mode an_input_mode 48,8
+Var=analog_input_08_mode an_input_mode 56,8
+Var=analog_input_09_mode an_input_mode 64,8
+Var=analog_input_10_mode an_input_mode 72,8
+Var=analog_input_11_mode an_input_mode 80,8
+Var=analog_input_12_mode an_input_mode 88,8
+Var=analog_input_13_mode an_input_mode 96,8
+Var=analog_input_14_mode an_input_mode 104,8
+Var=analog_input_15_mode an_input_mode 112,8
+Var=analog_input_16_mode an_input_mode 120,8
+
+[QM_flex_input_status]
+ID=00000033h
+Type=FDExtended
+Len=64
+Var=flex_in_01_mode flex_input_mode 0,8
+Var=flex_in_01_status fst_status 8,8
+Var=flex_in_01_val unsigned 16,16
+
+[FUSA_PT_1000_Status]
+ID=00000100h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=single_ch_01_status fst_status 0,8
+Var=single_ch_02_status fst_status 8,8
+Var=single_ch_03_status fst_status 16,8
+Var=single_ch_04_status fst_status 24,8
+Var=single_ch_05_status fst_status 32,8
+Var=single_ch_06_status fst_status 40,8
+Var=single_ch_07_status fst_status 48,8
+Var=single_ch_08_status fst_status 56,8
+Var=single_ch_01_temp signed 64,16 /u:deg /f:0.1
+Var=single_ch_02_temp signed 80,16 /u:deg /f:0.1
+Var=single_ch_03_temp signed 96,16 /u:deg /f:0.1
+Var=single_ch_04_temp signed 112,16 /u:deg /f:0.1
+Var=single_ch_05_temp signed 128,16 /u:deg /f:0.1
+Var=single_ch_06_temp signed 144,16 /u:deg /f:0.1
+Var=single_ch_07_temp signed 160,16 /u:deg /f:0.1
+Var=single_ch_08_temp signed 176,16 /u:deg /f:0.1
+Var=redundant_ch_01_status fst_status 192,8
+Var=redundant_ch_02_status fst_status 200,8
+Var=redundant_ch_03_status fst_status 208,8
+Var=redundant_ch_04_status fst_status 216,8
+Var=redundant_ch_01_temp signed 224,16 /u:deg /f:0.1
+Var=redundant_ch_02_temp signed 240,16 /u:deg /f:0.1
+Var=redundant_ch_03_temp signed 256,16 /u:deg /f:0.1
+Var=redundant_ch_04_temp signed 272,16 /u:deg /f:0.1
+
+[FUSA_PT_1000_Debug_1]
+ID=00000101h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=mux_1_pos unsigned 0,8
+Var=mux_2_pos unsigned 8,8
+Var=ch_01_current_err_cnt unsigned 16,8
+Var=ch_02_current_err_cnt unsigned 24,8
+Var=ch_03_current_err_cnt unsigned 32,8
+Var=ch_04_current_err_cnt unsigned 40,8
+Var=ch_05_current_err_cnt unsigned 48,8
+Var=ch_06_current_err_cnt unsigned 56,8
+Var=ch_07_current_err_cnt unsigned 64,8
+Var=ch_08_current_err_cnt unsigned 72,8
+Var=ch_01_unselected_current_err_cnt unsigned 80,8
+Var=ch_02_unselected_current_err_cnt unsigned 88,8
+Var=ch_03_unselected_current_err_cnt unsigned 96,8
+Var=ch_04_unselected_current_err_cnt unsigned 104,8
+Var=ch_05_unselected_current_err_cnt unsigned 112,8
+Var=ch_06_unselected_current_err_cnt unsigned 120,8
+Var=ch_07_unselected_current_err_cnt unsigned 128,8
+Var=ch_08_unselected_current_err_cnt unsigned 136,8
+Var=ch_01_resistor_err_cnt unsigned 208,8
+Var=ch_02_resistor_err_cnt unsigned 216,8
+Var=ch_03_resistor_err_cnt unsigned 224,8
+Var=ch_04_resistor_err_cnt unsigned 232,8
+Var=ch_05_resistor_err_cnt unsigned 240,8
+Var=ch_06_resistor_err_cnt unsigned 248,8
+Var=ch_07_resistor_err_cnt unsigned 256,8
+Var=ch_08_resistor_err_cnt unsigned 264,8
+Var=ch_01_redundant_err_cnt unsigned 272,8
+Var=ch_02_redundant_err_cnt unsigned 280,8
+Var=ch_03_redundant_err_cnt unsigned 288,8
+Var=ch_04_redundant_err_cnt unsigned 296,8
+
+[FUSA_PT_1000_Debug_2]
+ID=00000102h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=ch_01_voltage_val unsigned 0,16 /u:mV
+Var=ch_02_voltage_val unsigned 16,16 /u:mV
+Var=ch_03_voltage_val unsigned 32,16 /u:mV
+Var=ch_04_voltage_val unsigned 48,16 /u:mV
+Var=ch_05_voltage_val unsigned 64,16 /u:mV
+Var=ch_06_voltage_val unsigned 80,16 /u:mV
+Var=ch_07_voltage_val unsigned 96,16 /u:mV
+Var=ch_08_voltage_val unsigned 112,16 /u:mV
+Var=ch_01_diag_current_val unsigned 128,16 /u:microA
+Var=ch_02_diag_current_val unsigned 144,16 /u:microA
+Var=ch_03_diag_current_val unsigned 160,16 /u:microA
+Var=ch_04_diag_current_val unsigned 176,16 /u:microA
+Var=ch_05_diag_current_val unsigned 192,16 /u:microA
+Var=ch_06_diag_current_val unsigned 208,16 /u:microA
+Var=ch_07_diag_current_val unsigned 224,16 /u:microA
+Var=ch_08_diag_current_val unsigned 240,16 /u:microA
+Var=ch_01_diag_resistor_val unsigned 256,32 /u:mOhm
+Var=ch_02_diag_resistor_val unsigned 288,32 /u:mOhm
+Var=ch_03_diag_resistor_val unsigned 320,32 /u:mOhm
+Var=ch_04_diag_resistor_val unsigned 352,32 /u:mOhm
+Var=ch_05_diag_resistor_val unsigned 384,32 /u:mOhm
+Var=ch_06_diag_resistor_val unsigned 416,32 /u:mOhm
+Var=ch_07_diag_resistor_val unsigned 448,32 /u:mOhm
+Var=ch_08_diag_resistor_val unsigned 480,32 /u:mOhm
+
+[FUSA_ECU_Sensor_Supply_Control]
+ID=00000121h
+Type=FDExtended
+Len=64
+Var=enable bit 0,1
+
+[FUSA_ECU_Sensor_Supply_Status]
+ID=00000120h
+Type=FDExtended
+Len=64
+Var=status fst_status 0,8
+Var=measure unsigned 8,16 /u:mV
+
+[can_peripheral_ctrl]
+ID=00000042h
+Type=FDExtended
+Len=64
+Timeout=500
+Mux=pierburg_pump 0,8 0
+Var=speed_setpoint unsigned 8,16 /u:% /f:0.1
+
+[can_peripheral_ctrl]
+Len=8
+Mux=bosch_eac 0,8 2
+Var=speed_setpoint unsigned 8,16 /u:% /f:0.01
+
+[can_peripheral_init]
+ID=00000040h
+Type=FDExtended
+Len=64
+Timeout=500
+Var=baudrate_can_3 unsigned 0,8 /e:can_baud_rate
+Var=baudrate_can_4 unsigned 8,8 /e:can_baud_rate
+Var=baudrate_can_5 unsigned 16,8 /e:can_baud_rate
+Var=baudrate_can_6 unsigned 24,8 /e:can_baud_rate
+Var=mapping_pierburg_pump unsigned 32,8 /e:can_peripheral_can_mapping
+Var=mapping_trican unsigned 40,8 /e:can_peripheral_can_mapping
+
+[can_peripheral_status]
+ID=00000041h
+Type=FDExtended
+Len=64
+Timeout=500
+Mux=pierburg_pump 0,8 0
+Var=status unsigned 8,8 /e:fst_status
+Var=discharge_status unsigned 16,1
+Var=semiconductor_switch_status unsigned 17,1
+Var=pierburg_pump_status unsigned 18,4 /e:pierburg_pump_status
+Var=speed unsigned 24,16 /u:rpm 
+Var=voltage unsigned 40,16 /u:V /f:0.1
+Var=current unsigned 56,16 /u:A /f:0.1
+Var=torque unsigned 72,16 /u:mNm
+Var=pcb_temp unsigned 72,16 /u:deg /f:0.1
+Var=error_bits unsigned 88,16
+
+[can_peripheral_status]
+Len=64
+Mux=trican 0,8 1
+Var=status unsigned 8,8 /e:fst_status
+Var=inlet_pressure unsigned 16,16 /u:mbar
+Var=relative_humidity unsigned 32,16 /u:% /f:0.1
+Var=specific_humidity unsigned 48,16 /u:0.01g/kg
+Var=air_temperature signed 64,16 /u:deg /f:0.1
+Var=pressure_failure unsigned 80,1
+Var=pressure_out_of_range unsigned 81,1
+Var=temp_volt_above_normal unsigned 82,1
+Var=temp_volt_below_normal unsigned 83,1
+Var=humidity_volt_above_normal unsigned 84,1
+Var=humidity_volt_below_normal unsigned 85,1
+Var=controller_over_temp unsigned 86,1
+Var=calc_out_of_range unsigned 87,1

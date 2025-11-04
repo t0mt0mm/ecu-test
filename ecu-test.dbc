@@ -1,0 +1,1404 @@
+VERSION ""
+
+
+NS_ :
+  CM_
+  BA_DEF_
+  BA_
+  VAL_
+  BA_DEF_DEF_
+  SIG_VALTYPE_
+
+BS_:
+
+BU_: Vector__XXX
+
+
+BO_ 2147483649 QM_Board_Temp_status: 64 Vector__XXX
+SG_ ch_01_address : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_address : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_address : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_address : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_05_address : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_06_address : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_07_address : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_08_address : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_status : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_status : 72|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_status : 80|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_status : 88|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_05_status : 96|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_06_status : 104|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_07_status : 112|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_08_status : 120|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_temp : 128|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_02_temp : 144|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_03_temp : 160|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_04_temp : 176|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_05_temp : 192|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_06_temp : 208|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_07_temp : 224|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_08_temp : 240|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ die_temperature : 256|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+
+BO_ 2147483651 QM_Board_Supply_status: 64 Vector__XXX
+SG_ U_UB2 : 0|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ I_UB2 : 16|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ U_UB3 : 32|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ I_UB3 : 48|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ U_Actuator : 64|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ U_Sensor : 80|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ I_UB1 : 96|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_UE : 112|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ U_5V_OUT : 128|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ U_5V : 144|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ U_3V3 : 160|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ U_12V_OUT : 176|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ I_SENSOR_OUT_1 : 192|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_SENSOR_OUT_2 : 208|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_SENSOR_OUT_SUM : 224|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_ACTUATOR_OUT_1 : 240|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_ACTUATOR_OUT_2 : 256|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_ACTUATOR_OUT_3 : 272|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_ACTUATOR_OUT_4 : 288|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ I_ACTUATOR_OUT_SUM : 304|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+
+BO_ 2147483652 QM_Ecu_status: 64 Vector__XXX
+SG_ sw_version_major : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ sw_version_minor : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ sw_version_step : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ main_switch_ub1_enabled : 32|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_ub2_enabled : 33|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_ub3_enabled : 34|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_actuator_enabled : 35|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_sensor_enabled : 36|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_fault_ub1 : 37|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_fault_ub2 : 38|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ main_switch_fault_ub3 : 39|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 2147483663 QM_Main_switch_control: 64 Vector__XXX
+SG_ enable_ub1 : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ enable_ub2 : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ enable_ub3 : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ enable_actuator_supply : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ enable_sensor_supply : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 2147483664 QM_Port_Expander_status: 64 Vector__XXX
+SG_ device_01_status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ device_02_status : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ device_03_status : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ device_04_status : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483667 QM_High_side_output_init_01: 64 Vector__XXX
+SG_ hs_out01_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out01_pwm_min : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out01_pwm_max : 48|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out01_Kp : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out01_Ki : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out01_Kd : 128|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out02_frequency : 160|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out02_pwm_min : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out02_pwm_max : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out02_Kp : 224|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out02_Ki : 256|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out02_Kd : 288|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out03_frequency : 320|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out03_pwm_min : 352|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out03_pwm_max : 368|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out03_Kp : 384|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out03_Ki : 416|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out03_Kd : 448|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+
+BO_ 2147483668 QM_High_side_output_init_02: 64 Vector__XXX
+SG_ hs_out04_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out04_pwm_min : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out04_pwm_max : 48|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out04_Kp : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out04_Ki : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out04_Kd : 128|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out05_frequency : 160|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out05_pwm_min : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out05_pwm_max : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out05_Kp : 224|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out05_Ki : 256|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out05_Kd : 288|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out06_frequency : 320|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out06_pwm_min : 352|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out06_pwm_max : 368|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out06_Kp : 384|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out06_Ki : 416|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out06_Kd : 448|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+
+BO_ 2147483669 QM_High_side_output_init_03: 64 Vector__XXX
+SG_ hs_out07_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out07_pwm_min : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out07_pwm_max : 48|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out07_Kp : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out07_Ki : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out07_Kd : 128|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out08_frequency : 160|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ hs_out08_pwm_min : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out08_pwm_max : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out08_Kp : 224|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out08_Ki : 256|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ hs_out08_Kd : 288|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+
+BO_ 2147483670 QM_High_side_output_write: 64 Vector__XXX
+SG_ hs_out01_select : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out02_select : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out03_select : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out04_select : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out05_select : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out06_select : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out07_select : 6|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out08_select : 7|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ hs_out01_mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out02_mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out03_mode : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out04_mode : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out05_mode : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out06_mode : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out07_mode : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out08_mode : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ hs_out01_value_pwm : 72|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out01_value_current : 72|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out02_value_pwm : 88|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out02_value_current : 88|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out03_value_pwm : 104|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out03_value_current : 104|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out04_value_pwm : 120|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out04_value_current : 120|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out05_value_pwm : 136|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out05_value_current : 136|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out06_value_pwm : 152|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out06_value_current : 152|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out07_value_pwm : 168|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out07_value_current : 168|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out08_value_pwm : 184|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out08_value_current : 184|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+
+BO_ 2147483671 QM_High_side_output_status: 64 Vector__XXX
+SG_ hs_out01_current : 0|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out02_current : 16|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out03_current : 32|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out04_current : 48|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out05_current : 64|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out06_current : 80|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out07_current : 96|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out08_current : 112|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out01_pwm : 128|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out02_pwm : 144|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out03_pwm : 160|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out04_pwm : 176|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out05_pwm : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out06_pwm : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out07_pwm : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out08_pwm : 240|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+
+BO_ 2147483672 QM_Analog_out_write: 64 Vector__XXX
+SG_ analog_out_01_select : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ analog_out_02_select : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ analog_out_03_select : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ analog_out_04_select : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ analog_out_05_select : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ analog_out_06_select : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ analog_out_01_mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_out_02_mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_out_03_mode : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_out_04_mode : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_out_01_value : 40|16@1+ (1,0) [0|65535] "mV_or_microA" Vector__XXX
+SG_ analog_out_02_value : 56|16@1+ (1,0) [0|65535] "mV_or_microA" Vector__XXX
+SG_ analog_out_03_value : 72|16@1+ (1,0) [0|65535] "mV_or_microA" Vector__XXX
+SG_ analog_out_04_value : 88|16@1+ (1,0) [0|65535] "mV_or_microA" Vector__XXX
+SG_ analog_out_05_value : 104|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ analog_out_06_value : 120|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+
+BO_ 2147483673 QM_H_bridge_init_01: 64 Vector__XXX
+SG_ h_bridge_01_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_01_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_01_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_01_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_01_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_01_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_01_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_01_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_01_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_01_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_01_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_01_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_01_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_01_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_01_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_01_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_01_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483674 QM_H_bridge_init_02: 64 Vector__XXX
+SG_ h_bridge_02_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_02_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_02_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_02_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_02_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_02_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_02_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_02_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_02_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_02_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_02_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_02_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_02_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_02_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_02_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_02_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_02_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483675 QM_H_bridge_init_03: 64 Vector__XXX
+SG_ h_bridge_03_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_03_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_03_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_03_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_03_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_03_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_03_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_03_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_03_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_03_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_03_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_03_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_03_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_03_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_03_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_03_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_03_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483676 QM_H_bridge_init_04: 64 Vector__XXX
+SG_ h_bridge_04_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_04_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_04_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_04_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_04_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_04_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_04_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_04_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_04_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_04_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_04_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_04_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_04_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_04_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_04_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_04_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_04_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483677 QM_H_bridge_init_05: 64 Vector__XXX
+SG_ h_bridge_05_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_05_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_05_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_05_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_05_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_05_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_05_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_05_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_05_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_05_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_05_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_05_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_05_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_05_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_05_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_05_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_05_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483678 QM_H_bridge_init_06: 64 Vector__XXX
+SG_ h_bridge_06_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_06_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_06_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_06_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_06_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_06_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_06_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_06_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_06_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_06_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_06_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_06_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_06_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_06_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_06_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_06_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_06_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483679 QM_H_bridge_init_07: 64 Vector__XXX
+SG_ h_bridge_07_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ h_bridge_07_Kp : 32|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_07_Ki : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_07_Kd : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ h_bridge_07_duty_min : 128|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_07_duty_max : 144|16@1- (0.1,0) [-3276.8|3276.7] "%" Vector__XXX
+SG_ h_bridge_07_max_speed : 160|32@1- (1,0) [-3.4E038|3.4E038] "%/s" Vector__XXX
+SG_ h_bridge_07_dist_mech_stop : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_07_valve_closed_pos : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_07_valve_opened_pos : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_07_close_valve_duration : 240|16@1+ (1,0) [0|65535] "ms" Vector__XXX
+SG_ h_bridge_07_close_valve_duty : 256|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_07_sensor_curve_dir : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_07_motor_polarity : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_07_current_limit : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_07_slew_rate : 304|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_07_pos_ctrl_input_no : 312|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483680 QM_H_bridge_write: 64 Vector__XXX
+SG_ h_bridge_01_select : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_02_select : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_03_select : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_04_select : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_05_select : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_06_select : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_07_select : 6|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ h_bridge_01_mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_02_mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_03_mode : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_04_mode : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_05_mode : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_06_mode : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_07_mode : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_01_direction : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_02_direction : 72|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_03_direction : 80|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_04_direction : 88|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_05_direction : 96|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_06_direction : 104|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_07_direction : 112|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ h_bridge_01_duty : 120|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_01_position : 120|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_02_duty : 136|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_02_position : 136|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_03_duty : 152|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_03_position : 152|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_04_duty : 168|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_04_position : 168|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_05_duty : 184|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_05_position : 184|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_06_duty : 200|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_06_position : 200|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_07_duty : 216|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ h_bridge_07_position : 216|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+
+BO_ 2147483681 QM_H_bridge_status: 64 Vector__XXX
+SG_ bridge_01_communication_ok : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_disabled : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_vs_undervoltage : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_over_temperature : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_current_limit_temp : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_current_limit : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_open_load_out1 : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_open_load_out2 : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_actual_direction : 12|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_01_actual_duty : 16|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_01_actual_position : 24|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_01_pos_ctrl_status : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ bridge_02_communication_ok : 40|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_disabled : 41|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_vs_undervoltage : 42|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_over_temperature : 43|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_current_limit_temp : 44|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_current_limit : 45|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_open_load_out1 : 50|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_open_load_out2 : 51|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_actual_direction : 52|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_02_actual_duty : 56|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_02_actual_position : 64|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_02_pos_ctrl_status : 72|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ bridge_03_communication_ok : 80|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_disabled : 81|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_vs_undervoltage : 82|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_over_temperature : 83|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_current_limit_temp : 84|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_current_limit : 85|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_open_load_out1 : 90|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_open_load_out2 : 91|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_actual_direction : 92|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_03_actual_duty : 96|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_03_actual_position : 104|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_03_pos_ctrl_status : 112|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ bridge_04_communication_ok : 120|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_disabled : 121|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_vs_undervoltage : 122|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_over_temperature : 123|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_current_limit_temp : 124|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_current_limit : 125|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_open_load_out1 : 130|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_open_load_out2 : 131|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_actual_direction : 132|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_04_actual_duty : 136|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_04_actual_position : 144|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_04_pos_ctrl_status : 152|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ bridge_05_communication_ok : 160|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_disabled : 161|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_vs_undervoltage : 162|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_over_temperature : 163|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_current_limit_temp : 164|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_current_limit : 165|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_open_load_out1 : 170|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_open_load_out2 : 171|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_actual_direction : 172|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_05_actual_duty : 176|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_05_actual_position : 184|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_05_pos_ctrl_status : 192|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ bridge_06_communication_ok : 200|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_disabled : 201|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_vs_undervoltage : 202|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_over_temperature : 203|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_current_limit_temp : 204|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_current_limit : 205|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_open_load_out1 : 210|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_open_load_out2 : 211|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_actual_direction : 212|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_06_actual_duty : 216|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_06_actual_position : 224|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_06_pos_ctrl_status : 232|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ bridge_07_communication_ok : 240|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_disabled : 241|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_vs_undervoltage : 242|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_over_temperature : 243|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_current_limit_temp : 244|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_current_limit : 245|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_open_load_out1 : 250|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_open_load_out2 : 251|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_actual_direction : 252|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ bridge_07_actual_duty : 256|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_07_actual_position : 264|8@1+ (1,0) [0|255] "%" Vector__XXX
+SG_ bridge_07_pos_ctrl_status : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483682 FUSA_High_side_output_init_01: 64 Vector__XXX
+SG_ fusa_hs_out01_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out01_pwm_min : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out01_pwm_max : 48|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out01_Kp : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out01_Ki : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out01_Kd : 128|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out02_frequency : 160|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out02_pwm_min : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out02_pwm_max : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out02_Kp : 224|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out02_Ki : 256|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out02_Kd : 288|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out03_frequency : 320|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out03_pwm_min : 352|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out03_pwm_max : 368|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out03_Kp : 384|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out03_Ki : 416|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out03_Kd : 448|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+
+BO_ 2147483683 FUSA_High_side_output_init_02: 64 Vector__XXX
+SG_ fusa_hs_out04_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out04_pwm_min : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out04_pwm_max : 48|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out04_Kp : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out04_Ki : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out04_Kd : 128|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out05_frequency : 160|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out05_pwm_min : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out05_pwm_max : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out05_Kp : 224|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out05_Ki : 256|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out05_Kd : 288|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out06_frequency : 320|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out06_pwm_min : 352|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out06_pwm_max : 368|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out06_Kp : 384|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out06_Ki : 416|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out06_Kd : 448|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+
+BO_ 2147483684 FUSA_High_side_output_init_03: 64 Vector__XXX
+SG_ fusa_hs_out07_frequency : 0|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out07_pwm_min : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out07_pwm_max : 48|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out07_Kp : 64|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out07_Ki : 96|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out07_Kd : 128|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out08_frequency : 160|32@1- (1,0) [-3.4E038|3.4E038] "Hz" Vector__XXX
+SG_ fusa_hs_out08_pwm_min : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out08_pwm_max : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out08_Kp : 224|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out08_Ki : 256|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+SG_ fusa_hs_out08_Kd : 288|32@1- (1,0) [-3.4E038|3.4E038] "" Vector__XXX
+
+BO_ 2147483685 FUSA_High_side_output_write: 64 Vector__XXX
+SG_ fusa_hs_out01_select : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out02_select : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out03_select : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out04_select : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out05_select : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out06_select : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out07_select : 6|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out08_select : 7|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ fusa_hs_out01_mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out02_mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out03_mode : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out04_mode : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out05_mode : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out06_mode : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out07_mode : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out08_mode : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ fusa_hs_out01_value_pwm : 72|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out01_value_current : 72|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out02_value_pwm : 88|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out02_value_current : 88|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out03_value_pwm : 104|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out03_value_current : 104|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out04_value_pwm : 120|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out04_value_current : 120|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out05_value_pwm : 136|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out05_value_current : 136|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out06_value_pwm : 152|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out06_value_current : 152|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out07_value_pwm : 168|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out07_value_current : 168|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ fusa_hs_out08_value_pwm : 184|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ fusa_hs_out08_value_current : 184|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+
+BO_ 2147483686 FUSA_High_side_output_status: 64 Vector__XXX
+SG_ hs_out01_current : 0|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out02_current : 16|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out03_current : 32|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out04_current : 48|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out05_current : 64|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out06_current : 80|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out07_current : 96|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out08_current : 112|16@1+ (1,0) [0|65535] "mA" Vector__XXX
+SG_ hs_out01_pwm : 128|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out02_pwm : 144|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out03_pwm : 160|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out04_pwm : 176|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out05_pwm : 192|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out06_pwm : 208|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out07_pwm : 224|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ hs_out08_pwm : 240|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+
+BO_ 2147483696 QM_PT1000_status: 64 Vector__XXX
+SG_ ch_01_status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_status : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_status : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_status : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_05_status : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_06_status : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_07_status : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_08_status : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_temperature : 64|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_02_temperature : 80|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_03_temperature : 96|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_04_temperature : 112|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_05_temperature : 128|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_06_temperature : 144|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_07_temperature : 160|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_08_temperature : 176|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ ch_01_voltage : 192|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_02_voltage : 208|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_03_voltage : 224|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_04_voltage : 240|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_05_voltage : 256|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_06_voltage : 272|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_07_voltage : 288|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_08_voltage : 304|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_01_current : 320|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_02_current : 336|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_03_current : 352|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_04_current : 368|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_05_current : 384|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_06_current : 400|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_07_current : 416|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_08_current : 432|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+
+BO_ 2147483697 QM_Analog_Input_status: 64 Vector__XXX
+SG_ an_pin_01_mode : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_02_mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_03_mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_04_mode : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_05_mode : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_06_mode : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_07_mode : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_08_mode : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_09_mode : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_10_mode : 72|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_11_mode : 80|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_12_mode : 88|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_13_mode : 96|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_14_mode : 104|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_15_mode : 112|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_16_mode : 120|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_pin_01_voltage : 128|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_01_current : 128|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_01_temperature : 128|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_01_digital : 128|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_02_voltage : 144|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_02_current : 144|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_02_temperature : 144|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_02_digital : 144|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_03_voltage : 160|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_03_current : 160|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_03_temperature : 160|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_03_digital : 160|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_04_voltage : 176|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_04_current : 176|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_04_temperature : 176|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_04_digital : 176|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_05_voltage : 192|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_05_current : 192|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_05_temperature : 192|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_05_digital : 192|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_06_voltage : 208|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_06_current : 208|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_06_temperature : 208|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_06_digital : 208|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_07_voltage : 224|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_07_current : 224|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_07_temperature : 224|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_07_digital : 224|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_08_voltage : 240|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_08_current : 240|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_08_temperature : 240|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_08_digital : 240|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_09_voltage : 256|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_09_current : 256|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_09_temperature : 256|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_09_digital : 256|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_10_voltage : 272|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_10_current : 272|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_10_temperature : 272|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_10_digital : 272|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_11_voltage : 288|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_11_current : 288|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_11_temperature : 288|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_11_digital : 288|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_12_voltage : 304|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_12_current : 304|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_12_temperature : 304|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_12_digital : 304|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_13_voltage : 320|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_13_current : 320|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_13_temperature : 320|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_13_digital : 320|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_14_voltage : 336|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_14_current : 336|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_14_temperature : 336|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_14_digital : 336|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_15_voltage : 352|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_15_current : 352|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_15_temperature : 352|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_15_digital : 352|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_pin_16_voltage : 368|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ an_pin_16_current : 368|16@1+ (0.001,0) [0|65.535] "mA" Vector__XXX
+SG_ an_pin_16_temperature : 368|16@1- (0.01,0) [-327.68|327.67] "deg" Vector__XXX
+SG_ an_pin_16_digital : 368|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ an_in_01_status : 384|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_02_status : 392|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_03_status : 400|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_04_status : 408|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_05_status : 416|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_06_status : 424|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_07_status : 432|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_08_status : 440|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_09_status : 448|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_10_status : 456|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_11_status : 464|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_12_status : 472|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_13_status : 480|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_14_status : 488|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_15_status : 496|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ an_in_16_status : 504|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483698 QM_analog_input_control: 64 Vector__XXX
+SG_ analog_input_01_mode : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_02_mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_03_mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_04_mode : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_05_mode : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_06_mode : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_07_mode : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_08_mode : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_09_mode : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_10_mode : 72|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_11_mode : 80|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_12_mode : 88|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_13_mode : 96|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_14_mode : 104|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_15_mode : 112|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ analog_input_16_mode : 120|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483699 QM_flex_input_status: 64 Vector__XXX
+SG_ flex_in_01_mode : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ flex_in_01_status : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ flex_in_01_val : 16|16@1+ (1,0) [0|65535] "" Vector__XXX
+
+BO_ 2147483904 FUSA_PT_1000_Status: 64 Vector__XXX
+SG_ single_ch_01_status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_02_status : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_03_status : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_04_status : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_05_status : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_06_status : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_07_status : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_08_status : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ single_ch_01_temp : 64|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_02_temp : 80|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_03_temp : 96|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_04_temp : 112|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_05_temp : 128|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_06_temp : 144|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_07_temp : 160|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ single_ch_08_temp : 176|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ redundant_ch_01_status : 192|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ redundant_ch_02_status : 200|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ redundant_ch_03_status : 208|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ redundant_ch_04_status : 216|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ redundant_ch_01_temp : 224|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ redundant_ch_02_temp : 240|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ redundant_ch_03_temp : 256|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ redundant_ch_04_temp : 272|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+
+BO_ 2147483905 FUSA_PT_1000_Debug_1: 64 Vector__XXX
+SG_ mux_1_pos : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ mux_2_pos : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_current_err_cnt : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_current_err_cnt : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_current_err_cnt : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_current_err_cnt : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_05_current_err_cnt : 48|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_06_current_err_cnt : 56|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_07_current_err_cnt : 64|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_08_current_err_cnt : 72|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_unselected_current_err_cnt : 80|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_unselected_current_err_cnt : 88|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_unselected_current_err_cnt : 96|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_unselected_current_err_cnt : 104|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_05_unselected_current_err_cnt : 112|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_06_unselected_current_err_cnt : 120|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_07_unselected_current_err_cnt : 128|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_08_unselected_current_err_cnt : 136|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_resistor_err_cnt : 208|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_resistor_err_cnt : 216|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_resistor_err_cnt : 224|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_resistor_err_cnt : 232|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_05_resistor_err_cnt : 240|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_06_resistor_err_cnt : 248|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_07_resistor_err_cnt : 256|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_08_resistor_err_cnt : 264|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_01_redundant_err_cnt : 272|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_02_redundant_err_cnt : 280|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_03_redundant_err_cnt : 288|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ ch_04_redundant_err_cnt : 296|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483906 FUSA_PT_1000_Debug_2: 64 Vector__XXX
+SG_ ch_01_voltage_val : 0|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_02_voltage_val : 16|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_03_voltage_val : 32|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_04_voltage_val : 48|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_05_voltage_val : 64|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_06_voltage_val : 80|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_07_voltage_val : 96|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_08_voltage_val : 112|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+SG_ ch_01_diag_current_val : 128|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_02_diag_current_val : 144|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_03_diag_current_val : 160|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_04_diag_current_val : 176|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_05_diag_current_val : 192|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_06_diag_current_val : 208|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_07_diag_current_val : 224|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_08_diag_current_val : 240|16@1+ (1,0) [0|65535] "microA" Vector__XXX
+SG_ ch_01_diag_resistor_val : 256|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_02_diag_resistor_val : 288|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_03_diag_resistor_val : 320|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_04_diag_resistor_val : 352|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_05_diag_resistor_val : 384|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_06_diag_resistor_val : 416|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_07_diag_resistor_val : 448|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+SG_ ch_08_diag_resistor_val : 480|32@1+ (1,0) [0|4294967295] "mOhm" Vector__XXX
+
+BO_ 2147483937 FUSA_ECU_Sensor_Supply_Control: 64 Vector__XXX
+SG_ enable : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 2147483936 FUSA_ECU_Sensor_Supply_Status: 64 Vector__XXX
+SG_ status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ measure : 8|16@1+ (1,0) [0|65535] "mV" Vector__XXX
+
+BO_ 2147483714 can_peripheral_ctrl: 64 Vector__XXX
+SG_ can_peripheral_ctrl_Mux M : 0|8@1+ (1,0) [0|0] "" Vector__XXX
+SG_ speed_setpoint0 m0 : 8|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ speed_setpoint2 m2 : 8|16@1+ (0.01,0) [0|655.35] "%" Vector__XXX
+
+BO_ 2147483712 can_peripheral_init: 64 Vector__XXX
+SG_ baudrate_can_3 : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ baudrate_can_4 : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ baudrate_can_5 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ baudrate_can_6 : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ mapping_pierburg_pump : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ mapping_trican : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 2147483713 can_peripheral_status: 64 Vector__XXX
+SG_ can_peripheral_status_Mux M : 0|8@1+ (1,0) [0|0] "" Vector__XXX
+SG_ status : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+SG_ discharge_status m0 : 16|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ semiconductor_switch_status m0 : 17|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ pierburg_pump_status m0 : 18|4@1+ (1,0) [0|15] "" Vector__XXX
+SG_ speed m0 : 24|16@1+ (1,0) [0|65535] "rpm" Vector__XXX
+SG_ voltage m0 : 40|16@1+ (0.1,0) [0|6553.5] "V" Vector__XXX
+SG_ current m0 : 56|16@1+ (0.1,0) [0|6553.5] "A" Vector__XXX
+SG_ torque m0 : 72|16@1+ (1,0) [0|65535] "mNm" Vector__XXX
+SG_ pcb_temp m0 : 72|16@1+ (0.1,0) [0|6553.5] "deg" Vector__XXX
+SG_ error_bits m0 : 88|16@1+ (1,0) [0|65535] "" Vector__XXX
+SG_ inlet_pressure m1 : 16|16@1+ (1,0) [0|65535] "mbar" Vector__XXX
+SG_ relative_humidity m1 : 32|16@1+ (0.1,0) [0|6553.5] "%" Vector__XXX
+SG_ specific_humidity m1 : 48|16@1+ (1,0) [0|65535] "0.01g/kg" Vector__XXX
+SG_ air_temperature m1 : 64|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+SG_ pressure_failure m1 : 80|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ pressure_out_of_range m1 : 81|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ temp_volt_above_normal m1 : 82|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ temp_volt_below_normal m1 : 83|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ humidity_volt_above_normal m1 : 84|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ humidity_volt_below_normal m1 : 85|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ controller_over_temp m1 : 86|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ calc_out_of_range m1 : 87|1@1+ (1,0) [0|1] "" Vector__XXX
+
+CM_ SG_ 2147483649 ch_01_address "A0 low , A1 low,  A2 low";
+CM_ SG_ 2147483649 ch_02_address "A0 high, A1 low,  A2 low";
+CM_ SG_ 2147483649 ch_03_address "A0 low,  A1 high, A2 low";
+CM_ SG_ 2147483649 ch_04_address "A0 high, A1 high, A2 low";
+CM_ SG_ 2147483649 ch_05_address "A0 low,  A1 low,  A2 high";
+CM_ SG_ 2147483649 ch_06_address "A0 high, A1 low,  A2 high";
+CM_ SG_ 2147483649 ch_07_address "A0 low,  A1 high, A2 high";
+CM_ SG_ 2147483649 ch_08_address "A0 high, A1 high, A2 high";
+CM_ SG_ 2147483667 hs_out01_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out01_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out01_Kp "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out01_Ki "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out01_Kd "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out02_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out02_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out02_Kp "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out02_Ki "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out02_Kd "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out03_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out03_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out03_Kp "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out03_Ki "only for \"current\" mode";
+CM_ SG_ 2147483667 hs_out03_Kd "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out04_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out04_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out04_Kp "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out04_Ki "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out04_Kd "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out05_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out05_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out05_Kp "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out05_Ki "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out05_Kd "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out06_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out06_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out06_Kp "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out06_Ki "only for \"current\" mode";
+CM_ SG_ 2147483668 hs_out06_Kd "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out07_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out07_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out07_Kp "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out07_Ki "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out07_Kd "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out08_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out08_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out08_Kp "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out08_Ki "only for \"current\" mode";
+CM_ SG_ 2147483669 hs_out08_Kd "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out01_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out01_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out01_Kp "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out01_Ki "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out01_Kd "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out02_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out02_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out02_Kp "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out02_Ki "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out02_Kd "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out03_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out03_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out03_Kp "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out03_Ki "only for \"current\" mode";
+CM_ SG_ 2147483682 fusa_hs_out03_Kd "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out04_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out04_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out04_Kp "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out04_Ki "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out04_Kd "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out05_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out05_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out05_Kp "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out05_Ki "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out05_Kd "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out06_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out06_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out06_Kp "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out06_Ki "only for \"current\" mode";
+CM_ SG_ 2147483683 fusa_hs_out06_Kd "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out07_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out07_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out07_Kp "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out07_Ki "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out07_Kd "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out08_pwm_min "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out08_pwm_max "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out08_Kp "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out08_Ki "only for \"current\" mode";
+CM_ SG_ 2147483684 fusa_hs_out08_Kd "only for \"current\" mode";
+
+BA_DEF_  "BusType" STRING ;
+BA_DEF_ BO_  "CANFD_BRS" ENUM  "0","1";
+BA_DEF_ BO_  "VFrameFormat" ENUM  "StandardCAN","ExtendedCAN","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","StandardCAN_FD","ExtendedCAN_FD";
+BA_DEF_ SG_  "GenSigStartValue" FLOAT -3.4E+038 3.4E+038;
+
+BA_DEF_DEF_  "BusType" "CAN";
+BA_DEF_DEF_  "CANFD_BRS" "1";
+BA_DEF_DEF_  "GenSigStartValue" 0;
+
+BA_ "BusType" "CAN FD";
+
+BA_ "VFrameFormat" BO_ 2147483649 15;
+BA_ "VFrameFormat" BO_ 2147483651 15;
+BA_ "VFrameFormat" BO_ 2147483652 15;
+BA_ "VFrameFormat" BO_ 2147483663 15;
+BA_ "VFrameFormat" BO_ 2147483664 15;
+BA_ "VFrameFormat" BO_ 2147483667 15;
+BA_ "VFrameFormat" BO_ 2147483668 15;
+BA_ "VFrameFormat" BO_ 2147483669 15;
+BA_ "VFrameFormat" BO_ 2147483670 15;
+BA_ "VFrameFormat" BO_ 2147483671 15;
+BA_ "VFrameFormat" BO_ 2147483672 15;
+BA_ "VFrameFormat" BO_ 2147483673 15;
+BA_ "VFrameFormat" BO_ 2147483674 15;
+BA_ "VFrameFormat" BO_ 2147483675 15;
+BA_ "VFrameFormat" BO_ 2147483676 15;
+BA_ "VFrameFormat" BO_ 2147483677 15;
+BA_ "VFrameFormat" BO_ 2147483678 15;
+BA_ "VFrameFormat" BO_ 2147483679 15;
+BA_ "VFrameFormat" BO_ 2147483680 15;
+BA_ "VFrameFormat" BO_ 2147483681 15;
+BA_ "VFrameFormat" BO_ 2147483682 15;
+BA_ "VFrameFormat" BO_ 2147483683 15;
+BA_ "VFrameFormat" BO_ 2147483684 15;
+BA_ "VFrameFormat" BO_ 2147483685 15;
+BA_ "VFrameFormat" BO_ 2147483686 15;
+BA_ "VFrameFormat" BO_ 2147483696 15;
+BA_ "VFrameFormat" BO_ 2147483697 15;
+BA_ "VFrameFormat" BO_ 2147483698 15;
+BA_ "VFrameFormat" BO_ 2147483699 15;
+BA_ "VFrameFormat" BO_ 2147483904 15;
+BA_ "VFrameFormat" BO_ 2147483905 15;
+BA_ "VFrameFormat" BO_ 2147483906 15;
+BA_ "VFrameFormat" BO_ 2147483937 15;
+BA_ "VFrameFormat" BO_ 2147483936 15;
+BA_ "VFrameFormat" BO_ 2147483714 15;
+BA_ "VFrameFormat" BO_ 2147483712 15;
+BA_ "VFrameFormat" BO_ 2147483713 15;
+
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out01_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out01_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out01_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out01_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out02_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out02_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out02_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out02_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out03_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out03_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out03_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483667 hs_out03_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out04_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out04_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out04_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out04_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out05_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out05_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out05_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out05_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out06_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out06_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out06_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483668 hs_out06_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out07_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out07_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out07_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out07_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out08_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out08_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out08_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483669 hs_out08_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out01_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out02_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out03_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out04_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out05_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out06_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out07_select 1;
+BA_ "GenSigStartValue" SG_ 2147483670 hs_out08_select 1;
+BA_ "GenSigStartValue" SG_ 2147483672 analog_out_01_select 1;
+BA_ "GenSigStartValue" SG_ 2147483672 analog_out_02_select 1;
+BA_ "GenSigStartValue" SG_ 2147483672 analog_out_03_select 1;
+BA_ "GenSigStartValue" SG_ 2147483672 analog_out_04_select 1;
+BA_ "GenSigStartValue" SG_ 2147483672 analog_out_05_select 1;
+BA_ "GenSigStartValue" SG_ 2147483672 analog_out_06_select 1;
+BA_ "GenSigStartValue" SG_ 2147483673 h_bridge_01_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483673 h_bridge_01_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483673 h_bridge_01_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483673 h_bridge_01_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483673 h_bridge_01_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483673 h_bridge_01_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483674 h_bridge_02_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483674 h_bridge_02_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483674 h_bridge_02_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483674 h_bridge_02_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483674 h_bridge_02_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483674 h_bridge_02_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483675 h_bridge_03_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483675 h_bridge_03_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483675 h_bridge_03_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483675 h_bridge_03_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483675 h_bridge_03_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483675 h_bridge_03_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483676 h_bridge_04_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483676 h_bridge_04_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483676 h_bridge_04_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483676 h_bridge_04_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483676 h_bridge_04_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483676 h_bridge_04_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483677 h_bridge_05_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483677 h_bridge_05_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483677 h_bridge_05_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483677 h_bridge_05_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483677 h_bridge_05_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483677 h_bridge_05_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483678 h_bridge_06_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483678 h_bridge_06_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483678 h_bridge_06_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483678 h_bridge_06_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483678 h_bridge_06_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483678 h_bridge_06_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483679 h_bridge_07_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483679 h_bridge_07_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483679 h_bridge_07_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483679 h_bridge_07_duty_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483679 h_bridge_07_valve_closed_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483679 h_bridge_07_valve_opened_pos 1000;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_01_select 1;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_02_select 1;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_03_select 1;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_04_select 1;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_05_select 1;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_06_select 1;
+BA_ "GenSigStartValue" SG_ 2147483680 h_bridge_07_select 1;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out01_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out01_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out01_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out01_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out02_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out02_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out02_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out02_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out03_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out03_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out03_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483682 fusa_hs_out03_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out04_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out04_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out04_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out04_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out05_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out05_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out05_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out05_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out06_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out06_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out06_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483683 fusa_hs_out06_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out07_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out07_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out07_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out07_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out08_frequency 1000;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out08_pwm_max 1000;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out08_Kp 1;
+BA_ "GenSigStartValue" SG_ 2147483684 fusa_hs_out08_Ki 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out01_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out02_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out03_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out04_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out05_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out06_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out07_select 1;
+BA_ "GenSigStartValue" SG_ 2147483685 fusa_hs_out08_select 1;
+
+VAL_ 2147483714 can_peripheral_ctrl_Mux 0 "pierburg_pump" 2 "bosch_eac";
+VAL_ 2147483713 can_peripheral_status_Mux 0 "pierburg_pump" 1 "trican";
+VAL_ 2147483649 ch_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_02_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_03_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_04_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_05_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_06_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_07_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483649 ch_08_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483664 device_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483664 device_02_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483664 device_03_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483664 device_04_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483670 hs_out01_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out02_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out03_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out04_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out05_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out06_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out07_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483670 hs_out08_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483672 analog_out_01_mode 0 "output_dac_mode_none" 1 "output_dac_mode_0_5V" 2 "output_dac_mode_0_10V" 3 "output_dac_mode_0_20mA" 4 "output_dac_mode_4_20mA" 5 "output_dac_mode_0_24mA";
+VAL_ 2147483672 analog_out_02_mode 0 "output_dac_mode_none" 1 "output_dac_mode_0_5V" 2 "output_dac_mode_0_10V" 3 "output_dac_mode_0_20mA" 4 "output_dac_mode_4_20mA" 5 "output_dac_mode_0_24mA";
+VAL_ 2147483672 analog_out_03_mode 0 "output_dac_mode_none" 1 "output_dac_mode_0_5V" 2 "output_dac_mode_0_10V" 3 "output_dac_mode_0_20mA" 4 "output_dac_mode_4_20mA" 5 "output_dac_mode_0_24mA";
+VAL_ 2147483672 analog_out_04_mode 0 "output_dac_mode_none" 1 "output_dac_mode_0_5V" 2 "output_dac_mode_0_10V" 3 "output_dac_mode_0_20mA" 4 "output_dac_mode_4_20mA" 5 "output_dac_mode_0_24mA";
+VAL_ 2147483673 h_bridge_01_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483673 h_bridge_01_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483673 h_bridge_01_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483673 h_bridge_01_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483674 h_bridge_02_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483674 h_bridge_02_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483674 h_bridge_02_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483674 h_bridge_02_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483675 h_bridge_03_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483675 h_bridge_03_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483675 h_bridge_03_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483675 h_bridge_03_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483676 h_bridge_04_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483676 h_bridge_04_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483676 h_bridge_04_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483676 h_bridge_04_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483677 h_bridge_05_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483677 h_bridge_05_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483677 h_bridge_05_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483677 h_bridge_05_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483678 h_bridge_06_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483678 h_bridge_06_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483678 h_bridge_06_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483678 h_bridge_06_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483679 h_bridge_07_sensor_curve_dir 0 "h_bridge_sensor_curve_dir_rising" 1 "h_bridge_sensor_curve_dir_falling";
+VAL_ 2147483679 h_bridge_07_motor_polarity 0 "h_bridge_motor_polarity_normal" 1 "h_bridge_motor_polarity_inverted";
+VAL_ 2147483679 h_bridge_07_current_limit 0 "h_bridge_current_limit_1A5" 1 "h_bridge_current_limit_4A0" 2 "h_bridge_current_limit_6A6" 3 "h_bridge_current_limit_8A6";
+VAL_ 2147483679 h_bridge_07_slew_rate 0 "h_bridge_slew_rate_fast" 1 "h_bridge_slew_rate_slow";
+VAL_ 2147483680 h_bridge_01_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_02_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_03_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_04_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_05_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_06_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_07_mode 0 "h_bridge_mode_pwm" 1 "h_bridge_mode_position_control";
+VAL_ 2147483680 h_bridge_01_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483680 h_bridge_02_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483680 h_bridge_03_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483680 h_bridge_04_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483680 h_bridge_05_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483680 h_bridge_06_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483680 h_bridge_07_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_01_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_01_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483681 bridge_02_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_02_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483681 bridge_03_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_03_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483681 bridge_04_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_04_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483681 bridge_05_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_05_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483681 bridge_06_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_06_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483681 bridge_07_actual_direction 0 "h_bridge_direction_forward" 1 "h_bridge_direction_reverse";
+VAL_ 2147483681 bridge_07_pos_ctrl_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483685 fusa_hs_out01_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out02_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out03_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out04_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out05_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out06_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out07_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483685 fusa_hs_out08_mode 0 "hs_outmode_pwm" 1 "hs_outmode_current_control";
+VAL_ 2147483696 ch_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_02_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_03_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_04_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_05_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_06_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_07_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483696 ch_08_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_pin_01_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_02_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_03_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_04_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_05_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_06_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_07_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_08_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_09_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_10_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_11_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_12_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_13_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_14_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_15_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_pin_16_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483697 an_in_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_02_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_03_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_04_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_05_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_06_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_07_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_08_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_09_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_10_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_11_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_12_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_13_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_14_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_15_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483697 an_in_16_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483698 analog_input_01_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_02_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_03_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_04_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_05_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_06_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_07_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_08_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_09_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_10_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_11_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_12_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_13_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_14_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_15_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483698 analog_input_16_mode 0 "mode_none" 1 "mode_pu_voltage" 2 "mode_temperature" 3 "mode_current" 4 "mode_voltage_0_5V" 5 "mode_voltage_0_10V" 6 "mode_digital";
+VAL_ 2147483699 flex_in_01_mode 0 "flex_in_mode_none" 1 "flex_in_mode_dig_open_collector" 2 "flex_in_mode_dig_push_pull" 3 "flex_in_mode_frequency_open_collector" 4 "flex_in_mode_frequency_push_pull";
+VAL_ 2147483699 flex_in_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_02_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_03_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_04_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_05_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_06_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_07_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 single_ch_08_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 redundant_ch_01_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 redundant_ch_02_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 redundant_ch_03_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483904 redundant_ch_04_status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483936 status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483712 baudrate_can_3 0 "500K/2M" 1 "250K" 2 "500K" 3 "1M";
+VAL_ 2147483712 baudrate_can_4 0 "500K/2M" 1 "250K" 2 "500K" 3 "1M";
+VAL_ 2147483712 baudrate_can_5 0 "500K/2M" 1 "250K" 2 "500K" 3 "1M";
+VAL_ 2147483712 baudrate_can_6 0 "500K/2M" 1 "250K" 2 "500K" 3 "1M";
+VAL_ 2147483712 mapping_pierburg_pump 0 "not_active" 1 "active_can_3" 2 "active_can_4" 3 "active_can_5" 4 "active_can_6";
+VAL_ 2147483712 mapping_trican 0 "not_active" 1 "active_can_3" 2 "active_can_4" 3 "active_can_5" 4 "active_can_6";
+VAL_ 2147483713 status 0 "status_ok" 1 "status_value_na" 2 "status_error" 3 "status_wire_break" 4 "status_short_circuit" 5 "status_timeout" 6 "initialized" 7 "override_active" 8 "override_not_active" 9 "over_range" 10 "under_range" 11 "status_disabled" 12 "access_not_allowed" 13 "no_calibration" 14 "not_initialized" 15 "short_to_battery";
+VAL_ 2147483713 pierburg_pump_status 0 "pierburg_pump_status_init" 1 "pierburg_pump_status_selftest" 2 "pierburg_pump_status_waiting_for_start" 3 "pierburg_pump_status_error" 4 "pierburg_pump_status_running" 5 "pierburg_pump_status_heating" 6 "pierburg_pump_status_wait_hv" 7 "pierburg_pump_status_open_loop" 8 "pierburg_pump_status_closed_loop" 9 "pierburg_pump_status_deblock" 10 "pierburg_pump_status_sna";
+
+SIG_VALTYPE_ 2147483667 hs_out01_frequency : 1;
+SIG_VALTYPE_ 2147483667 hs_out01_Kp : 1;
+SIG_VALTYPE_ 2147483667 hs_out01_Ki : 1;
+SIG_VALTYPE_ 2147483667 hs_out01_Kd : 1;
+SIG_VALTYPE_ 2147483667 hs_out02_frequency : 1;
+SIG_VALTYPE_ 2147483667 hs_out02_Kp : 1;
+SIG_VALTYPE_ 2147483667 hs_out02_Ki : 1;
+SIG_VALTYPE_ 2147483667 hs_out02_Kd : 1;
+SIG_VALTYPE_ 2147483667 hs_out03_frequency : 1;
+SIG_VALTYPE_ 2147483667 hs_out03_Kp : 1;
+SIG_VALTYPE_ 2147483667 hs_out03_Ki : 1;
+SIG_VALTYPE_ 2147483667 hs_out03_Kd : 1;
+SIG_VALTYPE_ 2147483668 hs_out04_frequency : 1;
+SIG_VALTYPE_ 2147483668 hs_out04_Kp : 1;
+SIG_VALTYPE_ 2147483668 hs_out04_Ki : 1;
+SIG_VALTYPE_ 2147483668 hs_out04_Kd : 1;
+SIG_VALTYPE_ 2147483668 hs_out05_frequency : 1;
+SIG_VALTYPE_ 2147483668 hs_out05_Kp : 1;
+SIG_VALTYPE_ 2147483668 hs_out05_Ki : 1;
+SIG_VALTYPE_ 2147483668 hs_out05_Kd : 1;
+SIG_VALTYPE_ 2147483668 hs_out06_frequency : 1;
+SIG_VALTYPE_ 2147483668 hs_out06_Kp : 1;
+SIG_VALTYPE_ 2147483668 hs_out06_Ki : 1;
+SIG_VALTYPE_ 2147483668 hs_out06_Kd : 1;
+SIG_VALTYPE_ 2147483669 hs_out07_frequency : 1;
+SIG_VALTYPE_ 2147483669 hs_out07_Kp : 1;
+SIG_VALTYPE_ 2147483669 hs_out07_Ki : 1;
+SIG_VALTYPE_ 2147483669 hs_out07_Kd : 1;
+SIG_VALTYPE_ 2147483669 hs_out08_frequency : 1;
+SIG_VALTYPE_ 2147483669 hs_out08_Kp : 1;
+SIG_VALTYPE_ 2147483669 hs_out08_Ki : 1;
+SIG_VALTYPE_ 2147483669 hs_out08_Kd : 1;
+SIG_VALTYPE_ 2147483673 h_bridge_01_frequency : 1;
+SIG_VALTYPE_ 2147483673 h_bridge_01_Kp : 1;
+SIG_VALTYPE_ 2147483673 h_bridge_01_Ki : 1;
+SIG_VALTYPE_ 2147483673 h_bridge_01_Kd : 1;
+SIG_VALTYPE_ 2147483673 h_bridge_01_max_speed : 1;
+SIG_VALTYPE_ 2147483674 h_bridge_02_frequency : 1;
+SIG_VALTYPE_ 2147483674 h_bridge_02_Kp : 1;
+SIG_VALTYPE_ 2147483674 h_bridge_02_Ki : 1;
+SIG_VALTYPE_ 2147483674 h_bridge_02_Kd : 1;
+SIG_VALTYPE_ 2147483674 h_bridge_02_max_speed : 1;
+SIG_VALTYPE_ 2147483675 h_bridge_03_frequency : 1;
+SIG_VALTYPE_ 2147483675 h_bridge_03_Kp : 1;
+SIG_VALTYPE_ 2147483675 h_bridge_03_Ki : 1;
+SIG_VALTYPE_ 2147483675 h_bridge_03_Kd : 1;
+SIG_VALTYPE_ 2147483675 h_bridge_03_max_speed : 1;
+SIG_VALTYPE_ 2147483676 h_bridge_04_frequency : 1;
+SIG_VALTYPE_ 2147483676 h_bridge_04_Kp : 1;
+SIG_VALTYPE_ 2147483676 h_bridge_04_Ki : 1;
+SIG_VALTYPE_ 2147483676 h_bridge_04_Kd : 1;
+SIG_VALTYPE_ 2147483676 h_bridge_04_max_speed : 1;
+SIG_VALTYPE_ 2147483677 h_bridge_05_frequency : 1;
+SIG_VALTYPE_ 2147483677 h_bridge_05_Kp : 1;
+SIG_VALTYPE_ 2147483677 h_bridge_05_Ki : 1;
+SIG_VALTYPE_ 2147483677 h_bridge_05_Kd : 1;
+SIG_VALTYPE_ 2147483677 h_bridge_05_max_speed : 1;
+SIG_VALTYPE_ 2147483678 h_bridge_06_frequency : 1;
+SIG_VALTYPE_ 2147483678 h_bridge_06_Kp : 1;
+SIG_VALTYPE_ 2147483678 h_bridge_06_Ki : 1;
+SIG_VALTYPE_ 2147483678 h_bridge_06_Kd : 1;
+SIG_VALTYPE_ 2147483678 h_bridge_06_max_speed : 1;
+SIG_VALTYPE_ 2147483679 h_bridge_07_frequency : 1;
+SIG_VALTYPE_ 2147483679 h_bridge_07_Kp : 1;
+SIG_VALTYPE_ 2147483679 h_bridge_07_Ki : 1;
+SIG_VALTYPE_ 2147483679 h_bridge_07_Kd : 1;
+SIG_VALTYPE_ 2147483679 h_bridge_07_max_speed : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out01_frequency : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out01_Kp : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out01_Ki : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out01_Kd : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out02_frequency : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out02_Kp : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out02_Ki : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out02_Kd : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out03_frequency : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out03_Kp : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out03_Ki : 1;
+SIG_VALTYPE_ 2147483682 fusa_hs_out03_Kd : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out04_frequency : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out04_Kp : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out04_Ki : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out04_Kd : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out05_frequency : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out05_Kp : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out05_Ki : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out05_Kd : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out06_frequency : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out06_Kp : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out06_Ki : 1;
+SIG_VALTYPE_ 2147483683 fusa_hs_out06_Kd : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out07_frequency : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out07_Kp : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out07_Ki : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out07_Kd : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out08_frequency : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out08_Kp : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out08_Ki : 1;
+SIG_VALTYPE_ 2147483684 fusa_hs_out08_Kd : 1;
