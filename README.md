@@ -7,7 +7,7 @@ This repository contains a minimal PyQt5 application that demonstrates ECU contr
 - Five high-side outputs (HS1–HS5) with enable toggle and PWM slider
 - Five mixed inputs (digital/analog) with live updates at 10 Hz
 - Dummy backend simulates first-order current response with noise and dynamic inputs
-- CSV logging for all ten signals with ISO timestamps and configurable rate
+- DBC-driven signal browser with search, watchlist, and CSV logging for any selected signals
 - Real backend loads the provided DBC, opens a python-can bus, sends one write command, and decodes one feedback message
 
 ## Getting Started
@@ -48,15 +48,24 @@ Use the **Connection** panel to provide the following settings before selecting 
 
 When an output state changes, the Real backend encodes the PWM and enable signals with cantools and sends a single `QM_High_side_output_write` frame. Incoming `QM_High_side_output_status` frames are decoded asynchronously so the live current is updated immediately in the GUI.
 
+## Signal Browser and Watchlist
+1. Load a DBC file with the **Load** button in the connection panel. All messages and signals are parsed dynamically—no signal names are hardcoded.
+2. Use the search field to filter messages or signals. Multiple signals can be selected at once.
+3. Click **Add to Watchlist** to begin tracking the selected signals. The watchlist refreshes every 100 ms for both Dummy and Real backends.
+4. Remove signals with **Remove Selected** when you no longer need them.
+
+The Dummy backend mirrors the Real backend signal names so the watchlist and logger operate identically in either mode.
+
 ## Outputs and Inputs
 - Enable or disable each high-side output with the checkbox and adjust the PWM using the slider.
 - The live current is shown next to each output.
 - Input signals update at 10 Hz. Digital inputs display `ON`/`OFF`, while analog inputs show numeric values.
 
 ## CSV Logging
-1. Choose the destination file path and the sampling rate (1–50 Hz).
-2. Click **Start Logging**. The CSV file includes the header `timestamp`, the currents for all five outputs, and the five input values.
-3. Click **Stop Logging** to finish and close the file.
+1. Select a destination file path and sampling rate (1–50 Hz).
+2. Populate the watchlist with the signals you want to capture.
+3. Click **Start Logging**. The CSV header contains `timestamp` plus every signal currently present in the watchlist.
+4. Click **Stop Logging** to finish and close the file.
 
 If the file cannot be opened, an error message appears and logging does not start.
 

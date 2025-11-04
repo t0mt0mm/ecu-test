@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Iterable, List, Optional
 
 import can
 import cantools
@@ -13,12 +13,14 @@ from cantools.database import errors as cantools_errors
 from PyQt5.QtCore import QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -27,6 +29,10 @@ from PyQt5.QtWidgets import (
     QSlider,
     QSpinBox,
     QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +63,17 @@ class ConnectionSettings:
     bitrate: int
 
 
+@dataclass
+class SignalDefinition:
+    message_name: str
+    name: str
+    unit: str
+    minimum: Optional[float]
+    maximum: Optional[float]
+    scale: float
+    offset: float
+
+
 class BackendError(Exception):
     """Raised when a backend cannot complete the requested action."""
 
@@ -72,6 +89,9 @@ class BackendBase:
     def stop(self) -> None:
         """Tear down backend resources."""
 
+    def apply_database(self, database) -> None:  # pragma: no cover - optional hook
+        """Provide the loaded DBC to the backend."""
+
     def set_output(self, channel: str, enabled: bool, pwm: float) -> None:
         raise NotImplementedError
 
@@ -83,6 +103,9 @@ class BackendBase:
 
     def update(self, dt: float) -> None:
         """Advance internal simulation and poll hardware."""
+
+    def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
+        raise NotImplementedError
 
 
 class DummyBackend(BackendBase):
@@ -96,12 +119,23 @@ class DummyBackend(BackendBase):
         self._digital_states: Dict[str, bool] = {"DI1": False, "DI2": True}
         self._time = 0.0
         self._tau = 0.5  # time constant for first-order response
+        self._dbc = None
+        self._signal_values: Dict[str, float] = {}
 
     def start(self) -> None:
         self._time = 0.0
 
     def stop(self) -> None:
         pass
+
+    def apply_database(self, database) -> None:
+        self._dbc = database
+        self._signal_values = {}
+        if self._dbc is not None:
+            for message in self._dbc.messages:
+                for signal in message.signals:
+                    self._signal_values[signal.name] = 0.0
+        self._seed_values()
 
     def set_output(self, channel: str, enabled: bool, pwm: float) -> None:
         if channel not in self._outputs:
@@ -110,6 +144,10 @@ class DummyBackend(BackendBase):
         state = self._outputs[channel]
         state.enabled = enabled
         state.pwm = pwm
+        index = OUTPUT_CHANNELS.index(channel) + 1
+        self._update_signal_value(f"hs_out{index:02d}_select", 1 if enabled else 0)
+        self._update_signal_value(f"hs_out{index:02d}_mode", 1 if enabled else 0)
+        self._update_signal_value(f"hs_out{index:02d}_value_pwm", pwm)
 
     def read_outputs(self) -> Dict[str, OutputState]:
         return {ch: OutputState(s.enabled, s.pwm, s.current) for ch, s in self._outputs.items()}
@@ -140,6 +178,39 @@ class DummyBackend(BackendBase):
             delta = (target - state.current) * (dt / self._tau)
             state.current += delta + noise
             state.current = max(0.0, state.current)
+            index = OUTPUT_CHANNELS.index(ch) + 1
+            current_ma = state.current * 1000.0
+            self._update_signal_value(f"hs_out{index:02d}_current", current_ma)
+            self._update_signal_value(f"hs_out{index:02d}_value_current", current_ma)
+            self._update_signal_value(f"hs_out{index:02d}_pwm", state.pwm)
+            self._update_signal_value(f"hs_out{index:02d}_value_pwm", state.pwm)
+
+        # Mirror inputs
+        for name, value in self.read_inputs().items():
+            self._update_signal_value(name, value)
+
+    def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
+        values: Dict[str, float] = {}
+        for name in signal_names:
+            values[name] = float(self._signal_values.get(name, 0.0))
+        return values
+
+    def _update_signal_value(self, name: str, value: float) -> None:
+        if name in self._signal_values:
+            self._signal_values[name] = float(value)
+
+    def _seed_values(self) -> None:
+        for channel, state in self._outputs.items():
+            index = OUTPUT_CHANNELS.index(channel) + 1
+            current_ma = state.current * 1000.0
+            self._update_signal_value(f"hs_out{index:02d}_current", current_ma)
+            self._update_signal_value(f"hs_out{index:02d}_value_current", current_ma)
+            self._update_signal_value(f"hs_out{index:02d}_pwm", state.pwm)
+            self._update_signal_value(f"hs_out{index:02d}_value_pwm", state.pwm)
+            self._update_signal_value(f"hs_out{index:02d}_select", 1 if state.enabled else 0)
+            self._update_signal_value(f"hs_out{index:02d}_mode", 1 if state.enabled else 0)
+        for name, value in self.read_inputs().items():
+            self._update_signal_value(name, value)
 
 
 class RealBackend(QObject, BackendBase):
@@ -161,13 +232,22 @@ class RealBackend(QObject, BackendBase):
         self._status_message = None
         self._lock = threading.Lock()
         self._listener: Optional["_StatusListener"] = None
+        self._signal_cache: Dict[str, float] = {}
+
+    def apply_database(self, database) -> None:
+        with self._lock:
+            self._signal_cache = {}
+            if database is not None:
+                for message in getattr(database, "messages", []):
+                    for signal in message.signals:
+                        self._signal_cache[signal.name] = 0.0
 
     def start(self) -> None:
         if not os.path.exists(self.settings.dbc_path):
             raise BackendError(f"DBC file not found: {self.settings.dbc_path}")
 
         try:
-            self._db = cantools.database.load_file(self.settings.dbc_path)
+            self._db = cantools.database.load_file(self.settings.dbc_path, strict=False)
         except (OSError, cantools_errors.Error) as exc:
             raise BackendError(f"Failed to load DBC: {exc}")
 
@@ -176,6 +256,11 @@ class RealBackend(QObject, BackendBase):
             self._status_message = self._db.get_message_by_name("QM_High_side_output_status")
         except KeyError as exc:
             raise BackendError(f"Required message missing in DBC: {exc}")
+
+        self._signal_cache = {}
+        for message in self._db.messages:
+            for signal in message.signals:
+                self._signal_cache[signal.name] = 0.0
 
         try:
             bus_kwargs = {
@@ -249,6 +334,9 @@ class RealBackend(QObject, BackendBase):
             payload[select_name] = 1 if state.enabled else 0
             payload[mode_name] = 1 if state.enabled else 0
             payload[pwm_name] = state.pwm
+            self._signal_cache[select_name] = payload[select_name]
+            self._signal_cache[mode_name] = payload[mode_name]
+            self._signal_cache[pwm_name] = payload[pwm_name]
         return payload
 
     def _handle_status(self, message: can.Message) -> None:
@@ -265,19 +353,33 @@ class RealBackend(QObject, BackendBase):
             for index, channel in enumerate(OUTPUT_CHANNELS, start=1):
                 current_key = f"hs_out{index:02d}_current"
                 pwm_key = f"hs_out{index:02d}_pwm"
+                value_current_key = f"hs_out{index:02d}_value_current"
+                value_pwm_key = f"hs_out{index:02d}_value_pwm"
                 if current_key in decoded:
                     current_ma = float(decoded[current_key])
                     self._outputs[channel].current = max(0.0, current_ma / 1000.0)
+                    self._signal_cache[current_key] = current_ma
+                    if value_current_key in self._signal_cache:
+                        self._signal_cache[value_current_key] = current_ma
                 if pwm_key in decoded:
                     self._outputs[channel].pwm = float(decoded[pwm_key])
+                    self._signal_cache[pwm_key] = float(decoded[pwm_key])
+                    if value_pwm_key in self._signal_cache:
+                        self._signal_cache[value_pwm_key] = float(decoded[pwm_key])
             # Expose PWM of status as inputs for visibility
             for index in range(1, len(OUTPUT_CHANNELS) + 1):
                 current_key = f"hs_out{index:02d}_current"
                 input_key = f"AI{index}"
                 if current_key in decoded and input_key in self._inputs:
                     self._inputs[input_key] = float(decoded[current_key]) / 1000.0
+            for name, value in decoded.items():
+                self._signal_cache[name] = float(value)
 
         self.status_updated.emit()
+
+    def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
+        with self._lock:
+            return {name: float(self._signal_cache.get(name, 0.0)) for name in signal_names}
 
 
 class _StatusListener(can.Listener):
@@ -409,6 +511,157 @@ class Logger:
         return self._last_error
 
 
+class SignalBrowserWidget(QGroupBox):
+    def __init__(self) -> None:
+        super().__init__("Signal Browser")
+        self._signals: Dict[str, List[SignalDefinition]] = {}
+
+        layout = QVBoxLayout()
+
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.textChanged.connect(self._apply_filter)
+        search_layout.addWidget(self.search_edit)
+        layout.addLayout(search_layout)
+
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(5)
+        self.tree.setHeaderLabels(["Signal", "Unit", "Min", "Max", "Scaling"])
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.setRootIsDecorated(True)
+        layout.addWidget(self.tree)
+
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("Add to Watchlist")
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.add_button)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+
+    def set_signals(self, signals: Dict[str, List[SignalDefinition]]) -> None:
+        self._signals = signals
+        self.tree.clear()
+        for message_name in sorted(self._signals):
+            parent = QTreeWidgetItem([message_name, "", "", "", ""])
+            parent.setData(0, Qt.UserRole, ("message", message_name))
+            for definition in self._signals[message_name]:
+                if definition.offset:
+                    scaling = f"{definition.scale:g} * raw + {definition.offset:g}"
+                else:
+                    scaling = f"{definition.scale:g} * raw"
+                item = QTreeWidgetItem(
+                    [
+                        definition.name,
+                        definition.unit or "",
+                        "" if definition.minimum is None else f"{definition.minimum:g}",
+                        "" if definition.maximum is None else f"{definition.maximum:g}",
+                        scaling,
+                    ]
+                )
+                item.setData(0, Qt.UserRole, ("signal", definition))
+                parent.addChild(item)
+            parent.setExpanded(True)
+            self.tree.addTopLevelItem(parent)
+
+    def selected_signal_names(self) -> List[str]:
+        names: List[str] = []
+        for item in self.tree.selectedItems():
+            data = item.data(0, Qt.UserRole)
+            if isinstance(data, tuple) and data and data[0] == "signal":
+                definition: SignalDefinition = data[1]
+                names.append(definition.name)
+        return names
+
+    def _apply_filter(self, text: str) -> None:
+        text = text.lower().strip()
+        for i in range(self.tree.topLevelItemCount()):
+            message_item = self.tree.topLevelItem(i)
+            message_name = message_item.text(0).lower()
+            message_match = text in message_name if text else True
+            visible_children = 0
+            for j in range(message_item.childCount()):
+                child = message_item.child(j)
+                signal_name = child.text(0).lower()
+                unit = child.text(1).lower()
+                matches = (
+                    not text
+                    or text in signal_name
+                    or text in unit
+                    or text in message_name
+                )
+                child.setHidden(not matches)
+                if matches:
+                    visible_children += 1
+            message_item.setHidden(not (message_match or visible_children > 0))
+            if text and (message_match or visible_children > 0):
+                message_item.setExpanded(True)
+
+
+class WatchlistWidget(QGroupBox):
+    def __init__(self) -> None:
+        super().__init__("Watchlist")
+        self._order: List[str] = []
+
+        layout = QVBoxLayout()
+
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Signal", "Value"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        layout.addWidget(self.table)
+
+        button_layout = QHBoxLayout()
+        self.remove_button = QPushButton("Remove Selected")
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.remove_button)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+
+    def add_signals(self, names: Iterable[str]) -> List[str]:
+        added: List[str] = []
+        for name in names:
+            if name in self._order:
+                continue
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(name))
+            self.table.setItem(row, 1, QTableWidgetItem("0.0000"))
+            self._order.append(name)
+            added.append(name)
+        return added
+
+    def remove_selected(self) -> List[str]:
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()}, reverse=True)
+        removed: List[str] = []
+        for row in rows:
+            if 0 <= row < len(self._order):
+                removed.append(self._order[row])
+                self._order.pop(row)
+                self.table.removeRow(row)
+        return removed
+
+    def update_values(self, values: Dict[str, float]) -> None:
+        for row, name in enumerate(self._order):
+            value = values.get(name)
+            display = "n/a" if value is None else f"{value:.4f}"
+            item = self.table.item(row, 1)
+            if item is None:
+                item = QTableWidgetItem(display)
+                self.table.setItem(row, 1, item)
+            else:
+                item.setText(display)
+
+    @property
+    def signal_names(self) -> List[str]:
+        return list(self._order)
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -422,6 +675,9 @@ class MainWindow(QMainWindow):
         self.logger = Logger()
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
+        self._dbc = None
+        self._signals_by_message: Dict[str, List[SignalDefinition]] = {}
+        self._watch_values: Dict[str, float] = {}
 
         self.setStatusBar(QStatusBar())
 
@@ -430,6 +686,7 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(self._build_mode_selector())
         main_layout.addWidget(self._build_connection_group())
+        main_layout.addLayout(self._build_signal_section())
         main_layout.addWidget(self._build_output_group())
         main_layout.addWidget(self._build_input_group())
         main_layout.addWidget(self._build_logging_group())
@@ -443,6 +700,7 @@ class MainWindow(QMainWindow):
         self.timer.start()
 
         self._switch_backend(DummyBackend.name)
+        self._load_current_dbc()
 
     def _build_mode_selector(self) -> QHBoxLayout:
         layout = QHBoxLayout()
@@ -464,6 +722,9 @@ class MainWindow(QMainWindow):
         dbc_button = QPushButton("Browse")
         dbc_button.clicked.connect(self._browse_dbc)
         layout.addWidget(dbc_button, 0, 2)
+        load_button = QPushButton("Load")
+        load_button.clicked.connect(self._load_current_dbc)
+        layout.addWidget(load_button, 0, 3)
 
         layout.addWidget(QLabel("Bus type"), 1, 0)
         self.bustype_combo = QComboBox()
@@ -482,8 +743,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.bitrate_spin, 3, 1)
 
         layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(2, 0)
+        layout.setColumnStretch(3, 0)
         group.setLayout(layout)
         return group
+
+    def _build_signal_section(self) -> QHBoxLayout:
+        layout = QHBoxLayout()
+        self.signal_browser = SignalBrowserWidget()
+        self.signal_browser.add_button.clicked.connect(self._add_selected_signals)
+        layout.addWidget(self.signal_browser, 2)
+
+        self.watchlist_widget = WatchlistWidget()
+        self.watchlist_widget.remove_button.clicked.connect(self._remove_selected_signals)
+        layout.addWidget(self.watchlist_widget, 1)
+        return layout
 
     def _build_output_group(self) -> QGroupBox:
         group = QGroupBox("Outputs")
@@ -540,6 +814,70 @@ class MainWindow(QMainWindow):
         if path:
             self.path_edit.setText(path)
 
+    def _add_selected_signals(self) -> None:
+        if self.logger.is_running:
+            QMessageBox.warning(self, "Watchlist", "Stop logging before modifying the watchlist.")
+            return
+        names = self.signal_browser.selected_signal_names()
+        if not names:
+            return
+        added = self.watchlist_widget.add_signals(names)
+        if added:
+            self.statusBar().showMessage(f"Added to watchlist: {', '.join(added)}", 5000)
+            self._refresh_watchlist_values(force=True)
+
+    def _remove_selected_signals(self) -> None:
+        if self.logger.is_running:
+            QMessageBox.warning(self, "Watchlist", "Stop logging before modifying the watchlist.")
+            return
+        removed = self.watchlist_widget.remove_selected()
+        if removed:
+            self.statusBar().showMessage(f"Removed from watchlist: {', '.join(removed)}", 5000)
+            for name in removed:
+                self._watch_values.pop(name, None)
+
+    def _load_current_dbc(self) -> None:
+        path = self.dbc_path_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "DBC", "Please specify a DBC file path.")
+            return
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "DBC", f"DBC file not found: {path}")
+            return
+        try:
+            database = cantools.database.load_file(path, strict=False)
+        except (OSError, cantools_errors.Error) as exc:
+            QMessageBox.critical(self, "DBC", f"Failed to load DBC: {exc}")
+            return
+
+        self._dbc = database
+        self._signals_by_message = self._extract_signal_definitions(database)
+        self.signal_browser.set_signals(self._signals_by_message)
+        if self.backend is not None:
+            self.backend.apply_database(database)
+        self.statusBar().showMessage(f"DBC loaded: {os.path.basename(path)}", 5000)
+        self._refresh_watchlist_values(force=True)
+
+    def _extract_signal_definitions(self, database) -> Dict[str, List[SignalDefinition]]:
+        catalog: Dict[str, List[SignalDefinition]] = {}
+        for message in getattr(database, "messages", []):
+            entries: List[SignalDefinition] = []
+            for signal in message.signals:
+                entries.append(
+                    SignalDefinition(
+                        message_name=message.name,
+                        name=signal.name,
+                        unit=signal.unit or "",
+                        minimum=signal.minimum,
+                        maximum=signal.maximum,
+                        scale=signal.scale,
+                        offset=signal.offset,
+                    )
+                )
+            if entries:
+                catalog[message.name] = entries
+        return catalog
+
     def _switch_backend(self, name: str) -> None:
         previous = self.backend
         if previous is not None:
@@ -568,6 +906,8 @@ class MainWindow(QMainWindow):
             backend = backend_cls(settings)
         else:
             backend = backend_cls()
+        if self._dbc is not None:
+            backend.apply_database(self._dbc)
         backend.start()
         return backend
 
@@ -637,14 +977,14 @@ class MainWindow(QMainWindow):
             value = inputs.get(channel, 0.0)
             widget.update_value(value)
 
+        self._refresh_watchlist_values(force)
+
         now = time.monotonic()
         if self.logger.is_running:
-            self._log_values(outputs, inputs, now, force)
+            self._log_values(now, force)
 
     def _log_values(
         self,
-        outputs: Dict[str, OutputState],
-        inputs: Dict[str, float],
         now: float,
         force: bool = False,
     ) -> None:
@@ -654,19 +994,17 @@ class MainWindow(QMainWindow):
         self._last_log_time = now
 
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
-        values: Dict[str, float] = {}
-        for channel, state in outputs.items():
-            values[f"{channel}_current"] = state.current
-        for channel in INPUT_CHANNELS:
-            values[channel] = inputs.get(channel, 0.0)
-        self.logger.log_row(timestamp, values)
+        self.logger.log_row(timestamp, self._watch_values)
 
     def _start_logging(self) -> None:
         path = self.path_edit.text().strip()
         if not path:
             QMessageBox.warning(self, "Logging", "Please specify a file path for the CSV log.")
             return
-        signal_names = [f"{ch}_current" for ch in OUTPUT_CHANNELS] + INPUT_CHANNELS
+        signal_names = self.watchlist_widget.signal_names
+        if not signal_names:
+            QMessageBox.warning(self, "Logging", "Add signals to the watchlist before starting the log.")
+            return
         if self.logger.start(path, signal_names):
             QMessageBox.information(self, "Logging", f"Logging started: {path}")
         else:
@@ -683,6 +1021,27 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.dbc_path_edit.setText(path)
+            self._load_current_dbc()
+
+    def _refresh_watchlist_values(self, force: bool = False) -> None:
+        if self.backend is None:
+            self._watch_values = {}
+            self.watchlist_widget.update_values(self._watch_values)
+            return
+        names = self.watchlist_widget.signal_names
+        if not names:
+            self._watch_values = {}
+            self.watchlist_widget.update_values(self._watch_values)
+            return
+        try:
+            values = self.backend.read_signal_values(names)
+        except BackendError as exc:
+            if force:
+                QMessageBox.critical(self, "Watchlist", str(exc))
+            self.statusBar().showMessage(str(exc), 5000)
+            return
+        self._watch_values = values
+        self.watchlist_widget.update_values(values)
 
 
 def main() -> int:
