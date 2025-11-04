@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 import can
 import cantools
+from cantools.database import errors as cantools_errors
 from PyQt5.QtCore import QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
@@ -167,7 +168,7 @@ class RealBackend(QObject, BackendBase):
 
         try:
             self._db = cantools.database.load_file(self.settings.dbc_path)
-        except (OSError, cantools.database.errors.ParseError) as exc:
+        except (OSError, cantools_errors.Error) as exc:
             raise BackendError(f"Failed to load DBC: {exc}")
 
         try:
