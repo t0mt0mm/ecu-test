@@ -1,13 +1,13 @@
 # ECU Test GUI MVP
 
-This repository contains a minimal PyQt5 application that demonstrates ECU control features with a dual-backend architecture.
+This repository contains a PyQt5 application that demonstrates ECU control features with a dual-backend architecture.
 
 ## Features
 - PyQt5 GUI with Dummy and Real backend selector
 - Five high-side outputs (HS1–HS5) with enable toggle and PWM slider
 - Five mixed inputs (digital/analog) with live updates at 10 Hz
-- Dummy backend simulates first-order current response with noise and dynamic inputs
-- DBC-driven signal browser with search, watchlist, and CSV logging for any selected signals
+- DBC-driven signal browser with search, watchlist, CSV logging, and persistent selections across restarts
+- Dummy backend loads the DBC and simulates **all** signals with configurable generators that mirror Real-mode names and scaling
 - Real backend loads the provided DBC, opens a python-can bus, sends one write command, and decodes one feedback message
 - Per-channel sequencer with configurable ON/OFF timing and total duration for HS1–HS5
 
@@ -25,8 +25,8 @@ This repository contains a minimal PyQt5 application that demonstrates ECU contr
 The application starts in Dummy mode so it can run without any hardware.
 
 ## Backends
-- **Dummy Backend**: Implements the required simulation, reacting to PWM commands with a first-order current model and generating synthetic digital/analog inputs.
-- **Real Backend**: Loads `ecu-test.dbc`, connects to the configured CAN interface, sends the `QM_High_side_output_write` message when outputs change, and listens for `QM_High_side_output_status` to display live current feedback.
+- **Dummy Backend**: Loads the active DBC and instantiates a generator for every defined signal. Output commands reuse the same write paths as the Real backend and feed the corresponding status signals. A dedicated panel lets you tweak ramp/sine/noise/hold parameters (analog) or duty/period profiles (digital).
+- **Real Backend**: Loads `ecu-test.dbc`, connects to the configured CAN interface, sends the `QM_High_side_output_write` message when outputs change, and listens for `QM_High_side_output_status` to display live current feedback. Writable signals are vetted via a `write`/`cmd` heuristic plus the `config/signals.yaml` whitelist to avoid unintended traffic.
 
 Switch between backends using the dropdown at the top of the main window. If the Real backend cannot open the CAN bus or load the DBC, the application shows a clear error message and falls back to Dummy mode.
 
@@ -49,13 +49,21 @@ Use the **Connection** panel to provide the following settings before selecting 
 
 When an output state changes, the Real backend encodes the PWM and enable signals with cantools and sends a single `QM_High_side_output_write` frame. Incoming `QM_High_side_output_status` frames are decoded asynchronously so the live current is updated immediately in the GUI.
 
+## Dummy signal simulation panel
+The **Dummy Signal Simulation** group becomes active in Dummy mode after a DBC is loaded. It lists every message and signal from the database and lets you adjust the generator used by the simulator:
+
+- **Analog signals**: Choose between `hold`, `sine`, `ramp`, and `noise`, and fine-tune offset, amplitude, frequency, slope, noise, hold value, and phase.
+- **Digital signals**: Select `pattern` (duty/period) or `manual` mode and edit high/low values, manual value, period, duty, and phase.
+
+Changes apply immediately and affect watchlist values and CSV exports. Default profiles are derived from the signal names (for example, `*_current` ramps, `*_voltage` holds with light noise, temperatures oscillate).
+
 ## Signal Browser and Watchlist
 1. Load a DBC file with the **Load** button in the connection panel. All messages and signals are parsed dynamically—no signal names are hardcoded.
 2. Use the search field to filter messages or signals. Multiple signals can be selected at once.
 3. Click **Add to Watchlist** to begin tracking the selected signals. The watchlist refreshes every 100 ms for both Dummy and Real backends.
 4. Remove signals with **Remove Selected** when you no longer need them.
 
-The Dummy backend mirrors the Real backend signal names so the watchlist and logger operate identically in either mode.
+The Dummy backend mirrors the Real backend signal names so the watchlist and logger operate identically in either mode. The selected watchlist and logging settings persist via `QSettings`, so the UI reopens with your previous configuration.
 
 ## Outputs and Inputs
 - Enable or disable each high-side output with the checkbox and adjust the PWM using the slider.
@@ -71,10 +79,14 @@ The Dummy backend mirrors the Real backend signal names so the watchlist and log
 ## CSV Logging
 1. Select a destination file path and sampling rate (1–50 Hz).
 2. Populate the watchlist with the signals you want to capture.
-3. Click **Start Logging**. The CSV header contains `timestamp` plus every signal currently present in the watchlist.
+3. Click **Start Logging**. The CSV header contains `timestamp` plus every signal currently present in the watchlist. Timestamps are written in ISO 8601 UTC format.
 4. Click **Stop Logging** to finish and close the file.
 
 If the file cannot be opened, an error message appears and logging does not start.
+
+## Writable signal whitelist
+
+The Real and Dummy backends only transmit values for signals that either belong to a message containing `write`/`cmd` or are explicitly enumerated in `config/signals.yaml`. Adjust the `writable_signals` list to authorise additional command fields when expanding the application.
 
 ## Legacy Script
 The previous `ecu-test.py` script is still present for reference but is not used by the new GUI. It may require additional dependencies or cleanup before running.

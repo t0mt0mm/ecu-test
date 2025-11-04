@@ -1,0 +1,25 @@
+writable_signals:
+  - hs_out01_select
+  - hs_out01_mode
+  - hs_out01_value_pwm
+  - hs_out02_select
+  - hs_out02_mode
+  - hs_out02_value_pwm
+  - hs_out03_select
+  - hs_out03_mode
+  - hs_out03_value_pwm
+  - hs_out04_select
+  - hs_out04_mode
+  - hs_out04_value_pwm
+  - hs_out05_select
+  - hs_out05_mode
+  - hs_out05_value_pwm
+  - hs_out06_select
+  - hs_out06_mode
+  - hs_out06_value_pwm
+  - hs_out07_select
+  - hs_out07_mode
+  - hs_out07_value_pwm
+  - hs_out08_select
+  - hs_out08_mode
+  - hs_out08_value_pwm

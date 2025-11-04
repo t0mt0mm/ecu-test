@@ -1,3 +1,5 @@
+import copy
+import datetime
 import math
 import os
 import random
@@ -5,12 +7,13 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import can
 import cantools
 from cantools.database import errors as cantools_errors
-from PyQt5.QtCore import QObject, QTimer, Qt, pyqtSignal
+import yaml
+from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -40,13 +43,7 @@ from PyQt5.QtWidgets import (
 
 
 OUTPUT_CHANNELS = [f"HS{i}" for i in range(1, 6)]
-INPUT_CHANNELS = [
-    "DI1",
-    "AI1",
-    "DI2",
-    "AI2",
-    "AI3",
-]
+INPUT_CHANNELS = ["DI1", "AI1", "DI2", "AI2", "AI3"]
 
 
 @dataclass
@@ -74,6 +71,196 @@ class SignalDefinition:
     scale: float
     offset: float
 
+
+@dataclass
+class AnalogSimulationProfile:
+    """Configuration for analog signal simulation."""
+
+    generator: str = "hold"
+    offset: float = 0.0
+    amplitude: float = 1.0
+    frequency: float = 0.1
+    slope: float = 1.0
+    noise: float = 0.0
+    hold_value: float = 0.0
+    phase: float = 0.0
+
+
+@dataclass
+class DigitalSimulationProfile:
+    """Configuration for digital signal simulation."""
+
+    mode: str = "pattern"  # pattern or manual
+    period: float = 1.0
+    duty_cycle: float = 0.5
+    high_value: float = 1.0
+    low_value: float = 0.0
+    manual_value: float = 0.0
+    phase: float = 0.0
+
+
+@dataclass
+class SignalSimulationConfig:
+    """Descriptor storing simulation parameters for a signal."""
+
+    message_name: str
+    name: str
+    unit: str
+    minimum: Optional[float]
+    maximum: Optional[float]
+    category: str
+    analog: Optional[AnalogSimulationProfile] = None
+    digital: Optional[DigitalSimulationProfile] = None
+
+    def clone(self) -> "SignalSimulationConfig":
+        """Return a deep copy of this configuration."""
+
+        return SignalSimulationConfig(
+            message_name=self.message_name,
+            name=self.name,
+            unit=self.unit,
+            minimum=self.minimum,
+            maximum=self.maximum,
+            category=self.category,
+            analog=copy.deepcopy(self.analog),
+            digital=copy.deepcopy(self.digital),
+        )
+
+
+def _load_signal_whitelist(path: str) -> List[str]:
+    """Load the whitelist of writable signals from YAML."""
+
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    values = data.get("writable_signals", [])
+    return [str(entry) for entry in values]
+
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+WHITELIST_PATH = os.path.join(BASE_DIR, "config", "signals.yaml")
+WRITABLE_SIGNALS = set(_load_signal_whitelist(WHITELIST_PATH))
+
+
+def is_signal_writable(signal_name: str, message_name: str) -> bool:
+    """Return True if the signal is allowed to be written."""
+
+    if signal_name in WRITABLE_SIGNALS:
+        return True
+    lower_name = signal_name.lower()
+    lower_message = message_name.lower()
+    return "write" in lower_message or "cmd" in lower_message or "cmd" in lower_name
+
+
+class _SignalSimulator:
+    """Simulate the evolution of a CAN signal over time."""
+
+    def __init__(self, config: SignalSimulationConfig) -> None:
+        self.config = config
+        self.override: Optional[float] = None
+        self._value = 0.0
+        self._ramp_position: float = config.minimum if config.minimum is not None else 0.0
+
+    def apply_profile(self, config: SignalSimulationConfig) -> None:
+        """Replace the simulator configuration."""
+
+        self.config = config
+        if self.config.category == "analog":
+            profile = self.config.analog or AnalogSimulationProfile()
+            if profile.generator == "hold":
+                self._value = profile.hold_value
+            else:
+                self._value = profile.offset
+            if self.config.minimum is not None:
+                self._ramp_position = self.config.minimum
+            else:
+                self._ramp_position = profile.offset
+        else:
+            profile = self.config.digital or DigitalSimulationProfile()
+            self._value = profile.low_value
+
+    def set_override(self, value: Optional[float]) -> None:
+        """Force the simulator to emit a constant value."""
+
+        self.override = value
+        if value is not None:
+            self._value = float(value)
+
+    def update(self, current_time: float, dt: float) -> float:
+        """Advance the simulator and return the new value."""
+
+        if self.override is not None:
+            return float(self.override)
+        if self.config.category == "digital":
+            result = self._update_digital(current_time)
+        else:
+            result = self._update_analog(current_time, dt)
+        self._value = self._clamp(result)
+        return self._value
+
+    def _update_analog(self, current_time: float, dt: float) -> float:
+        profile = self.config.analog or AnalogSimulationProfile()
+        noise = random.uniform(-profile.noise, profile.noise) if profile.noise > 0.0 else 0.0
+        generator = profile.generator.lower()
+        if generator == "sine":
+            amplitude = profile.amplitude
+            frequency = max(profile.frequency, 0.0)
+            value = profile.offset + amplitude * math.sin(
+                2.0 * math.pi * frequency * current_time + profile.phase
+            )
+        elif generator == "ramp":
+            span = self._span(profile)
+            rate = max(profile.slope, span / 20.0 if span > 0.0 else 1.0)
+            self._ramp_position += rate * dt
+            lower, upper = self._bounds(profile, span)
+            width = upper - lower
+            if width <= 0.0:
+                width = span if span > 0.0 else rate
+            self._ramp_position = lower + ((self._ramp_position - lower) % width)
+            value = self._ramp_position
+        elif generator == "noise":
+            amplitude = max(profile.amplitude, 0.0)
+            value = profile.offset + random.uniform(-amplitude, amplitude)
+        elif generator == "hold":
+            value = profile.hold_value
+        else:
+            value = profile.offset
+        return value + noise
+
+    def _bounds(self, profile: AnalogSimulationProfile, span: float) -> Tuple[float, float]:
+        if self.config.minimum is not None and self.config.maximum is not None:
+            return float(self.config.minimum), float(self.config.maximum)
+        center = profile.offset
+        if span <= 0.0:
+            span = max(profile.amplitude * 2.0, 1.0)
+        half = span / 2.0
+        return center - half, center + half
+
+    def _span(self, profile: AnalogSimulationProfile) -> float:
+        if self.config.minimum is not None and self.config.maximum is not None:
+            return float(self.config.maximum - self.config.minimum)
+        return abs(profile.amplitude) * 2.0
+
+    def _update_digital(self, current_time: float) -> float:
+        profile = self.config.digital or DigitalSimulationProfile()
+        if profile.mode == "manual":
+            return profile.manual_value
+        period = max(profile.period, 0.1)
+        duty = min(max(profile.duty_cycle, 0.0), 1.0)
+        phase = (current_time + profile.phase) % period
+        threshold = duty * period
+        return profile.high_value if phase < threshold else profile.low_value
+
+    def _clamp(self, value: float) -> float:
+        if self.config.minimum is not None:
+            value = max(float(self.config.minimum), value)
+        if self.config.maximum is not None:
+            value = min(float(self.config.maximum), value)
+        return value
 
 @dataclass
 class SequencerState:
@@ -121,6 +308,16 @@ class BackendBase:
     def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
         raise NotImplementedError
 
+    def simulation_profiles(self) -> Dict[str, SignalSimulationConfig]:  # pragma: no cover - optional
+        """Return editable simulation profiles (Dummy backend)."""
+
+        return {}
+
+    def update_simulation_profile(self, profile: SignalSimulationConfig) -> None:  # pragma: no cover - optional
+        """Update a simulation profile."""
+
+        raise BackendError("Simulation profiles are not supported by this backend.")
+
 
 class DummyBackend(BackendBase):
     name = "Dummy"
@@ -132,9 +329,13 @@ class DummyBackend(BackendBase):
         self._analog_inputs: Dict[str, float] = {"AI1": 0.0, "AI2": 5.0, "AI3": -2.5}
         self._digital_states: Dict[str, bool] = {"DI1": False, "DI2": True}
         self._time = 0.0
-        self._tau = 0.5  # time constant for first-order response
+        self._tau = 0.5
         self._dbc = None
         self._signal_values: Dict[str, float] = {}
+        self._simulation_configs: Dict[str, SignalSimulationConfig] = {}
+        self._simulators: Dict[str, _SignalSimulator] = {}
+        self._signal_to_message: Dict[str, str] = {}
+        self._overrides: Dict[str, float] = {}
 
     def start(self) -> None:
         self._time = 0.0
@@ -145,10 +346,20 @@ class DummyBackend(BackendBase):
     def apply_database(self, database) -> None:
         self._dbc = database
         self._signal_values = {}
+        self._simulation_configs = {}
+        self._simulators = {}
+        self._signal_to_message = {}
+        self._overrides = {}
         if self._dbc is not None:
-            for message in self._dbc.messages:
+            for message in getattr(self._dbc, "messages", []):
                 for signal in message.signals:
-                    self._signal_values[signal.name] = 0.0
+                    config = self._build_simulation_config(message, signal)
+                    self._signal_to_message[signal.name] = message.name
+                    self._simulation_configs[signal.name] = config
+                    simulator = _SignalSimulator(config.clone())
+                    simulator.apply_profile(config.clone())
+                    self._simulators[signal.name] = simulator
+                    self._signal_values[signal.name] = simulator.update(0.0, 0.0)
         self._seed_values()
 
     def set_output(self, channel: str, enabled: bool, pwm: float) -> None:
@@ -159,9 +370,16 @@ class DummyBackend(BackendBase):
         state.enabled = enabled
         state.pwm = pwm
         index = OUTPUT_CHANNELS.index(channel) + 1
-        self._update_signal_value(f"hs_out{index:02d}_select", 1 if enabled else 0)
-        self._update_signal_value(f"hs_out{index:02d}_mode", 1 if enabled else 0)
-        self._update_signal_value(f"hs_out{index:02d}_value_pwm", pwm)
+        targets = {
+            f"hs_out{index:02d}_select": 1 if enabled else 0,
+            f"hs_out{index:02d}_mode": 1 if enabled else 0,
+            f"hs_out{index:02d}_value_pwm": pwm,
+        }
+        for name, value in targets.items():
+            message = self._signal_to_message.get(name, "")
+            if not is_signal_writable(name, message):
+                raise BackendError(f"Signal {name} is not writable in Dummy mode")
+            self._set_override(name, float(value))
 
     def read_outputs(self) -> Dict[str, OutputState]:
         return {ch: OutputState(s.enabled, s.pwm, s.current) for ch, s in self._outputs.items()}
@@ -174,34 +392,15 @@ class DummyBackend(BackendBase):
 
     def update(self, dt: float) -> None:
         self._time += dt
-        # Update digital patterns
-        self._digital_states["DI1"] = math.sin(self._time * math.pi / 2) > 0
-        self._digital_states["DI2"] = (int(self._time) % 2) == 0
+        self._update_patterns()
+        self._update_outputs(dt)
+        for name, simulator in self._simulators.items():
+            value = simulator.update(self._time, dt)
+            self._signal_values[name] = value
 
-        # Update analog signals
-        self._analog_inputs["AI1"] = 5.0 + 2.0 * math.sin(self._time)
-        self._analog_inputs["AI2"] = 2.5 + 0.5 * (self._time % 5)
-        self._analog_inputs["AI3"] = -1.0 + 0.2 * random.uniform(-1.0, 1.0)
-
-        # Update outputs currents using first-order lag
-        for ch, state in self._outputs.items():
-            target = 8.0 * (state.pwm / 100.0)
-            if not state.enabled:
-                target = 0.0
-            noise = random.uniform(-0.1, 0.1)
-            delta = (target - state.current) * (dt / self._tau)
-            state.current += delta + noise
-            state.current = max(0.0, state.current)
-            index = OUTPUT_CHANNELS.index(ch) + 1
-            current_ma = state.current * 1000.0
-            self._update_signal_value(f"hs_out{index:02d}_current", current_ma)
-            self._update_signal_value(f"hs_out{index:02d}_value_current", current_ma)
-            self._update_signal_value(f"hs_out{index:02d}_pwm", state.pwm)
-            self._update_signal_value(f"hs_out{index:02d}_value_pwm", state.pwm)
-
-        # Mirror inputs
         for name, value in self.read_inputs().items():
-            self._update_signal_value(name, value)
+            if name in self._signal_values:
+                self._signal_values[name] = value
 
     def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
         values: Dict[str, float] = {}
@@ -209,22 +408,136 @@ class DummyBackend(BackendBase):
             values[name] = float(self._signal_values.get(name, 0.0))
         return values
 
-    def _update_signal_value(self, name: str, value: float) -> None:
-        if name in self._signal_values:
-            self._signal_values[name] = float(value)
-
     def _seed_values(self) -> None:
         for channel, state in self._outputs.items():
             index = OUTPUT_CHANNELS.index(channel) + 1
             current_ma = state.current * 1000.0
-            self._update_signal_value(f"hs_out{index:02d}_current", current_ma)
-            self._update_signal_value(f"hs_out{index:02d}_value_current", current_ma)
-            self._update_signal_value(f"hs_out{index:02d}_pwm", state.pwm)
-            self._update_signal_value(f"hs_out{index:02d}_value_pwm", state.pwm)
-            self._update_signal_value(f"hs_out{index:02d}_select", 1 if state.enabled else 0)
-            self._update_signal_value(f"hs_out{index:02d}_mode", 1 if state.enabled else 0)
+            self._set_override(f"hs_out{index:02d}_current", current_ma)
+            self._set_override(f"hs_out{index:02d}_value_current", current_ma)
+            self._set_override(f"hs_out{index:02d}_pwm", state.pwm)
+            self._set_override(f"hs_out{index:02d}_value_pwm", state.pwm)
+            self._set_override(f"hs_out{index:02d}_select", 1 if state.enabled else 0)
+            self._set_override(f"hs_out{index:02d}_mode", 1 if state.enabled else 0)
         for name, value in self.read_inputs().items():
-            self._update_signal_value(name, value)
+            if name in self._signal_values:
+                self._signal_values[name] = value
+
+    def simulation_profiles(self) -> Dict[str, SignalSimulationConfig]:
+        return {name: config.clone() for name, config in self._simulation_configs.items()}
+
+    def update_simulation_profile(self, profile: SignalSimulationConfig) -> None:
+        if profile.name not in self._simulation_configs:
+            raise BackendError(f"Signal {profile.name} is not available for simulation")
+        stored = profile.clone()
+        self._simulation_configs[profile.name] = stored
+        simulator = self._simulators.get(profile.name)
+        if simulator is not None:
+            simulator.apply_profile(stored.clone())
+        if profile.name not in self._overrides:
+            self._signal_values[profile.name] = simulator.update(self._time, 0.0) if simulator else 0.0
+
+    def _set_override(self, name: str, value: Optional[float]) -> None:
+        simulator = self._simulators.get(name)
+        if value is None:
+            self._overrides.pop(name, None)
+            if simulator is not None:
+                simulator.set_override(None)
+            return
+        self._overrides[name] = float(value)
+        if simulator is not None:
+            simulator.set_override(float(value))
+        if name in self._signal_values:
+            self._signal_values[name] = float(value)
+
+    def _update_patterns(self) -> None:
+        self._digital_states["DI1"] = math.sin(self._time * math.pi / 2.0) > 0.0
+        self._digital_states["DI2"] = (int(self._time) % 2) == 0
+        self._analog_inputs["AI1"] = 5.0 + 2.0 * math.sin(self._time)
+        self._analog_inputs["AI2"] = 2.5 + 0.5 * (self._time % 5.0)
+        self._analog_inputs["AI3"] = -1.0 + 0.2 * random.uniform(-1.0, 1.0)
+
+    def _update_outputs(self, dt: float) -> None:
+        for channel, state in self._outputs.items():
+            target = 8.0 * (state.pwm / 100.0)
+            if not state.enabled:
+                target = 0.0
+            noise = random.uniform(-0.1, 0.1)
+            delta = (target - state.current) * (dt / self._tau)
+            state.current = max(0.0, state.current + delta + noise)
+            index = OUTPUT_CHANNELS.index(channel) + 1
+            current_ma = state.current * 1000.0
+            self._set_override(f"hs_out{index:02d}_current", current_ma)
+            self._set_override(f"hs_out{index:02d}_value_current", current_ma)
+            self._set_override(f"hs_out{index:02d}_pwm", state.pwm)
+            self._set_override(f"hs_out{index:02d}_value_pwm", state.pwm)
+
+    def _build_simulation_config(self, message, signal) -> SignalSimulationConfig:
+        category = "digital" if self._is_digital_signal(signal) else "analog"
+        config = SignalSimulationConfig(
+            message_name=message.name,
+            name=signal.name,
+            unit=signal.unit or "",
+            minimum=signal.minimum,
+            maximum=signal.maximum,
+            category=category,
+        )
+        if category == "digital":
+            config.digital = self._default_digital_profile(signal)
+        else:
+            config.analog = self._default_analog_profile(signal)
+        return config
+
+    def _is_digital_signal(self, signal) -> bool:
+        if getattr(signal, "choices", None):
+            return True
+        if signal.length <= 1:
+            return True
+        if signal.minimum is not None and signal.maximum is not None:
+            span = signal.maximum - signal.minimum
+            if span <= 1.0 and signal.scale <= 1.0:
+                return True
+        return False
+
+    def _default_analog_profile(self, signal) -> AnalogSimulationProfile:
+        profile = AnalogSimulationProfile()
+        minimum = float(signal.minimum) if signal.minimum is not None else 0.0
+        maximum = float(signal.maximum) if signal.maximum is not None else minimum + 100.0
+        if not math.isfinite(minimum) or not math.isfinite(maximum) or abs(maximum - minimum) > 1e6:
+            minimum, maximum = 0.0, 100.0
+        span = max(maximum - minimum, 1.0)
+        profile.offset = minimum + span / 2.0
+        profile.hold_value = profile.offset
+        profile.noise = span * 0.01
+        name_lower = signal.name.lower()
+        if "current" in name_lower:
+            profile.generator = "ramp"
+            profile.slope = span / 60.0
+            profile.noise = span * 0.02
+        elif "voltage" in name_lower:
+            profile.generator = "hold"
+            profile.noise = span * 0.005
+        elif "temp" in name_lower:
+            profile.generator = "sine"
+            profile.amplitude = span * 0.25
+            profile.frequency = 0.02
+        else:
+            profile.generator = "noise"
+            profile.amplitude = span * 0.1
+        return profile
+
+    def _default_digital_profile(self, signal) -> DigitalSimulationProfile:
+        profile = DigitalSimulationProfile()
+        minimum = signal.minimum if signal.minimum is not None else 0.0
+        maximum = signal.maximum if signal.maximum is not None else 1.0
+        if not math.isfinite(minimum) or not math.isfinite(maximum) or abs(float(maximum) - float(minimum)) > 1e6:
+            minimum, maximum = 0.0, 1.0
+        profile.low_value = float(minimum)
+        profile.high_value = float(maximum)
+        profile.manual_value = profile.low_value
+        profile.period = 2.0
+        profile.duty_cycle = 0.5
+        profile.phase = random.random()
+        return profile
 
 
 class RealBackend(QObject, BackendBase):
@@ -247,13 +560,16 @@ class RealBackend(QObject, BackendBase):
         self._lock = threading.Lock()
         self._listener: Optional["_StatusListener"] = None
         self._signal_cache: Dict[str, float] = {}
+        self._signal_to_message: Dict[str, str] = {}
 
     def apply_database(self, database) -> None:
         with self._lock:
             self._signal_cache = {}
+            self._signal_to_message = {}
             if database is not None:
                 for message in getattr(database, "messages", []):
                     for signal in message.signals:
+                        self._signal_to_message[signal.name] = message.name
                         self._signal_cache[signal.name] = 0.0
 
     def start(self) -> None:
@@ -272,8 +588,10 @@ class RealBackend(QObject, BackendBase):
             raise BackendError(f"Required message missing in DBC: {exc}")
 
         self._signal_cache = {}
+        self._signal_to_message = {}
         for message in self._db.messages:
             for signal in message.signals:
+                self._signal_to_message[signal.name] = message.name
                 self._signal_cache[signal.name] = 0.0
 
         try:
@@ -340,11 +658,16 @@ class RealBackend(QObject, BackendBase):
 
     def _build_payload(self) -> Dict[str, float]:
         payload: Dict[str, float] = {}
+        message_name = self._write_message.name if self._write_message is not None else ""
         for index, channel in enumerate(OUTPUT_CHANNELS, start=1):
             state = self._outputs[channel]
             select_name = f"hs_out{index:02d}_select"
             mode_name = f"hs_out{index:02d}_mode"
             pwm_name = f"hs_out{index:02d}_value_pwm"
+            for candidate in (select_name, mode_name, pwm_name):
+                mapped_message = self._signal_to_message.get(candidate, message_name)
+                if not is_signal_writable(candidate, mapped_message):
+                    raise BackendError(f"Signal {candidate} is not writable")
             payload[select_name] = 1 if state.enabled else 0
             payload[mode_name] = 1 if state.enabled else 0
             payload[pwm_name] = state.pwm
@@ -744,6 +1067,295 @@ class WatchlistWidget(QGroupBox):
     def signal_names(self) -> List[str]:
         return list(self._order)
 
+
+class DummySimulationWidget(QGroupBox):
+    """UI for configuring Dummy backend signal generators."""
+
+    profile_changed = pyqtSignal(object)
+
+    def __init__(self) -> None:
+        super().__init__("Dummy Signal Simulation")
+        self._profiles: Dict[str, SignalSimulationConfig] = {}
+        self._items_by_signal: Dict[str, QTreeWidgetItem] = {}
+        self._current_name: Optional[str] = None
+        self._updating = False
+
+        layout = QVBoxLayout()
+
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.textChanged.connect(self._apply_filter)
+        search_layout.addWidget(self.search_edit)
+        layout.addLayout(search_layout)
+
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels(["Signal", "Type", "Generator/Mode"])
+        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        layout.addWidget(self.tree)
+
+        self.analog_group = QGroupBox("Analog Generator")
+        analog_layout = QGridLayout()
+        self.analog_generator_combo = QComboBox()
+        self.analog_generator_combo.addItems(["hold", "sine", "ramp", "noise"])
+        self.analog_generator_combo.currentTextChanged.connect(self._on_analog_generator)
+        analog_layout.addWidget(QLabel("Generator"), 0, 0)
+        analog_layout.addWidget(self.analog_generator_combo, 0, 1)
+
+        self.analog_offset_spin = self._create_spin(-1_000_000.0, 1_000_000.0, 0.1)
+        analog_layout.addWidget(QLabel("Offset"), 1, 0)
+        analog_layout.addWidget(self.analog_offset_spin, 1, 1)
+
+        self.analog_amplitude_spin = self._create_spin(0.0, 1_000_000.0, 0.1)
+        analog_layout.addWidget(QLabel("Amplitude"), 2, 0)
+        analog_layout.addWidget(self.analog_amplitude_spin, 2, 1)
+
+        self.analog_frequency_spin = self._create_spin(0.0, 10.0, 0.01)
+        analog_layout.addWidget(QLabel("Frequency (Hz)"), 3, 0)
+        analog_layout.addWidget(self.analog_frequency_spin, 3, 1)
+
+        self.analog_slope_spin = self._create_spin(0.0, 1_000_000.0, 1.0)
+        analog_layout.addWidget(QLabel("Slope (unit/s)"), 4, 0)
+        analog_layout.addWidget(self.analog_slope_spin, 4, 1)
+
+        self.analog_noise_spin = self._create_spin(0.0, 1_000_000.0, 0.1)
+        analog_layout.addWidget(QLabel("Noise"), 5, 0)
+        analog_layout.addWidget(self.analog_noise_spin, 5, 1)
+
+        self.analog_hold_spin = self._create_spin(-1_000_000.0, 1_000_000.0, 0.1)
+        analog_layout.addWidget(QLabel("Hold value"), 6, 0)
+        analog_layout.addWidget(self.analog_hold_spin, 6, 1)
+
+        self.analog_phase_spin = self._create_spin(-math.pi, math.pi, 0.01)
+        analog_layout.addWidget(QLabel("Phase (rad)"), 7, 0)
+        analog_layout.addWidget(self.analog_phase_spin, 7, 1)
+
+        self.analog_group.setLayout(analog_layout)
+        layout.addWidget(self.analog_group)
+
+        self.digital_group = QGroupBox("Digital Pattern")
+        digital_layout = QGridLayout()
+        self.digital_mode_combo = QComboBox()
+        self.digital_mode_combo.addItems(["pattern", "manual"])
+        self.digital_mode_combo.currentTextChanged.connect(self._on_digital_mode)
+        digital_layout.addWidget(QLabel("Mode"), 0, 0)
+        digital_layout.addWidget(self.digital_mode_combo, 0, 1)
+
+        self.digital_period_spin = self._create_spin(0.1, 3600.0, 0.1)
+        digital_layout.addWidget(QLabel("Period (s)"), 1, 0)
+        digital_layout.addWidget(self.digital_period_spin, 1, 1)
+
+        self.digital_duty_spin = self._create_spin(0.0, 1.0, 0.05)
+        digital_layout.addWidget(QLabel("Duty"), 2, 0)
+        digital_layout.addWidget(self.digital_duty_spin, 2, 1)
+
+        self.digital_high_spin = self._create_spin(-1_000_000.0, 1_000_000.0, 0.1)
+        digital_layout.addWidget(QLabel("High value"), 3, 0)
+        digital_layout.addWidget(self.digital_high_spin, 3, 1)
+
+        self.digital_low_spin = self._create_spin(-1_000_000.0, 1_000_000.0, 0.1)
+        digital_layout.addWidget(QLabel("Low value"), 4, 0)
+        digital_layout.addWidget(self.digital_low_spin, 4, 1)
+
+        self.digital_manual_spin = self._create_spin(-1_000_000.0, 1_000_000.0, 0.1)
+        digital_layout.addWidget(QLabel("Manual value"), 5, 0)
+        digital_layout.addWidget(self.digital_manual_spin, 5, 1)
+
+        self.digital_phase_spin = self._create_spin(0.0, 3600.0, 0.1)
+        digital_layout.addWidget(QLabel("Phase (s)"), 6, 0)
+        digital_layout.addWidget(self.digital_phase_spin, 6, 1)
+
+        self.digital_group.setLayout(digital_layout)
+        layout.addWidget(self.digital_group)
+
+        self.setLayout(layout)
+
+        self._connect_spinbox(self.analog_offset_spin, self._on_analog_changed)
+        self._connect_spinbox(self.analog_amplitude_spin, self._on_analog_changed)
+        self._connect_spinbox(self.analog_frequency_spin, self._on_analog_changed)
+        self._connect_spinbox(self.analog_slope_spin, self._on_analog_changed)
+        self._connect_spinbox(self.analog_noise_spin, self._on_analog_changed)
+        self._connect_spinbox(self.analog_hold_spin, self._on_analog_changed)
+        self._connect_spinbox(self.analog_phase_spin, self._on_analog_changed)
+        self._connect_spinbox(self.digital_period_spin, self._on_digital_changed)
+        self._connect_spinbox(self.digital_duty_spin, self._on_digital_changed)
+        self._connect_spinbox(self.digital_high_spin, self._on_digital_changed)
+        self._connect_spinbox(self.digital_low_spin, self._on_digital_changed)
+        self._connect_spinbox(self.digital_manual_spin, self._on_digital_changed)
+        self._connect_spinbox(self.digital_phase_spin, self._on_digital_changed)
+
+        self._update_editor_visibility(None)
+
+    def clear(self) -> None:
+        """Clear all profiles."""
+
+        self._profiles = {}
+        self._items_by_signal = {}
+        self._current_name = None
+        self.tree.clear()
+        self._update_editor_visibility(None)
+
+    def set_profiles(self, profiles: Dict[str, SignalSimulationConfig]) -> None:
+        """Populate the tree with simulation profiles."""
+
+        self._profiles = {name: profile.clone() for name, profile in profiles.items()}
+        self._items_by_signal = {}
+        self.tree.clear()
+        messages: Dict[str, List[SignalSimulationConfig]] = {}
+        for profile in self._profiles.values():
+            messages.setdefault(profile.message_name, []).append(profile)
+        for message_name in sorted(messages):
+            parent = QTreeWidgetItem([message_name, "", ""])
+            parent.setData(0, Qt.UserRole, ("message", message_name))
+            self.tree.addTopLevelItem(parent)
+            for profile in sorted(messages[message_name], key=lambda p: p.name):
+                item = QTreeWidgetItem(
+                    [profile.name, profile.category.title(), self._profile_summary(profile)]
+                )
+                item.setData(0, Qt.UserRole, ("signal", profile.name))
+                parent.addChild(item)
+                self._items_by_signal[profile.name] = item
+            parent.setExpanded(True)
+        self.tree.resizeColumnToContents(0)
+        self._update_editor_visibility(None)
+
+    def _create_spin(self, minimum: float, maximum: float, step: float) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setDecimals(4)
+        spin.setSingleStep(step)
+        return spin
+
+    def _connect_spinbox(self, spin: QDoubleSpinBox, slot) -> None:
+        spin.valueChanged.connect(slot)
+
+    def _apply_filter(self, text: str) -> None:
+        text = text.strip().lower()
+        for index in range(self.tree.topLevelItemCount()):
+            message_item = self.tree.topLevelItem(index)
+            matches = False
+            for child_index in range(message_item.childCount()):
+                child = message_item.child(child_index)
+                signal_name = child.text(0).lower()
+                message_name = message_item.text(0).lower()
+                visible = not text or text in signal_name or text in message_name
+                child.setHidden(not visible)
+                if visible:
+                    matches = True
+            message_visible = matches or (text and text in message_item.text(0).lower())
+            message_item.setHidden(not message_visible)
+            if text and message_visible:
+                message_item.setExpanded(True)
+
+    def _on_selection_changed(self) -> None:
+        items = self.tree.selectedItems()
+        if not items:
+            self._current_name = None
+            self._update_editor_visibility(None)
+            return
+        item = items[0]
+        data = item.data(0, Qt.UserRole)
+        if not data or data[0] != "signal":
+            self._current_name = None
+            self._update_editor_visibility(None)
+            return
+        signal_name = data[1]
+        self._current_name = signal_name
+        profile = self._profiles.get(signal_name)
+        if profile is None:
+            self._update_editor_visibility(None)
+            return
+        self._updating = True
+        try:
+            if profile.category == "analog" and profile.analog is not None:
+                analog = profile.analog
+                self.analog_generator_combo.setCurrentText(analog.generator)
+                self.analog_offset_spin.setValue(analog.offset)
+                self.analog_amplitude_spin.setValue(analog.amplitude)
+                self.analog_frequency_spin.setValue(analog.frequency)
+                self.analog_slope_spin.setValue(analog.slope)
+                self.analog_noise_spin.setValue(analog.noise)
+                self.analog_hold_spin.setValue(analog.hold_value)
+                self.analog_phase_spin.setValue(analog.phase)
+            if profile.category == "digital" and profile.digital is not None:
+                digital = profile.digital
+                self.digital_mode_combo.setCurrentText(digital.mode)
+                self.digital_period_spin.setValue(digital.period)
+                self.digital_duty_spin.setValue(digital.duty_cycle)
+                self.digital_high_spin.setValue(digital.high_value)
+                self.digital_low_spin.setValue(digital.low_value)
+                self.digital_manual_spin.setValue(digital.manual_value)
+                self.digital_phase_spin.setValue(digital.phase)
+        finally:
+            self._updating = False
+        self._update_editor_visibility(profile.category)
+
+    def _update_editor_visibility(self, category: Optional[str]) -> None:
+        self.analog_group.setVisible(category == "analog")
+        self.digital_group.setVisible(category == "digital")
+        self.analog_group.setEnabled(category == "analog")
+        self.digital_group.setEnabled(category == "digital")
+
+    def _on_analog_generator(self, text: str) -> None:
+        if self._updating or not self._current_name:
+            return
+        profile = self._profiles.get(self._current_name)
+        if profile and profile.analog is not None:
+            profile.analog.generator = text
+            self._emit_profile_update(profile)
+
+    def _on_analog_changed(self) -> None:
+        if self._updating or not self._current_name:
+            return
+        profile = self._profiles.get(self._current_name)
+        if profile and profile.analog is not None:
+            profile.analog.offset = self.analog_offset_spin.value()
+            profile.analog.amplitude = self.analog_amplitude_spin.value()
+            profile.analog.frequency = self.analog_frequency_spin.value()
+            profile.analog.slope = self.analog_slope_spin.value()
+            profile.analog.noise = self.analog_noise_spin.value()
+            profile.analog.hold_value = self.analog_hold_spin.value()
+            profile.analog.phase = self.analog_phase_spin.value()
+            self._emit_profile_update(profile)
+
+    def _on_digital_mode(self, text: str) -> None:
+        if self._updating or not self._current_name:
+            return
+        profile = self._profiles.get(self._current_name)
+        if profile and profile.digital is not None:
+            profile.digital.mode = text
+            self._emit_profile_update(profile)
+
+    def _on_digital_changed(self) -> None:
+        if self._updating or not self._current_name:
+            return
+        profile = self._profiles.get(self._current_name)
+        if profile and profile.digital is not None:
+            profile.digital.period = self.digital_period_spin.value()
+            profile.digital.duty_cycle = self.digital_duty_spin.value()
+            profile.digital.high_value = self.digital_high_spin.value()
+            profile.digital.low_value = self.digital_low_spin.value()
+            profile.digital.manual_value = self.digital_manual_spin.value()
+            profile.digital.phase = self.digital_phase_spin.value()
+            self._emit_profile_update(profile)
+
+    def _emit_profile_update(self, profile: SignalSimulationConfig) -> None:
+        item = self._items_by_signal.get(profile.name)
+        if item is not None:
+            item.setText(2, self._profile_summary(profile))
+        self.profile_changed.emit(profile.clone())
+
+    def _profile_summary(self, profile: SignalSimulationConfig) -> str:
+        if profile.category == "digital" and profile.digital is not None:
+            if profile.digital.mode == "manual":
+                return "manual"
+            return f"pattern {profile.digital.duty_cycle * 100:.0f}%/{profile.digital.period:.1f}s"
+        if profile.analog is not None:
+            return profile.analog.generator
+        return ""
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -763,6 +1375,9 @@ class MainWindow(QMainWindow):
         self._sequencers: Dict[str, SequencerState] = {
             channel: SequencerState() for channel in OUTPUT_CHANNELS
         }
+        self._qt_settings = QSettings("OpenAI", "ECUControlMVP")
+        self._pending_watchlist: List[str] = []
+        self._restoring_settings = False
 
         self.setStatusBar(QStatusBar())
 
@@ -772,6 +1387,9 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(self._build_mode_selector())
         main_layout.addWidget(self._build_connection_group())
         main_layout.addLayout(self._build_signal_section())
+        self.simulation_widget = DummySimulationWidget()
+        self.simulation_widget.profile_changed.connect(self._apply_simulation_profile)
+        main_layout.addWidget(self.simulation_widget)
         main_layout.addWidget(self._build_output_group())
         main_layout.addWidget(self._build_sequencer_group())
         main_layout.addWidget(self._build_input_group())
@@ -785,9 +1403,11 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self._tick)
         self.timer.start()
 
+        self.simulation_widget.setEnabled(False)
         self._stop_all_sequences()
-        self._switch_backend(DummyBackend.name)
+        self._restore_settings()
         self._load_current_dbc()
+        self._switch_backend(self.mode_combo.currentText())
 
     def _build_mode_selector(self) -> QHBoxLayout:
         layout = QHBoxLayout()
@@ -907,10 +1527,55 @@ class MainWindow(QMainWindow):
         group.setLayout(layout)
         return group
 
+    def _restore_settings(self) -> None:
+        """Restore persisted UI state."""
+
+        self._restoring_settings = True
+        dbc_path = self._qt_settings.value("dbc_path", "ecu-test.dbc", type=str)
+        if dbc_path:
+            self.dbc_path_edit.setText(dbc_path)
+        mode = self._qt_settings.value("mode", DummyBackend.name, type=str)
+        if mode not in self.backends:
+            mode = DummyBackend.name
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentText(mode)
+        self.mode_combo.blockSignals(False)
+        bustype = self._qt_settings.value("bustype", "socketcan", type=str)
+        index = self.bustype_combo.findText(bustype)
+        if index >= 0:
+            self.bustype_combo.setCurrentIndex(index)
+        self.channel_edit.setText(self._qt_settings.value("channel", "can0", type=str))
+        bitrate = int(self._qt_settings.value("bitrate", 500000))
+        self.bitrate_spin.setValue(bitrate)
+        self.path_edit.setText(self._qt_settings.value("log_path", "logs.csv", type=str))
+        self.rate_spin.setValue(int(self._qt_settings.value("log_rate", 10)))
+        watchlist_value = self._qt_settings.value("watchlist", [])
+        if isinstance(watchlist_value, list):
+            self._pending_watchlist = [str(entry) for entry in watchlist_value]
+        elif isinstance(watchlist_value, str):
+            self._pending_watchlist = [item for item in watchlist_value.split(",") if item]
+        else:
+            self._pending_watchlist = []
+        self._restoring_settings = False
+
+    def _save_settings(self) -> None:
+        """Persist the current UI state."""
+
+        self._qt_settings.setValue("dbc_path", self.dbc_path_edit.text().strip())
+        self._qt_settings.setValue("mode", self.mode_combo.currentText())
+        self._qt_settings.setValue("bustype", self.bustype_combo.currentText())
+        self._qt_settings.setValue("channel", self.channel_edit.text().strip())
+        self._qt_settings.setValue("bitrate", int(self.bitrate_spin.value()))
+        self._qt_settings.setValue("log_path", self.path_edit.text().strip())
+        self._qt_settings.setValue("log_rate", int(self.rate_spin.value()))
+        self._qt_settings.setValue("watchlist", self.watchlist_widget.signal_names)
+
     def _browse_file(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Select log file", self.path_edit.text(), "CSV Files (*.csv)")
         if path:
             self.path_edit.setText(path)
+            if not self._restoring_settings:
+                self._save_settings()
 
     def _add_selected_signals(self) -> None:
         if self.logger.is_running:
@@ -923,6 +1588,8 @@ class MainWindow(QMainWindow):
         if added:
             self.statusBar().showMessage(f"Added to watchlist: {', '.join(added)}", 5000)
             self._refresh_watchlist_values(force=True)
+            if not self._restoring_settings:
+                self._save_settings()
 
     def _remove_selected_signals(self) -> None:
         if self.logger.is_running:
@@ -933,6 +1600,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Removed from watchlist: {', '.join(removed)}", 5000)
             for name in removed:
                 self._watch_values.pop(name, None)
+            self._refresh_watchlist_values(force=True)
+            if not self._restoring_settings:
+                self._save_settings()
 
     def _load_current_dbc(self) -> None:
         path = self.dbc_path_edit.text().strip()
@@ -953,8 +1623,14 @@ class MainWindow(QMainWindow):
         self.signal_browser.set_signals(self._signals_by_message)
         if self.backend is not None:
             self.backend.apply_database(database)
+        self._sync_simulation_profiles()
+        if self._pending_watchlist:
+            self.watchlist_widget.add_signals(self._pending_watchlist)
+            self._pending_watchlist = []
         self.statusBar().showMessage(f"DBC loaded: {os.path.basename(path)}", 5000)
         self._refresh_watchlist_values(force=True)
+        if not self._restoring_settings:
+            self._save_settings()
 
     def _extract_signal_definitions(self, database) -> Dict[str, List[SignalDefinition]]:
         catalog: Dict[str, List[SignalDefinition]] = {}
@@ -997,6 +1673,9 @@ class MainWindow(QMainWindow):
         self._connect_backend_signals(self.backend)
         self.statusBar().showMessage(f"Active backend: {self.backend.name}", 5000)
         self._refresh_from_backend(force=True)
+        self._sync_simulation_profiles()
+        if not self._restoring_settings:
+            self._save_settings()
 
     def _create_backend(self, name: str) -> BackendBase:
         backend_cls = self.backends.get(name, DummyBackend)
@@ -1036,6 +1715,26 @@ class MainWindow(QMainWindow):
                 backend.status_updated.disconnect(self._on_backend_status)
             except TypeError:
                 pass
+
+    def _apply_simulation_profile(self, profile_obj: object) -> None:
+        if not isinstance(profile_obj, SignalSimulationConfig):
+            return
+        if not isinstance(self.backend, DummyBackend):
+            return
+        try:
+            self.backend.update_simulation_profile(profile_obj)
+        except BackendError as exc:
+            QMessageBox.critical(self, "Dummy Simulation", str(exc))
+            return
+        self.statusBar().showMessage(f"Updated simulation: {profile_obj.name}", 4000)
+
+    def _sync_simulation_profiles(self) -> None:
+        if isinstance(self.backend, DummyBackend):
+            self.simulation_widget.setEnabled(True)
+            self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+        else:
+            self.simulation_widget.clear()
+            self.simulation_widget.setEnabled(False)
 
     def _on_backend_status(self) -> None:
         self._refresh_from_backend()
@@ -1249,7 +1948,7 @@ class MainWindow(QMainWindow):
             return
         self._last_log_time = now
 
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
+        timestamp = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat()
         self.logger.log_row(timestamp, self._watch_values)
 
     def _start_logging(self) -> None:
@@ -1298,6 +1997,10 @@ class MainWindow(QMainWindow):
             return
         self._watch_values = values
         self.watchlist_widget.update_values(values)
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._save_settings()
+        super().closeEvent(event)
 
 
 def main() -> int:
