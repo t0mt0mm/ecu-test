@@ -9,6 +9,7 @@ This repository contains a minimal PyQt5 application that demonstrates ECU contr
 - Dummy backend simulates first-order current response with noise and dynamic inputs
 - DBC-driven signal browser with search, watchlist, and CSV logging for any selected signals
 - Real backend loads the provided DBC, opens a python-can bus, sends one write command, and decodes one feedback message
+- Per-channel sequencer with configurable ON/OFF timing and total duration for HS1–HS5
 
 ## Getting Started
 1. Create a virtual environment for Python 3.10 or newer.
@@ -60,6 +61,12 @@ The Dummy backend mirrors the Real backend signal names so the watchlist and log
 - Enable or disable each high-side output with the checkbox and adjust the PWM using the slider.
 - The live current is shown next to each output.
 - Input signals update at 10 Hz. Digital inputs display `ON`/`OFF`, while analog inputs show numeric values.
+
+## Sequencer
+- Each output has an independent sequencer panel with ON time, OFF time, and total duration controls.
+- Click **Start** to launch the cycle using the current PWM slider value for the ON phase; click **Stop** to halt immediately.
+- Sequencers toggle outputs without blocking the UI and can run alongside CSV logging.
+- Switching backends or completing the configured duration stops the sequence safely and returns control to the manual widgets.
 
 ## CSV Logging
 1. Select a destination file path and sampling rate (1–50 Hz).

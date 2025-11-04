@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -72,6 +73,19 @@ class SignalDefinition:
     maximum: Optional[float]
     scale: float
     offset: float
+
+
+@dataclass
+class SequencerState:
+    on_seconds: float = 0.0
+    off_seconds: float = 0.0
+    total_seconds: float = 0.0
+    elapsed_total: float = 0.0
+    elapsed_phase: float = 0.0
+    running: bool = False
+    is_on_phase: bool = True
+    target_pwm: float = 0.0
+    completed: bool = False
 
 
 class BackendError(Exception):
@@ -436,6 +450,10 @@ class OutputWidget(QWidget):
             self.value_label.setText(f"{int(output.pwm)} %")
         self.current_label.setText(f"{output.current:.2f} A")
 
+    def set_manual_enabled(self, enabled: bool) -> None:
+        self.toggle.setEnabled(enabled)
+        self.slider.setEnabled(enabled)
+
 
 class InputWidget(QWidget):
     def __init__(self, channel: str):
@@ -455,6 +473,70 @@ class InputWidget(QWidget):
             rendered = f"{value:.2f}"
         self.value_label.setText(rendered)
 
+
+class SequencerWidget(QWidget):
+    def __init__(self, channel: str, start_callback, stop_callback) -> None:
+        super().__init__()
+        self.channel = channel
+        self._start_callback = start_callback
+        self._stop_callback = stop_callback
+
+        layout = QHBoxLayout()
+
+        self.label = QLabel(channel)
+        layout.addWidget(self.label)
+
+        self.on_spin = QDoubleSpinBox()
+        self.on_spin.setSuffix(" s ON")
+        self.on_spin.setDecimals(1)
+        self.on_spin.setRange(0.1, 3600.0)
+        self.on_spin.setValue(5.0)
+        layout.addWidget(self.on_spin)
+
+        self.off_spin = QDoubleSpinBox()
+        self.off_spin.setSuffix(" s OFF")
+        self.off_spin.setDecimals(1)
+        self.off_spin.setRange(0.1, 3600.0)
+        self.off_spin.setValue(5.0)
+        layout.addWidget(self.off_spin)
+
+        self.duration_spin = QDoubleSpinBox()
+        self.duration_spin.setSuffix(" min")
+        self.duration_spin.setDecimals(1)
+        self.duration_spin.setRange(0.1, 600.0)
+        self.duration_spin.setValue(10.0)
+        layout.addWidget(self.duration_spin)
+
+        self.start_button = QPushButton("Start")
+        self.start_button.clicked.connect(self._start)
+        layout.addWidget(self.start_button)
+
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self._stop)
+        layout.addWidget(self.stop_button)
+
+        self.status_label = QLabel("Idle")
+        layout.addWidget(self.status_label)
+
+        layout.addStretch(1)
+        self.setLayout(layout)
+
+    def _start(self) -> None:
+        on_seconds = float(self.on_spin.value())
+        off_seconds = float(self.off_spin.value())
+        total_minutes = float(self.duration_spin.value())
+        self._start_callback(self.channel, on_seconds, off_seconds, total_minutes)
+
+    def _stop(self) -> None:
+        self._stop_callback(self.channel)
+
+    def set_running(self, running: bool) -> None:
+        self.start_button.setEnabled(not running)
+        self.stop_button.setEnabled(running)
+
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(text)
 
 class Logger:
     def __init__(self) -> None:
@@ -678,6 +760,9 @@ class MainWindow(QMainWindow):
         self._dbc = None
         self._signals_by_message: Dict[str, List[SignalDefinition]] = {}
         self._watch_values: Dict[str, float] = {}
+        self._sequencers: Dict[str, SequencerState] = {
+            channel: SequencerState() for channel in OUTPUT_CHANNELS
+        }
 
         self.setStatusBar(QStatusBar())
 
@@ -688,6 +773,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._build_connection_group())
         main_layout.addLayout(self._build_signal_section())
         main_layout.addWidget(self._build_output_group())
+        main_layout.addWidget(self._build_sequencer_group())
         main_layout.addWidget(self._build_input_group())
         main_layout.addWidget(self._build_logging_group())
 
@@ -699,6 +785,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self._tick)
         self.timer.start()
 
+        self._stop_all_sequences()
         self._switch_backend(DummyBackend.name)
         self._load_current_dbc()
 
@@ -767,6 +854,17 @@ class MainWindow(QMainWindow):
             widget = OutputWidget(channel, self._handle_output_change)
             layout.addWidget(widget)
             self.output_widgets[channel] = widget
+        group.setLayout(layout)
+        return group
+
+    def _build_sequencer_group(self) -> QGroupBox:
+        group = QGroupBox("Sequencer")
+        layout = QVBoxLayout()
+        self.sequencer_widgets: Dict[str, SequencerWidget] = {}
+        for channel in OUTPUT_CHANNELS:
+            widget = SequencerWidget(channel, self._start_sequence, self._stop_sequence)
+            layout.addWidget(widget)
+            self.sequencer_widgets[channel] = widget
         group.setLayout(layout)
         return group
 
@@ -879,6 +977,7 @@ class MainWindow(QMainWindow):
         return catalog
 
     def _switch_backend(self, name: str) -> None:
+        self._stop_all_sequences()
         previous = self.backend
         if previous is not None:
             self._disconnect_backend_signals(previous)
@@ -950,12 +1049,169 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Output", str(exc))
             self.statusBar().showMessage(str(exc), 5000)
 
+    def _start_sequence(
+        self,
+        channel: str,
+        on_seconds: float,
+        off_seconds: float,
+        total_minutes: float,
+    ) -> None:
+        if channel not in self._sequencers:
+            return
+        if self.backend is None:
+            QMessageBox.warning(self, "Sequencer", "Select a backend before starting a sequence.")
+            return
+        if self._sequencers[channel].running:
+            return
+        if on_seconds <= 0.0 or off_seconds <= 0.0 or total_minutes <= 0.0:
+            QMessageBox.warning(
+                self,
+                "Sequencer",
+                "Please configure ON time, OFF time, and duration with positive values.",
+            )
+            return
+
+        state = self._sequencers[channel]
+        state.on_seconds = on_seconds
+        state.off_seconds = off_seconds
+        state.total_seconds = total_minutes * 60.0
+        state.elapsed_total = 0.0
+        state.elapsed_phase = 0.0
+        state.running = True
+        state.is_on_phase = True
+        state.target_pwm = float(self.output_widgets[channel].slider.value())
+        state.completed = False
+
+        widget = self.sequencer_widgets.get(channel)
+        if widget is not None:
+            widget.set_running(True)
+        output_widget = self.output_widgets.get(channel)
+        if output_widget is not None:
+            output_widget.set_manual_enabled(False)
+        if not self._apply_sequencer_output(channel, state):
+            self._stop_sequence(channel, completed=False)
+            return
+        self._update_sequencer_widget(channel)
+        self.statusBar().showMessage(
+            f"Sequencer started on {channel} (ON {on_seconds:.1f}s / OFF {off_seconds:.1f}s)",
+            5000,
+        )
+
+    def _stop_sequence(
+        self,
+        channel: str,
+        completed: bool = False,
+        disable_output: bool = True,
+    ) -> None:
+        if channel not in self._sequencers:
+            return
+        state = self._sequencers[channel]
+        was_running = state.running
+        state.running = False
+        if completed:
+            state.completed = True
+            state.elapsed_total = state.total_seconds
+        else:
+            state.completed = False
+        state.elapsed_phase = 0.0
+        state.is_on_phase = True
+        widget = self.sequencer_widgets.get(channel)
+        if widget is not None:
+            widget.set_running(False)
+        output_widget = self.output_widgets.get(channel)
+        if output_widget is not None:
+            output_widget.set_manual_enabled(True)
+        if disable_output and self.backend is not None:
+            try:
+                self.backend.set_output(channel, False, 0.0)
+            except BackendError as exc:
+                self.statusBar().showMessage(str(exc), 5000)
+        self._update_sequencer_widget(channel)
+        if was_running:
+            message = "completed" if completed else "stopped"
+            self.statusBar().showMessage(f"Sequencer {message} on {channel}", 5000)
+
+    def _apply_sequencer_output(self, channel: str, state: SequencerState) -> bool:
+        if self.backend is None:
+            return False
+        enabled = state.is_on_phase
+        pwm = state.target_pwm if enabled else 0.0
+        try:
+            self.backend.set_output(channel, enabled, pwm)
+        except BackendError as exc:
+            QMessageBox.critical(self, "Sequencer", str(exc))
+            self.statusBar().showMessage(str(exc), 5000)
+            return False
+        return True
+
+    def _toggle_sequence_phase(
+        self, channel: str, state: SequencerState, carry: float = 0.0
+    ) -> None:
+        state.is_on_phase = not state.is_on_phase
+        state.elapsed_phase = max(0.0, carry)
+        if not self._apply_sequencer_output(channel, state):
+            self._stop_sequence(channel, completed=False)
+
+    def _advance_sequencers(self, dt: float) -> None:
+        for channel, state in self._sequencers.items():
+            if not state.running:
+                continue
+            state.elapsed_total += dt
+            state.elapsed_phase += dt
+
+            if state.total_seconds > 0.0 and state.elapsed_total >= state.total_seconds:
+                self._stop_sequence(channel, completed=True)
+                continue
+
+            phase_limit = state.on_seconds if state.is_on_phase else state.off_seconds
+            if phase_limit <= 0.0:
+                self._toggle_sequence_phase(channel, state)
+                self._update_sequencer_widget(channel)
+                continue
+
+            toggles = 0
+            while state.running and state.elapsed_phase >= phase_limit and toggles < 5:
+                leftover = state.elapsed_phase - phase_limit
+                self._toggle_sequence_phase(channel, state, leftover)
+                phase_limit = state.on_seconds if state.is_on_phase else state.off_seconds
+                toggles += 1
+                if phase_limit <= 0.0:
+                    break
+
+            if toggles >= 5 and state.running:
+                state.elapsed_phase = 0.0
+
+            if state.running:
+                self._update_sequencer_widget(channel)
+
+    def _update_sequencer_widget(self, channel: str) -> None:
+        state = self._sequencers[channel]
+        widget = self.sequencer_widgets.get(channel)
+        if widget is None:
+            return
+        if state.running:
+            phase = "ON" if state.is_on_phase else "OFF"
+            remaining = max(0.0, state.total_seconds - state.elapsed_total)
+            widget.set_status(
+                f"Running {phase} | {remaining:.1f}s remaining"
+            )
+        else:
+            if state.completed and state.total_seconds > 0.0:
+                widget.set_status("Completed")
+            else:
+                widget.set_status("Idle")
+
+    def _stop_all_sequences(self) -> None:
+        for channel in OUTPUT_CHANNELS:
+            self._stop_sequence(channel, completed=False)
+
     def _tick(self) -> None:
         now = time.monotonic()
         dt = now - self._last_tick
         self._last_tick = now
         if self.backend is None:
             return
+        self._advance_sequencers(dt)
         try:
             self.backend.update(dt)
         except BackendError as exc:
