@@ -1,0 +1,3 @@
+PyQt5>=5.15
+cantools>=38.0.2
+python-can>=4.2.0
