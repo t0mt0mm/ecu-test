@@ -2,11 +2,14 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-from PyQt5.QtCore import QTimer, Qt
+import can
+import cantools
+from PyQt5.QtCore import QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -22,6 +25,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
@@ -42,6 +46,18 @@ class OutputState:
     enabled: bool
     pwm: float  # 0.0 - 100.0 percent
     current: float
+
+
+@dataclass
+class ConnectionSettings:
+    dbc_path: str
+    bustype: str
+    channel: str
+    bitrate: int
+
+
+class BackendError(Exception):
+    """Raised when a backend cannot complete the requested action."""
 
 
 class BackendBase:
@@ -125,38 +141,151 @@ class DummyBackend(BackendBase):
             state.current = max(0.0, state.current)
 
 
-class RealBackend(BackendBase):
+class RealBackend(QObject, BackendBase):
     name = "Real"
 
-    def __init__(self) -> None:
+    status_updated = pyqtSignal()
+
+    def __init__(self, settings: ConnectionSettings) -> None:
+        QObject.__init__(self)
+        self.settings = settings
         self._outputs: Dict[str, OutputState] = {
             ch: OutputState(enabled=False, pwm=0.0, current=0.0) for ch in OUTPUT_CHANNELS
         }
         self._inputs: Dict[str, float] = {ch: 0.0 for ch in INPUT_CHANNELS}
+        self._db = None
+        self._bus: Optional[can.BusABC] = None
+        self._notifier: Optional[can.Notifier] = None
+        self._write_message = None
+        self._status_message = None
+        self._lock = threading.Lock()
+        self._listener: Optional["_StatusListener"] = None
 
     def start(self) -> None:
-        # Placeholder for hardware setup.
-        pass
+        if not os.path.exists(self.settings.dbc_path):
+            raise BackendError(f"DBC file not found: {self.settings.dbc_path}")
+
+        try:
+            self._db = cantools.database.load_file(self.settings.dbc_path)
+        except (OSError, cantools.database.errors.ParseError) as exc:
+            raise BackendError(f"Failed to load DBC: {exc}")
+
+        try:
+            self._write_message = self._db.get_message_by_name("QM_High_side_output_write")
+            self._status_message = self._db.get_message_by_name("QM_High_side_output_status")
+        except KeyError as exc:
+            raise BackendError(f"Required message missing in DBC: {exc}")
+
+        try:
+            bus_kwargs = {
+                "bustype": self.settings.bustype,
+                "channel": self.settings.channel,
+            }
+            if self.settings.bitrate > 0:
+                bus_kwargs["bitrate"] = self.settings.bitrate
+            self._bus = can.interface.Bus(**bus_kwargs)
+        except (can.CanError, OSError, ValueError) as exc:
+            raise BackendError(f"Failed to connect to CAN bus: {exc}")
+
+        self._listener = _StatusListener(self)
+        self._notifier = can.Notifier(self._bus, [self._listener])
 
     def stop(self) -> None:
-        # Placeholder for hardware teardown.
-        pass
+        if self._notifier is not None:
+            self._notifier.stop()
+        self._notifier = None
+        self._listener = None
+        if self._bus is not None:
+            try:
+                self._bus.shutdown()
+            except can.CanError:
+                pass
+        self._bus = None
 
     def set_output(self, channel: str, enabled: bool, pwm: float) -> None:
-        # To be implemented with real CAN messaging.
-        if channel in self._outputs:
-            self._outputs[channel].enabled = enabled
-            self._outputs[channel].pwm = pwm
+        if channel not in self._outputs:
+            return
+        if self._bus is None or self._write_message is None:
+            raise BackendError("CAN bus is not initialized")
+
+        pwm = max(0.0, min(100.0, pwm))
+        with self._lock:
+            state = self._outputs[channel]
+            state.enabled = enabled
+            state.pwm = pwm
+
+            try:
+                data = self._build_payload()
+                message_data = self._write_message.encode(data)
+                tx_msg = can.Message(
+                    arbitration_id=self._write_message.frame_id,
+                    data=message_data,
+                    is_extended_id=self._write_message.is_extended_frame,
+                )
+                self._bus.send(tx_msg)
+            except (ValueError, can.CanError) as exc:
+                raise BackendError(f"Failed to send command: {exc}")
 
     def read_outputs(self) -> Dict[str, OutputState]:
-        return {ch: OutputState(s.enabled, s.pwm, s.current) for ch, s in self._outputs.items()}
+        with self._lock:
+            return {ch: OutputState(s.enabled, s.pwm, s.current) for ch, s in self._outputs.items()}
 
     def read_inputs(self) -> Dict[str, float]:
-        return dict(self._inputs)
+        with self._lock:
+            return dict(self._inputs)
 
     def update(self, dt: float) -> None:
-        # Hardware polling should be implemented here.
-        pass
+        # Hardware polling is event-driven via CAN listener.
+        _ = dt
+
+    def _build_payload(self) -> Dict[str, float]:
+        payload: Dict[str, float] = {}
+        for index, channel in enumerate(OUTPUT_CHANNELS, start=1):
+            state = self._outputs[channel]
+            select_name = f"hs_out{index:02d}_select"
+            mode_name = f"hs_out{index:02d}_mode"
+            pwm_name = f"hs_out{index:02d}_value_pwm"
+            payload[select_name] = 1 if state.enabled else 0
+            payload[mode_name] = 1 if state.enabled else 0
+            payload[pwm_name] = state.pwm
+        return payload
+
+    def _handle_status(self, message: can.Message) -> None:
+        if self._status_message is None:
+            return
+        if message.arbitration_id != self._status_message.frame_id:
+            return
+        try:
+            decoded = self._status_message.decode(message.data, decode_choices=False, scaling=True)
+        except (ValueError, KeyError):
+            return
+
+        with self._lock:
+            for index, channel in enumerate(OUTPUT_CHANNELS, start=1):
+                current_key = f"hs_out{index:02d}_current"
+                pwm_key = f"hs_out{index:02d}_pwm"
+                if current_key in decoded:
+                    current_ma = float(decoded[current_key])
+                    self._outputs[channel].current = max(0.0, current_ma / 1000.0)
+                if pwm_key in decoded:
+                    self._outputs[channel].pwm = float(decoded[pwm_key])
+            # Expose PWM of status as inputs for visibility
+            for index in range(1, len(OUTPUT_CHANNELS) + 1):
+                current_key = f"hs_out{index:02d}_current"
+                input_key = f"AI{index}"
+                if current_key in decoded and input_key in self._inputs:
+                    self._inputs[input_key] = float(decoded[current_key]) / 1000.0
+
+        self.status_updated.emit()
+
+
+class _StatusListener(can.Listener):
+    def __init__(self, backend: "RealBackend") -> None:
+        super().__init__()
+        self._backend = backend
+
+    def on_message_received(self, message: can.Message) -> None:  # type: ignore[override]
+        self._backend._handle_status(message)
 
 
 class OutputWidget(QWidget):
@@ -293,10 +422,13 @@ class MainWindow(QMainWindow):
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
 
+        self.setStatusBar(QStatusBar())
+
         central = QWidget()
         main_layout = QVBoxLayout()
 
         main_layout.addLayout(self._build_mode_selector())
+        main_layout.addWidget(self._build_connection_group())
         main_layout.addWidget(self._build_output_group())
         main_layout.addWidget(self._build_input_group())
         main_layout.addWidget(self._build_logging_group())
@@ -320,6 +452,37 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.mode_combo)
         layout.addStretch(1)
         return layout
+
+    def _build_connection_group(self) -> QGroupBox:
+        group = QGroupBox("Connection")
+        layout = QGridLayout()
+
+        layout.addWidget(QLabel("DBC path"), 0, 0)
+        self.dbc_path_edit = QLineEdit("ecu-test.dbc")
+        layout.addWidget(self.dbc_path_edit, 0, 1)
+        dbc_button = QPushButton("Browse")
+        dbc_button.clicked.connect(self._browse_dbc)
+        layout.addWidget(dbc_button, 0, 2)
+
+        layout.addWidget(QLabel("Bus type"), 1, 0)
+        self.bustype_combo = QComboBox()
+        self.bustype_combo.addItems(["socketcan", "pcan", "vector"])
+        layout.addWidget(self.bustype_combo, 1, 1)
+
+        layout.addWidget(QLabel("Channel"), 2, 0)
+        self.channel_edit = QLineEdit("can0")
+        layout.addWidget(self.channel_edit, 2, 1)
+
+        layout.addWidget(QLabel("Bitrate"), 3, 0)
+        self.bitrate_spin = QSpinBox()
+        self.bitrate_spin.setRange(1000, 1000000)
+        self.bitrate_spin.setSingleStep(1000)
+        self.bitrate_spin.setValue(500000)
+        layout.addWidget(self.bitrate_spin, 3, 1)
+
+        layout.setColumnStretch(1, 1)
+        group.setLayout(layout)
+        return group
 
     def _build_output_group(self) -> QGroupBox:
         group = QGroupBox("Outputs")
@@ -377,16 +540,74 @@ class MainWindow(QMainWindow):
             self.path_edit.setText(path)
 
     def _switch_backend(self, name: str) -> None:
-        if self.backend is not None:
-            self.backend.stop()
+        previous = self.backend
+        if previous is not None:
+            self._disconnect_backend_signals(previous)
+            previous.stop()
+
+        try:
+            backend = self._create_backend(name)
+        except BackendError as exc:
+            QMessageBox.critical(self, "Backend", str(exc))
+            self.statusBar().showMessage(str(exc), 5000)
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentText(DummyBackend.name)
+            self.mode_combo.blockSignals(False)
+            backend = self._create_backend(DummyBackend.name)
+
+        self.backend = backend
+        self._connect_backend_signals(self.backend)
+        self.statusBar().showMessage(f"Active backend: {self.backend.name}", 5000)
+        self._refresh_from_backend(force=True)
+
+    def _create_backend(self, name: str) -> BackendBase:
         backend_cls = self.backends.get(name, DummyBackend)
-        self.backend = backend_cls()
-        self.backend.start()
+        if backend_cls is RealBackend:
+            settings = self._collect_connection_settings()
+            backend = backend_cls(settings)
+        else:
+            backend = backend_cls()
+        backend.start()
+        return backend
+
+    def _collect_connection_settings(self) -> ConnectionSettings:
+        dbc_path = self.dbc_path_edit.text().strip()
+        if not dbc_path:
+            raise BackendError("Please specify a DBC file path.")
+        channel = self.channel_edit.text().strip()
+        if not channel:
+            raise BackendError("Please provide a CAN channel.")
+        bustype = self.bustype_combo.currentText().strip()
+        bitrate = int(self.bitrate_spin.value())
+        return ConnectionSettings(
+            dbc_path=dbc_path,
+            bustype=bustype,
+            channel=channel,
+            bitrate=bitrate,
+        )
+
+    def _connect_backend_signals(self, backend: BackendBase) -> None:
+        if isinstance(backend, RealBackend):
+            backend.status_updated.connect(self._on_backend_status)
+
+    def _disconnect_backend_signals(self, backend: BackendBase) -> None:
+        if isinstance(backend, RealBackend):
+            try:
+                backend.status_updated.disconnect(self._on_backend_status)
+            except TypeError:
+                pass
+
+    def _on_backend_status(self) -> None:
+        self._refresh_from_backend()
 
     def _handle_output_change(self, channel: str, enabled: bool, pwm: float) -> None:
         if self.backend is None:
             return
-        self.backend.set_output(channel, enabled, pwm)
+        try:
+            self.backend.set_output(channel, enabled, pwm)
+        except BackendError as exc:
+            QMessageBox.critical(self, "Output", str(exc))
+            self.statusBar().showMessage(str(exc), 5000)
 
     def _tick(self) -> None:
         now = time.monotonic()
@@ -394,8 +615,17 @@ class MainWindow(QMainWindow):
         self._last_tick = now
         if self.backend is None:
             return
-        self.backend.update(dt)
+        try:
+            self.backend.update(dt)
+        except BackendError as exc:
+            self.statusBar().showMessage(str(exc), 5000)
+            return
 
+        self._refresh_from_backend()
+
+    def _refresh_from_backend(self, force: bool = False) -> None:
+        if self.backend is None:
+            return
         outputs = self.backend.read_outputs()
         inputs = self.backend.read_inputs()
 
@@ -406,12 +636,19 @@ class MainWindow(QMainWindow):
             value = inputs.get(channel, 0.0)
             widget.update_value(value)
 
+        now = time.monotonic()
         if self.logger.is_running:
-            self._log_values(outputs, inputs, now)
+            self._log_values(outputs, inputs, now, force)
 
-    def _log_values(self, outputs: Dict[str, OutputState], inputs: Dict[str, float], now: float) -> None:
+    def _log_values(
+        self,
+        outputs: Dict[str, OutputState],
+        inputs: Dict[str, float],
+        now: float,
+        force: bool = False,
+    ) -> None:
         rate = self.rate_spin.value()
-        if now - self._last_log_time < 1.0 / rate:
+        if not force and now - self._last_log_time < 1.0 / rate:
             return
         self._last_log_time = now
 
@@ -438,6 +675,13 @@ class MainWindow(QMainWindow):
         if self.logger.is_running:
             self.logger.stop()
             QMessageBox.information(self, "Logging", "Logging stopped.")
+
+    def _browse_dbc(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select DBC file", self.dbc_path_edit.text(), "DBC Files (*.dbc)"
+        )
+        if path:
+            self.dbc_path_edit.setText(path)
 
 
 def main() -> int:

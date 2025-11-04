@@ -8,7 +8,7 @@ This repository contains a minimal PyQt5 application that demonstrates ECU contr
 - Five mixed inputs (digital/analog) with live updates at 10 Hz
 - Dummy backend simulates first-order current response with noise and dynamic inputs
 - CSV logging for all ten signals with ISO timestamps and configurable rate
-- Real backend stub prepared for future CAN implementation
+- Real backend loads the provided DBC, opens a python-can bus, sends one write command, and decodes one feedback message
 
 ## Getting Started
 1. Create a virtual environment for Python 3.10 or newer.
@@ -25,9 +25,28 @@ The application starts in Dummy mode so it can run without any hardware.
 
 ## Backends
 - **Dummy Backend**: Implements the required simulation, reacting to PWM commands with a first-order current model and generating synthetic digital/analog inputs.
-- **Real Backend**: Placeholder that maintains state locally. Extend the methods in `RealBackend` to integrate python-can, cantools, and your DBC file.
+- **Real Backend**: Loads `ecu-test.dbc`, connects to the configured CAN interface, sends the `QM_High_side_output_write` message when outputs change, and listens for `QM_High_side_output_status` to display live current feedback.
 
-Switch between backends using the dropdown at the top of the main window. The Real backend currently does not communicate with hardware.
+Switch between backends using the dropdown at the top of the main window. If the Real backend cannot open the CAN bus or load the DBC, the application shows a clear error message and falls back to Dummy mode.
+
+### Real backend configuration
+
+Use the **Connection** panel to provide the following settings before selecting **Real** mode:
+
+| Setting     | Description |
+|-------------|-------------|
+| DBC path    | Path to the DBC file (defaults to `ecu-test.dbc`). |
+| Bus type    | python-can backend (e.g., `socketcan`, `pcan`, `vector`). |
+| Channel     | Interface channel (examples: `can0`, `PCAN_USBBUS1`, `1`). |
+| Bitrate     | Bitrate in bit/s (commonly 125000, 250000, 500000, or 1000000). |
+
+#### Backend-specific hints
+
+- **socketcan**: Ensure your CAN interface is brought up (e.g., `sudo ip link set can0 up type can bitrate 500000`).
+- **pcan**: Install Peak drivers and use channel names such as `PCAN_USBBUS1`.
+- **vector**: Install the Vector drivers and tools. The channel is typically the device number (for example `0` or `1`).
+
+When an output state changes, the Real backend encodes the PWM and enable signals with cantools and sends a single `QM_High_side_output_write` frame. Incoming `QM_High_side_output_status` frames are decoded asynchronously so the live current is updated immediately in the GUI.
 
 ## Outputs and Inputs
 - Enable or disable each high-side output with the checkbox and adjust the PWM using the slider.
