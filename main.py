@@ -64,6 +64,19 @@ WHITELIST_PATH = os.path.join(CONFIG_DIR, "signals.yaml")
 CHANNEL_PROFILE_PATH = os.path.join(PROFILE_DIR, "channels.yaml")
 
 
+def ensure_qapplication(argv: Optional[Iterable[str]] = None) -> Tuple[QApplication, bool]:
+    """Ensure that a QApplication instance exists before creating widgets."""
+
+    app = QApplication.instance()
+    if app is None:
+        args = list(argv) if argv is not None else []
+        app = QApplication(args)
+        created = True
+    else:
+        created = False
+    return app, created
+
+
 @dataclass
 class OutputState:
     enabled: bool
@@ -2072,6 +2085,7 @@ def collect_signal_definitions(database) -> Dict[str, List[SignalDefinition]]:
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self.setWindowTitle("ECU Control")
         ensure_directories()
@@ -2863,19 +2877,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_settings()
+        self._qt_settings.setValue("geometry", self.saveGeometry())
         self._disconnect_backend()
         super().closeEvent(event)
 
 def main() -> None:
-    app = QApplication(sys.argv)
+    app, created = ensure_qapplication(sys.argv)
     window = MainWindow()
     if geometry := window._qt_settings.value("geometry"):
         if isinstance(geometry, bytes):
             window.restoreGeometry(geometry)
     window.show()
-    exit_code = app.exec_()
-    window._qt_settings.setValue("geometry", window.saveGeometry())
-    sys.exit(exit_code)
+    if created:
+        exit_code = app.exec_()
+        window._qt_settings.setValue("geometry", window.saveGeometry())
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
