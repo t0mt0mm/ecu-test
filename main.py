@@ -81,6 +81,16 @@ def ensure_qapplication(argv: Optional[Iterable[str]] = None) -> Tuple[QApplicat
     return app, created
 
 
+def _bootstrap_qapplication() -> None:
+    """Create a QApplication as soon as the module is imported."""
+
+    if QApplication.instance() is None:
+        ensure_qapplication(sys.argv)
+
+
+_bootstrap_qapplication()
+
+
 @dataclass
 class OutputState:
     enabled: bool
