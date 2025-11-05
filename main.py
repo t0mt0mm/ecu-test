@@ -18,8 +18,13 @@ import can
 import cantools
 from cantools.database import errors as cantools_errors
 import yaml
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
 import pyqtgraph as pg
-assert pg.Qt.QT_LIB == "PyQt5"
+if pg.Qt.QT_LIB != "PyQt5":
+    raise RuntimeError(
+        "PyQtGraph loaded Qt binding '" + pg.Qt.QT_LIB + "' but this application requires PyQt5. "
+        "Ensure PyQt5 is installed and set PYQTGRAPH_QT_LIB=PyQt5 before launching."
+    )
 from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
