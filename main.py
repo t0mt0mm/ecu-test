@@ -569,6 +569,7 @@ class DummyBackend(BackendBase):
     name = "Dummy"
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self._dbc = None
         self._time = 0.0
@@ -1038,6 +1039,7 @@ class SignalBrowserWidget(QWidget):
     simulate_requested = pyqtSignal(str)
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self._signals: Dict[str, List[SignalDefinition]] = {}
         self._allow_simulation = False
@@ -1158,6 +1160,7 @@ class WatchlistWidget(QWidget):
     plot_toggled = pyqtSignal(str, bool)
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self._order: List[str] = []
         self._units: Dict[str, str] = {}
@@ -1265,6 +1268,7 @@ class WatchlistWidget(QWidget):
 
 class SignalSimulationDialog(QDialog):
     def __init__(self, config: SignalSimulationConfig, parent: Optional[QWidget] = None) -> None:
+        ensure_qapplication()
         super().__init__(parent)
         self.setWindowTitle(f"Simulate – {config.name}")
         self._config = config.clone()
@@ -1354,6 +1358,7 @@ class DummySimulationWidget(QGroupBox):
     profile_changed = pyqtSignal(object)
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__("Dummy Signal Simulation")
         self._profiles: Dict[str, SignalSimulationConfig] = {}
         self._items_by_signal: Dict[str, QTreeWidgetItem] = {}
@@ -1588,6 +1593,7 @@ class ChannelCardWidget(QGroupBox):
     simulation_changed = pyqtSignal(str, dict)
 
     def __init__(self, profile: ChannelProfile) -> None:
+        ensure_qapplication()
         super().__init__(profile.name)
         self.profile = profile
         self.state_label = QLabel("Idle")
@@ -1844,6 +1850,7 @@ class ChannelCardWidget(QGroupBox):
 
 class ChannelSimulationDialog(QDialog):
     def __init__(self, profile: ChannelProfile, parent: Optional[QWidget] = None) -> None:
+        ensure_qapplication()
         super().__init__(parent)
         self.setWindowTitle(f"Simulation – {profile.name}")
         self.profile = profile
@@ -1873,6 +1880,7 @@ class ChannelSimulationDialog(QDialog):
 
 class ChannelBuilderDialog(QDialog):
     def __init__(self, database, profile: Optional[ChannelProfile] = None, parent: Optional[QWidget] = None) -> None:
+        ensure_qapplication()
         super().__init__(parent)
         self.setWindowTitle("Channel Builder")
         self.database = database
