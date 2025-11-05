@@ -14,7 +14,6 @@ from can.interfaces.pcan.pcan import PcanBus
 from j1939.message_id import FrameFormat
 import cantools
 from pprint import pprint
-from SymbolParser import SymbolParser
 
 def on_message(priority, pgn, sa, timestamp, data):
     """Receive incoming messages from the bus
