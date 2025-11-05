@@ -64,6 +64,33 @@ WHITELIST_PATH = os.path.join(CONFIG_DIR, "signals.yaml")
 CHANNEL_PROFILE_PATH = os.path.join(PROFILE_DIR, "channels.yaml")
 
 
+_APP_INSTANCE: Optional[QApplication] = None
+
+
+def ensure_qapplication(argv: Optional[Iterable[str]] = None) -> Tuple[QApplication, bool]:
+    """Ensure that a QApplication instance exists before creating widgets."""
+
+    global _APP_INSTANCE
+    app = QApplication.instance()
+    created = False
+    if app is None:
+        args = list(argv) if argv is not None else []
+        app = QApplication(args)
+        created = True
+    _APP_INSTANCE = app
+    return app, created
+
+
+def _bootstrap_qapplication() -> None:
+    """Create a QApplication as soon as the module is imported."""
+
+    if QApplication.instance() is None:
+        ensure_qapplication(sys.argv)
+
+
+_bootstrap_qapplication()
+
+
 @dataclass
 class OutputState:
     enabled: bool
@@ -556,6 +583,7 @@ class DummyBackend(BackendBase):
     name = "Dummy"
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self._dbc = None
         self._time = 0.0
@@ -1025,6 +1053,7 @@ class SignalBrowserWidget(QWidget):
     simulate_requested = pyqtSignal(str)
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self._signals: Dict[str, List[SignalDefinition]] = {}
         self._allow_simulation = False
@@ -1145,6 +1174,7 @@ class WatchlistWidget(QWidget):
     plot_toggled = pyqtSignal(str, bool)
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self._order: List[str] = []
         self._units: Dict[str, str] = {}
@@ -1252,6 +1282,7 @@ class WatchlistWidget(QWidget):
 
 class SignalSimulationDialog(QDialog):
     def __init__(self, config: SignalSimulationConfig, parent: Optional[QWidget] = None) -> None:
+        ensure_qapplication()
         super().__init__(parent)
         self.setWindowTitle(f"Simulate – {config.name}")
         self._config = config.clone()
@@ -1341,6 +1372,7 @@ class DummySimulationWidget(QGroupBox):
     profile_changed = pyqtSignal(object)
 
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__("Dummy Signal Simulation")
         self._profiles: Dict[str, SignalSimulationConfig] = {}
         self._items_by_signal: Dict[str, QTreeWidgetItem] = {}
@@ -1575,6 +1607,7 @@ class ChannelCardWidget(QGroupBox):
     simulation_changed = pyqtSignal(str, dict)
 
     def __init__(self, profile: ChannelProfile) -> None:
+        ensure_qapplication()
         super().__init__(profile.name)
         self.profile = profile
         self.state_label = QLabel("Idle")
@@ -1681,22 +1714,36 @@ class ChannelCardWidget(QGroupBox):
         self.apply_button.clicked.connect(self._emit_command)
         self.off_button.clicked.connect(self._emit_off)
         self.quick_off.clicked.connect(self._emit_off)
-        self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
-        self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
-        self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
+        self.quick_low.clicked.connect(lambda: self._apply_quick_pwm(20))
+        self.quick_mid.clicked.connect(lambda: self._apply_quick_pwm(50))
+        self.quick_max.clicked.connect(lambda: self._apply_quick_pwm(100))
         self.sequence_start.clicked.connect(self._start_sequence)
         self.sequence_stop.clicked.connect(self._stop_sequence)
         self.plot_checkbox.toggled.connect(lambda checked: self._on_plot_toggled(checked))
 
     def _set_pwm_slider(self, value: int) -> None:
+        value = max(0, min(100, int(value)))
         self.pwm_slider.setValue(value)
         self.pwm_value.setText(f"{value} %")
+
+    def _apply_quick_pwm(self, value: int) -> None:
+        self._set_pwm_slider(value)
+        if not self.enabled_checkbox.isChecked():
+            self.enabled_checkbox.setChecked(True)
+        self._emit_command()
 
     def _emit_command(self) -> None:
         command = self._collect_command()
         self.command_requested.emit(self.profile.name, command)
 
     def _emit_off(self) -> None:
+        if self.profile.type in {"HighSide", "LowSide", "HBridge"}:
+            self.enabled_checkbox.setChecked(False)
+            self._set_pwm_slider(0)
+        if self.profile.type in {"AO_0_10V", "AO_4_20mA"}:
+            self.setpoint_spin.setValue(0.0)
+        if self.profile.type == "DO":
+            self.enabled_checkbox.setChecked(False)
         command = {"enabled": 0.0, "select": 0.0, "pwm": 0.0, "state": 0.0}
         if self.profile.type in {"AO_0_10V", "AO_4_20mA"}:
             command["setpoint"] = 0.0
@@ -1817,6 +1864,7 @@ class ChannelCardWidget(QGroupBox):
 
 class ChannelSimulationDialog(QDialog):
     def __init__(self, profile: ChannelProfile, parent: Optional[QWidget] = None) -> None:
+        ensure_qapplication()
         super().__init__(parent)
         self.setWindowTitle(f"Simulation – {profile.name}")
         self.profile = profile
@@ -1846,6 +1894,7 @@ class ChannelSimulationDialog(QDialog):
 
 class ChannelBuilderDialog(QDialog):
     def __init__(self, database, profile: Optional[ChannelProfile] = None, parent: Optional[QWidget] = None) -> None:
+        ensure_qapplication()
         super().__init__(parent)
         self.setWindowTitle("Channel Builder")
         self.database = database
@@ -2058,6 +2107,7 @@ def collect_signal_definitions(database) -> Dict[str, List[SignalDefinition]]:
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
+        ensure_qapplication()
         super().__init__()
         self.setWindowTitle("ECU Control")
         ensure_directories()
@@ -2849,19 +2899,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_settings()
+        self._qt_settings.setValue("geometry", self.saveGeometry())
         self._disconnect_backend()
         super().closeEvent(event)
 
 def main() -> None:
-    app = QApplication(sys.argv)
+    app, created = ensure_qapplication(sys.argv)
     window = MainWindow()
     if geometry := window._qt_settings.value("geometry"):
         if isinstance(geometry, bytes):
             window.restoreGeometry(geometry)
     window.show()
-    exit_code = app.exec_()
-    window._qt_settings.setValue("geometry", window.saveGeometry())
-    sys.exit(exit_code)
+    if created:
+        exit_code = app.exec_()
+        window._qt_settings.setValue("geometry", window.saveGeometry())
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
