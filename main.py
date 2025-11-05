@@ -1681,22 +1681,36 @@ class ChannelCardWidget(QGroupBox):
         self.apply_button.clicked.connect(self._emit_command)
         self.off_button.clicked.connect(self._emit_off)
         self.quick_off.clicked.connect(self._emit_off)
-        self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
-        self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
-        self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
+        self.quick_low.clicked.connect(lambda: self._apply_quick_pwm(20))
+        self.quick_mid.clicked.connect(lambda: self._apply_quick_pwm(50))
+        self.quick_max.clicked.connect(lambda: self._apply_quick_pwm(100))
         self.sequence_start.clicked.connect(self._start_sequence)
         self.sequence_stop.clicked.connect(self._stop_sequence)
         self.plot_checkbox.toggled.connect(lambda checked: self._on_plot_toggled(checked))
 
     def _set_pwm_slider(self, value: int) -> None:
+        value = max(0, min(100, int(value)))
         self.pwm_slider.setValue(value)
         self.pwm_value.setText(f"{value} %")
+
+    def _apply_quick_pwm(self, value: int) -> None:
+        self._set_pwm_slider(value)
+        if not self.enabled_checkbox.isChecked():
+            self.enabled_checkbox.setChecked(True)
+        self._emit_command()
 
     def _emit_command(self) -> None:
         command = self._collect_command()
         self.command_requested.emit(self.profile.name, command)
 
     def _emit_off(self) -> None:
+        if self.profile.type in {"HighSide", "LowSide", "HBridge"}:
+            self.enabled_checkbox.setChecked(False)
+            self._set_pwm_slider(0)
+        if self.profile.type in {"AO_0_10V", "AO_4_20mA"}:
+            self.setpoint_spin.setValue(0.0)
+        if self.profile.type == "DO":
+            self.enabled_checkbox.setChecked(False)
         command = {"enabled": 0.0, "select": 0.0, "pwm": 0.0, "state": 0.0}
         if self.profile.type in {"AO_0_10V", "AO_4_20mA"}:
             command["setpoint"] = 0.0
