@@ -64,16 +64,20 @@ WHITELIST_PATH = os.path.join(CONFIG_DIR, "signals.yaml")
 CHANNEL_PROFILE_PATH = os.path.join(PROFILE_DIR, "channels.yaml")
 
 
+_APP_INSTANCE: Optional[QApplication] = None
+
+
 def ensure_qapplication(argv: Optional[Iterable[str]] = None) -> Tuple[QApplication, bool]:
     """Ensure that a QApplication instance exists before creating widgets."""
 
+    global _APP_INSTANCE
     app = QApplication.instance()
+    created = False
     if app is None:
         args = list(argv) if argv is not None else []
         app = QApplication(args)
         created = True
-    else:
-        created = False
+    _APP_INSTANCE = app
     return app, created
 
 
