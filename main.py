@@ -19,6 +19,7 @@ import cantools
 from cantools.database import errors as cantools_errors
 import yaml
 import pyqtgraph as pg
+assert pg.Qt.QT_LIB == "PyQt5"
 from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
@@ -1619,9 +1620,9 @@ class ChannelCardWidget(QGroupBox):
         self.plot_widget.hide()
         self.command_curve = self.plot_widget.plot(name="Command", pen=pg.mkPen(QColor("orange"), width=2))
         self.feedback_curve = self.plot_widget.plot(name="Feedback", pen=pg.mkPen(QColor("steelblue"), width=2))
-        self._plot_times: deque[float] = deque(maxlen=1_200)
-        self._plot_command: deque[float] = deque(maxlen=1_200)
-        self._plot_feedback: deque[float] = deque(maxlen=1_200)
+        self._plot_times: deque[float] = deque()
+        self._plot_command: deque[float] = deque()
+        self._plot_feedback: deque[float] = deque()
         self._build_layout()
         self._connect_signals()
         self._update_visibility()
@@ -1783,14 +1784,19 @@ class ChannelCardWidget(QGroupBox):
         self._plot_times.append(timestamp)
         self._plot_command.append(float(command_value))
         self._plot_feedback.append(float(feedback_value))
+        cutoff = timestamp - 60.0
+        self._trim_history(cutoff)
         if not self.plot_checkbox.isChecked():
             return
         if not self._plot_times:
             return
         base_time = self._plot_times[0]
         times = [value - base_time for value in self._plot_times]
-        self.command_curve.setData(times, list(self._plot_command))
-        self.feedback_curve.setData(times, list(self._plot_feedback))
+        command = list(self._plot_command)
+        feedback = list(self._plot_feedback)
+        times, command, feedback = self._decimate_samples(times, command, feedback)
+        self.command_curve.setData(times, command)
+        self.feedback_curve.setData(times, feedback)
         self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     def reset_plot(self) -> None:
@@ -1805,6 +1811,30 @@ class ChannelCardWidget(QGroupBox):
         if not checked:
             self.reset_plot()
         self.plot_visibility_changed.emit(self.profile.name, checked)
+
+    def _trim_history(self, cutoff: float) -> None:
+        while self._plot_times and self._plot_times[0] < cutoff:
+            self._plot_times.popleft()
+            self._plot_command.popleft()
+            self._plot_feedback.popleft()
+
+    def _decimate_samples(
+        self,
+        times: List[float],
+        command: List[float],
+        feedback: List[float],
+    ) -> Tuple[List[float], List[float], List[float]]:
+        if len(times) <= 5_000:
+            return times, command, feedback
+        step = max(1, math.ceil(len(times) / 5_000))
+        dec_times = times[::step]
+        dec_command = command[::step]
+        dec_feedback = feedback[::step]
+        if dec_times[-1] != times[-1]:
+            dec_times.append(times[-1])
+            dec_command.append(command[-1])
+            dec_feedback.append(feedback[-1])
+        return dec_times, dec_command, dec_feedback
 
     def _open_sim_dialog(self) -> None:
         dialog = ChannelSimulationDialog(self.profile, parent=self)
@@ -2718,8 +2748,11 @@ class MainWindow(QMainWindow):
             value = values.get(name)
             if value is None:
                 continue
-            buffer = self._multi_plot_buffers.setdefault(name, deque(maxlen=1_200))
+            buffer = self._multi_plot_buffers.setdefault(name, deque())
             buffer.append((timestamp, float(value)))
+            cutoff = timestamp - 60.0
+            while buffer and buffer[0][0] < cutoff:
+                buffer.popleft()
             if name not in self._multi_plot_curves:
                 pen = pg.intColor(len(self._multi_plot_curves))
                 curve = self.multi_plot_widget.plot(name=name, pen=pen)
@@ -2736,6 +2769,14 @@ class MainWindow(QMainWindow):
                 continue
             times = [entry[0] - base_time for entry in buffer]
             samples = [entry[1] for entry in buffer]
+            if len(times) > 5_000:
+                step = max(1, math.ceil(len(times) / 5_000))
+                dec_times = times[::step]
+                dec_samples = samples[::step]
+                if dec_times[-1] != times[-1]:
+                    dec_times.append(times[-1])
+                    dec_samples.append(samples[-1])
+                times, samples = dec_times, dec_samples
             curve = self._multi_plot_curves.get(name)
             if curve:
                 curve.setData(times, samples)
