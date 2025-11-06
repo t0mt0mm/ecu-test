@@ -2249,6 +2249,11 @@ class ChannelCardWidget(QWidget):
 
     def __init__(self, profile: ChannelProfile) -> None:
         super().__init__()
+        self.setObjectName("channelCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(
+            "#channelCard { border: 1px solid palette(mid); border-radius: 4px; margin: 2px; padding: 4px; }"
+        )
         self.profile = profile
         self.state_label = QLabel("Idle")
         self.status_led = QLabel("●")
@@ -2406,7 +2411,7 @@ class ChannelCardWidget(QWidget):
         ):
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -3376,6 +3381,19 @@ class MainWindow(QMainWindow):
         setup_menu.addAction(self.apply_hardware_action)
         self._update_apply_action_state()
 
+        view_menu = menu_bar.addMenu("View")
+        self.compact_action = QAction("Compact UI", self)
+        self.compact_action.setCheckable(True)
+        self.compact_action.setChecked(self._compact_ui_enabled)
+        self.compact_action.toggled.connect(self._on_compact_toggle)
+        view_menu.addAction(self.compact_action)
+
+        self.show_log_action = QAction("Show Log", self)
+        self.show_log_action.setCheckable(True)
+        self.show_log_action.setChecked(self._signals_log_visible)
+        self.show_log_action.toggled.connect(self._toggle_log_visibility)
+        view_menu.addAction(self.show_log_action)
+
     def _build_dashboard_toolbar(self) -> None:
         self.dashboard_bar.clear()
         mode_widget = QWidget()
@@ -3448,26 +3466,11 @@ class MainWindow(QMainWindow):
         self.emergency_action.triggered.connect(self._emergency_stop)
         self.dashboard_bar.addAction(self.emergency_action)
         self.dashboard_bar.addSeparator()
-        self.dashboard_bar.addAction(self.save_setup_action)
-        self.dashboard_bar.addAction(self.load_setup_action)
-        self.dashboard_bar.addAction(self.save_default_action)
-        self.dashboard_bar.addAction(self.reset_defaults_action)
-        self.dashboard_bar.addAction(self.apply_hardware_action)
-        self.dashboard_bar.addSeparator()
         self.show_dummy_action = QAction("Dummy Advanced", self)
         self.show_dummy_action.setCheckable(True)
         self.show_dummy_action.setChecked(self._show_dummy_advanced)
         self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
         self.dashboard_bar.addAction(self.show_dummy_action)
-        self.compact_action = QAction("Compact UI", self)
-        self.compact_action.setCheckable(True)
-        self.compact_action.setChecked(self._compact_ui_enabled)
-        self.compact_action.toggled.connect(self._on_compact_toggle)
-        self.dashboard_bar.addAction(self.compact_action)
-        self.show_log_action = QAction("Show Log", self)
-        self.show_log_action.setCheckable(True)
-        self.show_log_action.setChecked(self._signals_log_visible)
-        self.show_log_action.toggled.connect(self._toggle_log_visibility)
         self.dashboard_bar.addAction(self.show_log_action)
     def _build_channels_tab(self) -> None:
         widget = QWidget()
