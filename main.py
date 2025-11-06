@@ -28,7 +28,17 @@ if pg.Qt.QT_LIB != "PyQt5":
         "PyQtGraph loaded Qt binding '" + pg.Qt.QT_LIB + "' but this application requires PyQt5. "
         "Ensure PyQt5 is installed and set PYQTGRAPH_QT_LIB=PyQt5 before launching."
     )
-from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, QTime, pyqtSignal
+from PyQt5.QtCore import (
+    QObject,
+    QSettings,
+    QTimer,
+    Qt,
+    QTime,
+    QSize,
+    QPropertyAnimation,
+    QEasingCurve,
+    pyqtSignal,
+)
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QApplication,
@@ -51,18 +61,24 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QScrollArea,
     QSlider,
     QSpinBox,
     QStatusBar,
+    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTimeEdit,
+    QToolBar,
     QToolButton,
     QTextBrowser,
     QTreeWidget,
     QTreeWidgetItem,
+    QWidgetAction,
+    QSizePolicy,
+    QFrame,
     QVBoxLayout,
     QWidget,
     QRadioButton,
@@ -92,6 +108,189 @@ FACTORY_DEFAULT_SETUP = {
     "dummy": {"simulations": {}},
 }
 
+
+class CompactUIManager:
+    """Apply and restore compact styling across the application."""
+
+    STYLE_SHEET = """
+    QWidget { font-size: 11px; }
+    QToolButton { padding: 2px; }
+    QGroupBox { margin-top: 6px; }
+    QGroupBox::title { subcontrol-origin: margin; left: 6px; font-weight: 600; font-size: 10px; }
+    QTabBar::tab { min-height: 18px; padding: 3px 6px; }
+    QTableView, QTreeView { gridline-color: palette(mid); font-size: 10px; }
+    QHeaderView::section { padding: 3px; font-size: 10px; }
+    QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit { min-height: 18px; padding: 1px 4px; font-size: 10px; }
+    """
+
+    def __init__(self) -> None:
+        self._applied = False
+        self._original_font = None
+        self._original_style_sheet = ""
+        self._original_icon_size = QSize()
+
+    def apply(self, window: QMainWindow) -> None:
+        app = QApplication.instance()
+        if not app or self._applied:
+            return
+        self._applied = True
+        self._original_font = app.font()
+        self._original_style_sheet = app.styleSheet()
+        self._original_icon_size = window.iconSize()
+        app.setStyle("Fusion")
+        font = app.font()
+        if font.pointSize() > 0:
+            font.setPointSize(max(6, font.pointSize() - 1))
+        app.setFont(font)
+        window.setIconSize(QSize(16, 16))
+        app.setStyleSheet(self.STYLE_SHEET)
+        self._apply_layouts(window)
+
+    def restore(self, window: QMainWindow) -> None:
+        app = QApplication.instance()
+        if not app or not self._applied:
+            return
+        self._applied = False
+        if self._original_font is not None:
+            app.setFont(self._original_font)
+        app.setStyleSheet(self._original_style_sheet)
+        if self._original_icon_size.isValid():
+            window.setIconSize(self._original_icon_size)
+        self._restore_layouts(window)
+
+    def _apply_layouts(self, widget: QWidget) -> None:
+        layout = widget.layout()
+        if layout:
+            self._apply_layout(layout)
+
+    def _apply_layout(self, layout) -> None:
+        if layout.property("_compact_original_margins") is None:
+            margins = layout.contentsMargins()
+            layout.setProperty(
+                "_compact_original_margins",
+                (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            )
+        if layout.property("_compact_original_spacing") is None:
+            layout.setProperty("_compact_original_spacing", layout.spacing())
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            child_layout = item.layout()
+            if child_layout:
+                self._apply_layout(child_layout)
+            child_widget = item.widget()
+            if child_widget and child_widget.layout():
+                self._apply_layout(child_widget.layout())
+
+    def _restore_layouts(self, widget: QWidget) -> None:
+        layout = widget.layout()
+        if layout:
+            self._restore_layout(layout)
+
+    def _restore_layout(self, layout) -> None:
+        margins = layout.property("_compact_original_margins")
+        if isinstance(margins, tuple) and len(margins) == 4:
+            layout.setContentsMargins(*margins)
+        spacing = layout.property("_compact_original_spacing")
+        if isinstance(spacing, int) and spacing >= -1:
+            layout.setSpacing(spacing)
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            child_layout = item.layout()
+            if child_layout:
+                self._restore_layout(child_layout)
+            child_widget = item.widget()
+            if child_widget and child_widget.layout():
+                self._restore_layout(child_widget.layout())
+
+
+class CollapsibleSection(QWidget):
+    """A collapsible container with animated content height."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self._badge = ""
+        self.toggle_button = QToolButton()
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle_button.setArrowType(Qt.RightArrow)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)
+        self.toggle_button.setAutoRaise(True)
+        self.toggle_button.toggled.connect(self._on_toggled)
+        self.badge_label = QLabel()
+        self.badge_label.setStyleSheet("font-weight: 600; color: palette(dark);")
+        self._block_signal = False
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
+        header_layout.addWidget(self.toggle_button)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.badge_label)
+        self.content_area = QFrame()
+        self.content_area.setFrameShape(QFrame.NoFrame)
+        self.content_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.content_area.setMaximumHeight(0)
+        self.animation = QPropertyAnimation(self.content_area, b"maximumHeight", self)
+        self.animation.setDuration(160)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addLayout(header_layout)
+        layout.addWidget(self.content_area)
+        self._update_title()
+
+    def set_content(self, widget: QWidget) -> None:
+        container_layout = QVBoxLayout()
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(widget)
+        self.content_area.setLayout(container_layout)
+
+    def set_badge(self, text: str) -> None:
+        self._badge = text
+        self.badge_label.setText(text)
+
+    def set_collapsed(self, collapsed: bool, animate: bool = False) -> None:
+        if self.toggle_button.isChecked() == (not collapsed):
+            return
+        self._block_signal = True
+        self.toggle_button.setChecked(not collapsed)
+        self._block_signal = False
+        self._apply_toggle(animate=animate)
+
+    def is_collapsed(self) -> bool:
+        return not self.toggle_button.isChecked()
+
+    def _on_toggled(self, checked: bool) -> None:
+        if self._block_signal:
+            return
+        self._apply_toggle(animate=True)
+        self.toggled.emit(checked)
+
+    def _apply_toggle(self, animate: bool) -> None:
+        expanded = self.toggle_button.isChecked()
+        self.toggle_button.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        if self.content_area.layout():
+            content_height = self.content_area.layout().sizeHint().height()
+        else:
+            content_height = 0
+        end_value = content_height if expanded else 0
+        if animate:
+            self.animation.stop()
+            self.animation.setStartValue(self.content_area.maximumHeight())
+            self.animation.setEndValue(end_value)
+            self.animation.start()
+        else:
+            self.content_area.setMaximumHeight(end_value)
+
+    def _update_title(self) -> None:
+        text = self._title
+        self.toggle_button.setText(text)
 
 @dataclass
 class OutputState:
@@ -2038,18 +2237,55 @@ class DummySimulationWidget(QGroupBox):
             return profile.analog.generator
         return ""
 
-class ChannelCardWidget(QGroupBox):
+class ChannelCardWidget(QWidget):
     command_requested = pyqtSignal(str, dict)
     sequencer_requested = pyqtSignal(str, str)
     sequencer_config_changed = pyqtSignal(str, object)
     plot_visibility_changed = pyqtSignal(str, bool)
     simulation_changed = pyqtSignal(str, dict)
+    section_collapse_changed = pyqtSignal(str, str, bool)
+    duplicate_requested = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
 
     def __init__(self, profile: ChannelProfile) -> None:
-        super().__init__(profile.name)
+        super().__init__()
         self.profile = profile
         self.state_label = QLabel("Idle")
-        self.enabled_checkbox = QCheckBox("Enabled")
+        self.status_led = QLabel("●")
+        self.status_led.setStyleSheet("color: red; font-size: 12px;")
+        self.name_label = QLabel(profile.name)
+        self.name_label.setStyleSheet("font-weight: 600;")
+        self.enabled_checkbox = QToolButton()
+        self.enabled_checkbox.setCheckable(True)
+        self.enabled_checkbox.setAutoRaise(True)
+        self.enabled_checkbox.setIcon(self.style().standardIcon(QStyle.SP_DialogYesButton))
+        self.enabled_checkbox.setToolTip("Enable channel output")
+        self.run_button = QToolButton()
+        self.run_button.setAutoRaise(True)
+        self.run_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.run_button.setToolTip("Start sequencer")
+        self.stop_button = QToolButton()
+        self.stop_button.setAutoRaise(True)
+        self.stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self.stop_button.setToolTip("Stop sequencer")
+        self.toggle_sequencer_button = QToolButton()
+        self.toggle_sequencer_button.setCheckable(True)
+        self.toggle_sequencer_button.setAutoRaise(True)
+        self.toggle_sequencer_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        self.toggle_sequencer_button.setToolTip("Toggle sequencer editor")
+        self.duplicate_button = QToolButton()
+        self.duplicate_button.setAutoRaise(True)
+        self.duplicate_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
+        self.duplicate_button.setToolTip("Duplicate channel")
+        self.plot_checkbox = QToolButton()
+        self.plot_checkbox.setCheckable(True)
+        self.plot_checkbox.setAutoRaise(True)
+        self.plot_checkbox.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+        self.plot_checkbox.setToolTip("Toggle channel plot")
+        self.delete_button = QToolButton()
+        self.delete_button.setAutoRaise(True)
+        self.delete_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.delete_button.setToolTip("Remove channel")
         self.pwm_slider = QSlider(Qt.Horizontal)
         self.pwm_slider.setRange(0, 100)
         self.pwm_value = QLabel("0 %")
@@ -2058,12 +2294,26 @@ class ChannelCardWidget(QGroupBox):
         self.setpoint_spin = QDoubleSpinBox()
         self.setpoint_spin.setDecimals(2)
         self.setpoint_spin.setRange(-1_000.0, 1_000.0)
-        self.quick_off = QPushButton("OFF")
-        self.quick_low = QPushButton("20 %")
-        self.quick_mid = QPushButton("50 %")
-        self.quick_max = QPushButton("100 %")
-        self.apply_button = QPushButton("Apply")
-        self.off_button = QPushButton("All OFF")
+        self.quick_off = QToolButton()
+        self.quick_off.setText("0%")
+        self.quick_off.setToolTip("Set output to 0%")
+        self.quick_low = QToolButton()
+        self.quick_low.setText("20%")
+        self.quick_low.setToolTip("Set output to 20%")
+        self.quick_mid = QToolButton()
+        self.quick_mid.setText("50%")
+        self.quick_mid.setToolTip("Set output to 50%")
+        self.quick_max = QToolButton()
+        self.quick_max.setText("100%")
+        self.quick_max.setToolTip("Set output to 100%")
+        self.apply_button = QToolButton()
+        self.apply_button.setText("Apply")
+        self.apply_button.setAutoRaise(True)
+        self.off_button = QToolButton()
+        self.off_button.setText("All OFF")
+        self.off_button.setAutoRaise(True)
+        for button in (self.quick_off, self.quick_low, self.quick_mid, self.quick_max, self.apply_button, self.off_button):
+            button.setAutoRaise(True)
         self.sequence_table = QTableWidget(0, 7)
         self.sequence_table.setHorizontalHeaderLabels(
             ["Order", "Name", "Duration [s]", "PWM [%]", "On [s]", "Off [s]", "Active"]
@@ -2077,14 +2327,36 @@ class ChannelCardWidget(QGroupBox):
             self.sequence_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self.sequence_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.sequence_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
-        self.sequence_add = QPushButton("Add")
-        self.sequence_delete = QPushButton("Delete")
-        self.sequence_duplicate = QPushButton("Duplicate")
-        self.sequence_up = QPushButton("Up")
-        self.sequence_down = QPushButton("Down")
-        self.sequence_start = QPushButton("Start")
-        self.sequence_stop = QPushButton("Stop")
-        self.sequence_reset = QPushButton("Reset")
+        self.sequence_add = QToolButton()
+        self.sequence_add.setText("Add")
+        self.sequence_delete = QToolButton()
+        self.sequence_delete.setText("Del")
+        self.sequence_duplicate = QToolButton()
+        self.sequence_duplicate.setText("Dup")
+        self.sequence_up = QToolButton()
+        self.sequence_up.setText("Up")
+        self.sequence_down = QToolButton()
+        self.sequence_down.setText("Down")
+        self.sequence_start = QToolButton()
+        self.sequence_start.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.sequence_start.setToolTip("Start sequence")
+        self.sequence_stop = QToolButton()
+        self.sequence_stop.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self.sequence_stop.setToolTip("Stop sequence")
+        self.sequence_reset = QToolButton()
+        self.sequence_reset.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.sequence_reset.setToolTip("Reset sequence")
+        for button in (
+            self.sequence_add,
+            self.sequence_delete,
+            self.sequence_duplicate,
+            self.sequence_up,
+            self.sequence_down,
+            self.sequence_start,
+            self.sequence_stop,
+            self.sequence_reset,
+        ):
+            button.setAutoRaise(True)
         self.sequence_stop.setEnabled(False)
         self.sequence_reset.setEnabled(False)
         self.sequence_status = QLabel("Sequence idle")
@@ -2098,7 +2370,6 @@ class ChannelCardWidget(QGroupBox):
         self.repeat_time_edit.setEnabled(False)
         self.values_view = QTextBrowser()
         self.values_view.setFixedHeight(90)
-        self.plot_checkbox = QCheckBox("Show plot")
         self.sim_button = QToolButton()
         self.sim_button.setText("⚙ Sim")
         self.sim_button.clicked.connect(self._open_sim_dialog)
@@ -2114,76 +2385,140 @@ class ChannelCardWidget(QGroupBox):
         self._plot_feedback: deque[float] = deque()
         self._updating_sequence_table = False
         self._sequence_running = False
+        self._collapsible_sync = False
         self._build_layout()
         self._connect_signals()
         self._update_visibility()
         self._update_sequence_buttons()
+        self.run_button.setEnabled(self._has_enabled_sequences())
+        self.stop_button.setEnabled(False)
 
     def _build_layout(self) -> None:
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        for button in (
+            self.enabled_checkbox,
+            self.run_button,
+            self.stop_button,
+            self.toggle_sequencer_button,
+            self.duplicate_button,
+            self.plot_checkbox,
+            self.delete_button,
+        ):
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+        header_layout.addWidget(self.status_led)
+        header_layout.addWidget(self.name_label)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.enabled_checkbox)
+        header_layout.addWidget(self.run_button)
+        header_layout.addWidget(self.stop_button)
+        header_layout.addWidget(self.toggle_sequencer_button)
+        header_layout.addWidget(self.duplicate_button)
+        header_layout.addWidget(self.plot_checkbox)
+        header_layout.addWidget(self.delete_button)
+        self.toggle_sequencer_button.setChecked(False)
+        layout.addLayout(header_layout)
         layout.addWidget(self.state_label)
-        control_layout = QGridLayout()
-        row = 0
-        control_layout.addWidget(self.enabled_checkbox, row, 0, 1, 2)
-        control_layout.addWidget(self.plot_checkbox, row, 2)
-        row += 1
-        control_layout.addWidget(QLabel("PWM"), row, 0)
-        control_layout.addWidget(self.pwm_slider, row, 1)
-        control_layout.addWidget(self.pwm_value, row, 2)
-        row += 1
-        control_layout.addWidget(QLabel("Direction"), row, 0)
-        control_layout.addWidget(self.direction_combo, row, 1)
-        row += 1
-        control_layout.addWidget(QLabel("Setpoint"), row, 0)
-        control_layout.addWidget(self.setpoint_spin, row, 1)
-        row += 1
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addWidget(self.quick_off)
-        buttons_layout.addWidget(self.quick_low)
-        buttons_layout.addWidget(self.quick_mid)
-        buttons_layout.addWidget(self.quick_max)
-        buttons_layout.addStretch(1)
-        control_layout.addLayout(buttons_layout, row, 0, 1, 3)
-        row += 1
-        action_layout = QHBoxLayout()
+        form_layout = QFormLayout()
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(2)
+        pwm_widget = QWidget()
+        pwm_layout = QHBoxLayout(pwm_widget)
+        pwm_layout.setContentsMargins(0, 0, 0, 0)
+        pwm_layout.setSpacing(4)
+        pwm_layout.addWidget(self.pwm_slider, 1)
+        pwm_layout.addWidget(self.pwm_value)
+        form_layout.addRow("PWM", pwm_widget)
+        form_layout.addRow("Direction", self.direction_combo)
+        form_layout.addRow("Setpoint", self.setpoint_spin)
+        quick_widget = QWidget()
+        quick_layout = QHBoxLayout(quick_widget)
+        quick_layout.setContentsMargins(0, 0, 0, 0)
+        quick_layout.setSpacing(2)
+        for button in (self.quick_off, self.quick_low, self.quick_mid, self.quick_max):
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            quick_layout.addWidget(button)
+        quick_layout.addStretch(1)
+        form_layout.addRow("Quick", quick_widget)
+        action_widget = QWidget()
+        action_layout = QHBoxLayout(action_widget)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(4)
+        self.apply_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.off_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
         action_layout.addWidget(self.apply_button)
         action_layout.addWidget(self.off_button)
         action_layout.addStretch(1)
         action_layout.addWidget(self.sim_button)
-        control_layout.addLayout(action_layout, row, 0, 1, 3)
-        layout.addLayout(control_layout)
-        sequencer_group = QGroupBox("Sequencer")
-        seq_layout = QVBoxLayout()
+        form_layout.addRow("Actions", action_widget)
+        layout.addLayout(form_layout)
+        self.status_section = CollapsibleSection("Status signals")
+        self.status_section.set_content(self.values_view)
+        self.status_section.set_collapsed(True, animate=False)
+        self.status_section.toggled.connect(self._on_status_section_toggled)
+        layout.addWidget(self.status_section)
+        sequencer_container = QWidget()
+        seq_layout = QVBoxLayout(sequencer_container)
+        seq_layout.setContentsMargins(0, 0, 0, 0)
+        seq_layout.setSpacing(4)
+        self.sequence_table.verticalHeader().setDefaultSectionSize(18)
+        self.sequence_table.horizontalHeader().setStretchLastSection(False)
         seq_layout.addWidget(self.sequence_table)
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.addWidget(self.sequence_add)
-        toolbar_layout.addWidget(self.sequence_delete)
-        toolbar_layout.addWidget(self.sequence_duplicate)
-        toolbar_layout.addWidget(self.sequence_up)
-        toolbar_layout.addWidget(self.sequence_down)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(2)
+        for button in (
+            self.sequence_add,
+            self.sequence_delete,
+            self.sequence_duplicate,
+            self.sequence_up,
+            self.sequence_down,
+        ):
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            toolbar_layout.addWidget(button)
         toolbar_layout.addStretch(1)
         seq_layout.addLayout(toolbar_layout)
-        repeat_group = QGroupBox("Repeat")
-        repeat_layout = QHBoxLayout()
+        repeat_widget = QWidget()
+        repeat_layout = QHBoxLayout(repeat_widget)
+        repeat_layout.setContentsMargins(0, 0, 0, 0)
+        repeat_layout.setSpacing(6)
         repeat_layout.addWidget(self.repeat_off_radio)
         repeat_layout.addWidget(self.repeat_endless_radio)
         repeat_layout.addWidget(self.repeat_limit_radio)
         repeat_layout.addWidget(self.repeat_time_edit)
         repeat_layout.addStretch(1)
-        repeat_group.setLayout(repeat_layout)
-        seq_layout.addWidget(repeat_group)
+        seq_layout.addWidget(repeat_widget)
         seq_layout.addWidget(self.sequence_status)
         sequence_controls = QHBoxLayout()
+        sequence_controls.setContentsMargins(0, 0, 0, 0)
+        sequence_controls.setSpacing(4)
         sequence_controls.addWidget(self.sequence_start)
         sequence_controls.addWidget(self.sequence_stop)
         sequence_controls.addWidget(self.sequence_reset)
         sequence_controls.addStretch(1)
         seq_layout.addLayout(sequence_controls)
-        sequencer_group.setLayout(seq_layout)
-        layout.addWidget(sequencer_group)
-        layout.addWidget(QLabel("Status signals"))
-        layout.addWidget(self.values_view)
+        self.sequencer_section = CollapsibleSection("Sequencer")
+        self.sequencer_section.set_content(sequencer_container)
+        self.sequencer_section.set_collapsed(True, animate=False)
+        self.sequencer_section.toggled.connect(lambda expanded: self._on_section_toggle("sequencer", expanded))
+        layout.addWidget(self.sequencer_section)
         layout.addWidget(self.plot_widget)
+
+    def _on_status_section_toggled(self, expanded: bool) -> None:
+        self.section_collapse_changed.emit(self.profile.name, "status", not expanded)
+
+    def _on_section_toggle(self, section: str, expanded: bool) -> None:
+        if section == "sequencer":
+            if not self._collapsible_sync and self.toggle_sequencer_button.isChecked() != expanded:
+                self._collapsible_sync = True
+                self.toggle_sequencer_button.setChecked(expanded)
+                self._collapsible_sync = False
+        self.section_collapse_changed.emit(self.profile.name, section, not expanded)
 
     def _connect_signals(self) -> None:
         self.pwm_slider.valueChanged.connect(lambda value: self.pwm_value.setText(f"{value} %"))
@@ -2207,10 +2542,70 @@ class ChannelCardWidget(QGroupBox):
         self.repeat_limit_radio.toggled.connect(self._on_repeat_mode_changed)
         self.repeat_time_edit.timeChanged.connect(lambda _time: self._emit_sequence_config())
         self.plot_checkbox.toggled.connect(lambda checked: self._on_plot_toggled(checked))
+        self.run_button.clicked.connect(lambda: self._emit_sequence_action("start"))
+        self.stop_button.clicked.connect(lambda: self._emit_sequence_action("stop"))
+        self.toggle_sequencer_button.toggled.connect(self._on_sequencer_button_toggled)
+        self.duplicate_button.clicked.connect(lambda: self.duplicate_requested.emit(self.profile.name))
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self.profile.name))
 
     def _set_pwm_slider(self, value: int) -> None:
         self.pwm_slider.setValue(value)
         self.pwm_value.setText(f"{value} %")
+
+    def _on_sequencer_button_toggled(self, checked: bool) -> None:
+        if self._collapsible_sync:
+            return
+        self._collapsible_sync = True
+        self.sequencer_section.set_collapsed(not checked, animate=True)
+        self._collapsible_sync = False
+        self.section_collapse_changed.emit(self.profile.name, "sequencer", not checked)
+
+    def set_section_collapsed(self, section: str, collapsed: bool) -> None:
+        if section == "status":
+            self.status_section.set_collapsed(collapsed, animate=False)
+        elif section == "sequencer":
+            self._collapsible_sync = True
+            self.sequencer_section.set_collapsed(collapsed, animate=False)
+            self.toggle_sequencer_button.setChecked(not collapsed)
+            self._collapsible_sync = False
+
+    def section_collapsed(self, section: str) -> bool:
+        if section == "status":
+            return self.status_section.is_collapsed()
+        if section == "sequencer":
+            return self.sequencer_section.is_collapsed()
+        return False
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        enable_action = menu.addAction("Enabled")
+        enable_action.setCheckable(True)
+        enable_action.setChecked(self.enabled_checkbox.isChecked())
+        start_action = menu.addAction("Start sequencer")
+        stop_action = menu.addAction("Stop sequencer")
+        duplicate_action = menu.addAction("Duplicate…")
+        plot_action = menu.addAction("Show plot")
+        plot_action.setCheckable(True)
+        plot_action.setChecked(self.plot_checkbox.isChecked())
+        reset_action = menu.addAction("Reset channel…")
+        delete_action = menu.addAction("Delete channel")
+        selected = menu.exec_(event.globalPos())
+        if selected is None:
+            return
+        if selected == enable_action:
+            self.enabled_checkbox.toggle()
+        elif selected == start_action:
+            self._emit_sequence_action("start")
+        elif selected == stop_action:
+            self._emit_sequence_action("stop")
+        elif selected == duplicate_action:
+            self.duplicate_requested.emit(self.profile.name)
+        elif selected == plot_action:
+            self.plot_checkbox.setChecked(not self.plot_checkbox.isChecked())
+        elif selected == reset_action:
+            self._emit_off()
+        elif selected == delete_action:
+            self.delete_requested.emit(self.profile.name)
 
     def _emit_command(self) -> None:
         command = self._collect_command()
@@ -2410,6 +2805,8 @@ class ChannelCardWidget(QGroupBox):
         if not running:
             self.sequence_status.setText("Sequence idle")
         self._update_sequence_buttons()
+        self.run_button.setEnabled(not running and self._has_enabled_sequences())
+        self.stop_button.setEnabled(running)
 
     def _set_sequence_controls_enabled(self, enabled: bool) -> None:
         self.sequence_table.setEnabled(enabled)
@@ -2449,6 +2846,8 @@ class ChannelCardWidget(QGroupBox):
         self.sequence_reset.setEnabled((running and self.sequence_table.rowCount() > 0) or (not running and self.sequence_table.rowCount() > 0))
         self._set_sequence_controls_enabled(not running)
         self._update_sequence_buttons()
+        self.run_button.setEnabled(not running and self._has_enabled_sequences())
+        self.stop_button.setEnabled(running)
 
     def _update_sequence_buttons(self) -> None:
         has_sequences = self.sequence_table.rowCount() > 0
@@ -2507,6 +2906,7 @@ class ChannelCardWidget(QGroupBox):
     def update_status(self, status: Dict[str, float]) -> None:
         lines = [f"{key}: {value:.4f}" for key, value in sorted(status.items())]
         self.values_view.setPlainText("\n".join(lines))
+        self.status_section.set_badge(str(len(lines)))
 
     def update_state_label(self, text: str) -> None:
         self.state_label.setText(text)
@@ -2913,6 +3313,13 @@ class MainWindow(QMainWindow):
         self._active_plot_id: Optional[int] = None
         self._suspend_plot_assignment = False
         self._hardware_apply_required = False
+        self._compact_manager = CompactUIManager()
+        self._compact_ui_enabled = False
+        self._channel_grid_cols = 2
+        self._channel_collapse_state: Dict[str, Dict[str, bool]] = {}
+        self._signals_log_visible = True
+        self._signals_log_height = 200
+        self._toolbar_visible = True
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -2931,14 +3338,21 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self.status_indicator)
         status_bar.addWidget(self.status_message_label, 1)
         self.setStatusBar(status_bar)
+        self.dashboard_bar = QToolBar("Dashboard", self)
+        self.dashboard_bar.setMovable(False)
+        self.dashboard_bar.setIconSize(QSize(16, 16))
+        self.addToolBar(Qt.TopToolBarArea, self.dashboard_bar)
+        self.dashboard_bar.visibilityChanged.connect(self._on_toolbar_visibility_changed)
+        self.dashboard_bar.setVisible(self._toolbar_visible)
+        self._build_dashboard_toolbar()
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
-        self._build_dashboard_tab()
         self._build_channels_tab()
         self._build_signals_tab()
         self._build_dummy_tab()
-        self._build_logging_tab()
         self._update_dummy_tab_visibility()
+        if self._compact_ui_enabled:
+            self._compact_manager.apply(self)
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
@@ -2962,104 +3376,162 @@ class MainWindow(QMainWindow):
         setup_menu.addAction(self.apply_hardware_action)
         self._update_apply_action_state()
 
-    def _build_dashboard_tab(self) -> None:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        header_layout = QHBoxLayout()
-        header_layout.addWidget(QLabel("Mode:"))
+    def _build_dashboard_toolbar(self) -> None:
+        self.dashboard_bar.clear()
+        mode_widget = QWidget()
+        mode_layout = QHBoxLayout(mode_widget)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(4)
+        mode_layout.addWidget(QLabel("Mode"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(self.backends.keys())
         self.mode_combo.setCurrentText(self.backend_name)
         self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
-        header_layout.addWidget(self.mode_combo)
-        header_layout.addStretch(1)
-        layout.addLayout(header_layout)
-        form = QFormLayout()
+        mode_layout.addWidget(self.mode_combo)
+        mode_action = QWidgetAction(self.dashboard_bar)
+        mode_action.setDefaultWidget(mode_widget)
+        self.dashboard_bar.addAction(mode_action)
+
+        dbc_widget = QWidget()
+        dbc_layout = QHBoxLayout(dbc_widget)
+        dbc_layout.setContentsMargins(0, 0, 0, 0)
+        dbc_layout.setSpacing(4)
+        dbc_layout.addWidget(QLabel("DBC"))
         self.dbc_edit = QLineEdit(self._qt_settings.value("dbc_path", os.path.join(BASE_DIR, "ecu-test.dbc")))
-        browse_button = QPushButton("Browse…")
+        self.dbc_edit.setMinimumWidth(160)
+        browse_button = QToolButton()
+        browse_button.setAutoRaise(True)
+        browse_button.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        browse_button.setToolTip("Browse DBC file")
         browse_button.clicked.connect(self._browse_dbc)
-        dbc_layout = QHBoxLayout()
         dbc_layout.addWidget(self.dbc_edit)
         dbc_layout.addWidget(browse_button)
-        dbc_widget = QWidget()
-        dbc_widget.setLayout(dbc_layout)
-        form.addRow("DBC path", dbc_widget)
+        dbc_action = QWidgetAction(self.dashboard_bar)
+        dbc_action.setDefaultWidget(dbc_widget)
+        self.dashboard_bar.addAction(dbc_action)
+
+        bus_widget = QWidget()
+        bus_layout = QHBoxLayout(bus_widget)
+        bus_layout.setContentsMargins(0, 0, 0, 0)
+        bus_layout.setSpacing(4)
         self.bustype_combo = QComboBox()
         self.bustype_combo.addItems(["socketcan", "vector", "pcan"])
         self.bustype_combo.setCurrentText(self._qt_settings.value("bustype", "socketcan"))
-        form.addRow("Bus type", self.bustype_combo)
         self.channel_edit = QLineEdit(self._qt_settings.value("channel", "vcan0"))
-        form.addRow("Channel", self.channel_edit)
+        self.channel_edit.setMaximumWidth(90)
         self.bitrate_spin = QSpinBox()
         self.bitrate_spin.setRange(10_000, 1_000_000)
         self.bitrate_spin.setSingleStep(10_000)
         self.bitrate_spin.setValue(int(self._qt_settings.value("bitrate", 500_000)))
-        form.addRow("Bitrate", self.bitrate_spin)
-        layout.addLayout(form)
-        button_layout = QHBoxLayout()
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self._connect_backend)
-        self.disconnect_button = QPushButton("Disconnect")
-        self.disconnect_button.clicked.connect(self._disconnect_backend)
-        button_layout.addWidget(self.connect_button)
-        button_layout.addWidget(self.disconnect_button)
-        button_layout.addStretch(1)
-        layout.addLayout(button_layout)
-        action_layout = QHBoxLayout()
-        self.all_off_button = QPushButton("All outputs OFF")
-        self.all_off_button.clicked.connect(self._all_outputs_off)
-        self.emergency_button = QPushButton("Emergency Stop")
-        self.emergency_button.clicked.connect(self._emergency_stop)
-        action_layout.addWidget(self.all_off_button)
-        action_layout.addWidget(self.emergency_button)
-        action_layout.addStretch(1)
-        layout.addLayout(action_layout)
-        self.show_dummy_checkbox = QCheckBox("Show Dummy Advanced tab")
-        self.show_dummy_checkbox.setChecked(self._show_dummy_advanced)
-        self.show_dummy_checkbox.stateChanged.connect(self._on_show_dummy_tab_changed)
-        layout.addWidget(self.show_dummy_checkbox)
-        layout.addStretch(1)
-        self.tab_widget.addTab(widget, "Dashboard")
+        self.bitrate_spin.setMaximumWidth(90)
+        bus_layout.addWidget(QLabel("Bus"))
+        bus_layout.addWidget(self.bustype_combo)
+        bus_layout.addWidget(QLabel("Ch"))
+        bus_layout.addWidget(self.channel_edit)
+        bus_layout.addWidget(QLabel("Bitrate"))
+        bus_layout.addWidget(self.bitrate_spin)
+        bus_action = QWidgetAction(self.dashboard_bar)
+        bus_action.setDefaultWidget(bus_widget)
+        self.dashboard_bar.addAction(bus_action)
 
+        self.connect_action = QAction(self.style().standardIcon(QStyle.SP_MediaPlay), "Connect", self)
+        self.connect_action.triggered.connect(self._connect_backend)
+        self.dashboard_bar.addAction(self.connect_action)
+        self.disconnect_action = QAction(self.style().standardIcon(QStyle.SP_MediaStop), "Disconnect", self)
+        self.disconnect_action.triggered.connect(self._disconnect_backend)
+        self.dashboard_bar.addAction(self.disconnect_action)
+        self.dashboard_bar.addSeparator()
+        self.all_off_action = QAction("All outputs OFF", self)
+        self.all_off_action.triggered.connect(self._all_outputs_off)
+        self.dashboard_bar.addAction(self.all_off_action)
+        self.emergency_action = QAction("Emergency Stop", self)
+        self.emergency_action.triggered.connect(self._emergency_stop)
+        self.dashboard_bar.addAction(self.emergency_action)
+        self.dashboard_bar.addSeparator()
+        self.dashboard_bar.addAction(self.save_setup_action)
+        self.dashboard_bar.addAction(self.load_setup_action)
+        self.dashboard_bar.addAction(self.save_default_action)
+        self.dashboard_bar.addAction(self.reset_defaults_action)
+        self.dashboard_bar.addAction(self.apply_hardware_action)
+        self.dashboard_bar.addSeparator()
+        self.show_dummy_action = QAction("Dummy Advanced", self)
+        self.show_dummy_action.setCheckable(True)
+        self.show_dummy_action.setChecked(self._show_dummy_advanced)
+        self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
+        self.dashboard_bar.addAction(self.show_dummy_action)
+        self.compact_action = QAction("Compact UI", self)
+        self.compact_action.setCheckable(True)
+        self.compact_action.setChecked(self._compact_ui_enabled)
+        self.compact_action.toggled.connect(self._on_compact_toggle)
+        self.dashboard_bar.addAction(self.compact_action)
+        self.show_log_action = QAction("Show Log", self)
+        self.show_log_action.setCheckable(True)
+        self.show_log_action.setChecked(self._signals_log_visible)
+        self.show_log_action.toggled.connect(self._toggle_log_visibility)
+        self.dashboard_bar.addAction(self.show_log_action)
     def _build_channels_tab(self) -> None:
         widget = QWidget()
         outer_layout = QVBoxLayout(widget)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+        outer_layout.setSpacing(4)
         control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(4)
         self.channel_selector = QComboBox()
         control_layout.addWidget(QLabel("Channels:"))
         control_layout.addWidget(self.channel_selector)
-        add_button = QPushButton("Add Channel")
+        add_button = QToolButton()
+        add_button.setText("Add")
+        add_button.setAutoRaise(True)
         add_button.clicked.connect(self._add_channel)
-        edit_button = QPushButton("Edit Channel")
+        edit_button = QToolButton()
+        edit_button.setText("Edit")
+        edit_button.setAutoRaise(True)
         edit_button.clicked.connect(self._edit_channel)
-        remove_button = QPushButton("Remove Channel")
+        remove_button = QToolButton()
+        remove_button.setText("Remove")
+        remove_button.setAutoRaise(True)
         remove_button.clicked.connect(self._remove_channel)
-        duplicate_button = QPushButton("Duplicate Channel")
+        duplicate_button = QToolButton()
+        duplicate_button.setText("Duplicate")
+        duplicate_button.setAutoRaise(True)
         duplicate_button.clicked.connect(self._duplicate_channel)
-        control_layout.addWidget(add_button)
-        control_layout.addWidget(edit_button)
-        control_layout.addWidget(remove_button)
-        control_layout.addWidget(duplicate_button)
+        for button in (add_button, edit_button, remove_button, duplicate_button):
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            control_layout.addWidget(button)
         control_layout.addStretch(1)
         outer_layout.addLayout(control_layout)
         self.channel_scroll = QScrollArea()
         self.channel_scroll.setWidgetResizable(True)
+        self.channel_scroll.setFrameShape(QFrame.NoFrame)
         self.channel_container = QWidget()
-        self.channel_layout = QVBoxLayout(self.channel_container)
-        self.channel_layout.addStretch(1)
+        self.channel_layout = QGridLayout(self.channel_container)
+        self.channel_layout.setContentsMargins(0, 0, 0, 0)
+        self.channel_layout.setSpacing(8)
         self.channel_scroll.setWidget(self.channel_container)
         outer_layout.addWidget(self.channel_scroll)
         self.tab_widget.addTab(widget, "Channels")
 
     def _build_signals_tab(self) -> None:
         widget = QWidget()
-        layout = QHBoxLayout(widget)
+        outer_layout = QVBoxLayout(widget)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+        outer_layout.setSpacing(4)
+        self.signals_splitter = QSplitter(Qt.Vertical)
+        top_widget = QWidget()
+        layout = QHBoxLayout(top_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
         self.signal_browser = SignalBrowserWidget()
         self.watchlist_widget = WatchlistWidget()
         self.watchlist_widget.plot_toggled.connect(self._on_watchlist_plot_toggled)
         right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
         right_layout.addWidget(self.watchlist_widget)
         controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(4)
         self.multi_plot_enable = QCheckBox("Enable multi-plot")
         self.multi_plot_enable.setChecked(self._multi_plot_enabled)
         self.multi_plot_enable.stateChanged.connect(self._on_multi_plot_enable_changed)
@@ -3091,8 +3563,86 @@ class MainWindow(QMainWindow):
         self.signal_browser.plot_requested.connect(self._on_plot_requested)
         self.signal_browser.simulate_requested.connect(self._on_signal_simulate)
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
+        self.signals_splitter.addWidget(top_widget)
+        self.logging_container = QWidget()
+        logging_layout = QFormLayout(self.logging_container)
+        logging_layout.setContentsMargins(0, 0, 0, 0)
+        logging_layout.setSpacing(4)
+        self.logging_mode_combo = QComboBox()
+        self.logging_mode_combo.addItems(["Watchlist", "Manual"])
+        logging_layout.addRow("Source", self.logging_mode_combo)
+        self.manual_log_edit = QLineEdit()
+        self.manual_log_edit.setPlaceholderText("Comma-separated signal names")
+        logging_layout.addRow("Manual signals", self.manual_log_edit)
+        self.logging_rate_spin = QDoubleSpinBox()
+        self.logging_rate_spin.setDecimals(1)
+        self.logging_rate_spin.setRange(1.0, 50.0)
+        self.logging_rate_spin.setValue(float(self._qt_settings.value("log_rate", 10.0)))
+        logging_layout.addRow("Rate (Hz)", self.logging_rate_spin)
+        path_layout = QHBoxLayout()
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(4)
+        self.logging_path_edit = QLineEdit(self._qt_settings.value("log_path", os.path.join(BASE_DIR, "signals.csv")))
+        browse = QToolButton()
+        browse.setAutoRaise(True)
+        browse.setText("…")
+        browse.clicked.connect(self._browse_log_path)
+        path_layout.addWidget(self.logging_path_edit)
+        path_layout.addWidget(browse)
+        path_widget = QWidget()
+        path_widget.setLayout(path_layout)
+        logging_layout.addRow("CSV path", path_widget)
+        self.logging_button = QPushButton("Start Logging")
+        self.logging_button.clicked.connect(self._toggle_logging)
+        logging_layout.addRow(self.logging_button)
+        self.signals_splitter.addWidget(self.logging_container)
+        self.signals_splitter.setStretchFactor(0, 3)
+        self.signals_splitter.setStretchFactor(1, 1)
+        self.signals_splitter.splitterMoved.connect(self._on_signals_splitter_moved)
+        outer_layout.addWidget(self.signals_splitter)
         self.tab_widget.addTab(widget, "Signals")
+        self._apply_log_visibility()
 
+    def _apply_log_visibility(self) -> None:
+        if not hasattr(self, "logging_container"):
+            return
+        if self._signals_log_visible:
+            self.logging_container.show()
+            if self._signals_log_height <= 0:
+                self._signals_log_height = 180
+            total = sum(self.signals_splitter.sizes())
+            if total <= 0:
+                total = max(200, self.signals_splitter.size().height())
+            top = max(100, total - self._signals_log_height)
+            self.signals_splitter.setSizes([top, self._signals_log_height])
+        else:
+            sizes = self.signals_splitter.sizes()
+            if len(sizes) > 1:
+                self._signals_log_height = sizes[1]
+            self.logging_container.hide()
+            self.signals_splitter.setSizes([self.signals_splitter.size().height(), 0])
+        if hasattr(self, "show_log_action"):
+            self.show_log_action.blockSignals(True)
+            self.show_log_action.setChecked(self._signals_log_visible)
+            self.show_log_action.blockSignals(False)
+
+    def _toggle_log_visibility(self, visible: bool) -> None:
+        self._signals_log_visible = visible
+        self._apply_log_visibility()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+    def _on_signals_splitter_moved(self, _pos: int, _index: int) -> None:
+        sizes = self.signals_splitter.sizes()
+        if len(sizes) > 1:
+            self._signals_log_height = sizes[1]
+            currently_visible = sizes[1] > 0
+            if self._signals_log_visible != currently_visible:
+                self._signals_log_visible = currently_visible
+                if hasattr(self, "show_log_action"):
+                    self.show_log_action.blockSignals(True)
+                    self.show_log_action.setChecked(currently_visible)
+                    self.show_log_action.blockSignals(False)
     def _create_plot_window(self) -> Optional[int]:
         if len(self._plot_windows) >= self._max_plot_windows:
             QMessageBox.warning(
@@ -3212,34 +3762,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.simulation_widget)
         self.tab_widget.addTab(self.dummy_tab, "Dummy Advanced")
 
-    def _build_logging_tab(self) -> None:
-        widget = QWidget()
-        layout = QFormLayout(widget)
-        self.logging_mode_combo = QComboBox()
-        self.logging_mode_combo.addItems(["Watchlist", "Manual"])
-        layout.addRow("Source", self.logging_mode_combo)
-        self.manual_log_edit = QLineEdit()
-        self.manual_log_edit.setPlaceholderText("Comma-separated signal names")
-        layout.addRow("Manual signals", self.manual_log_edit)
-        self.logging_rate_spin = QDoubleSpinBox()
-        self.logging_rate_spin.setDecimals(1)
-        self.logging_rate_spin.setRange(1.0, 50.0)
-        self.logging_rate_spin.setValue(float(self._qt_settings.value("log_rate", 10.0)))
-        layout.addRow("Rate (Hz)", self.logging_rate_spin)
-        self.logging_path_edit = QLineEdit(self._qt_settings.value("log_path", os.path.join(BASE_DIR, "signals.csv")))
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse_log_path)
-        path_layout = QHBoxLayout()
-        path_layout.addWidget(self.logging_path_edit)
-        path_layout.addWidget(browse)
-        path_widget = QWidget()
-        path_widget.setLayout(path_layout)
-        layout.addRow("CSV path", path_widget)
-        self.logging_button = QPushButton("Start Logging")
-        self.logging_button.clicked.connect(self._toggle_logging)
-        layout.addRow(self.logging_button)
-        self.tab_widget.addTab(widget, "Logging")
-
     # Backend management
     def _load_initial_backend(self) -> None:
         self._load_dbc(self.dbc_edit.text())
@@ -3350,14 +3872,21 @@ class MainWindow(QMainWindow):
             item = self.channel_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for name, profile in self._channel_profiles.items():
+        names = list(self._channel_profiles.items())
+        max_cols = max(1, int(self._channel_grid_cols))
+        for index, (name, profile) in enumerate(names):
             card = ChannelCardWidget(profile)
             card.command_requested.connect(self._on_channel_command)
             card.sequencer_requested.connect(self._on_sequencer_request)
             card.sequencer_config_changed.connect(self._on_sequencer_config_changed)
             card.plot_visibility_changed.connect(self._on_channel_plot_visibility)
             card.simulation_changed.connect(self._on_channel_simulation)
-            self.channel_layout.addWidget(card)
+            card.section_collapse_changed.connect(self._on_card_section_collapse)
+            card.duplicate_requested.connect(self._on_card_duplicate)
+            card.delete_requested.connect(self._on_card_delete)
+            row = index // max_cols
+            column = index % max_cols
+            self.channel_layout.addWidget(card, row, column)
             self._channel_cards[name] = card
             config = self._sequencer_configs.setdefault(name, ChannelConfig())
             card.set_sequencer_config(config)
@@ -3377,8 +3906,15 @@ class MainWindow(QMainWindow):
             if runner.is_running:
                 runner.emit_progress()
             card.set_plot_checked(self._channel_plot_settings.get(name, False))
+            collapse_state = self._channel_collapse_state.get(name, {})
+            card.set_section_collapsed("status", collapse_state.get("status", True))
+            card.set_section_collapsed("sequencer", collapse_state.get("sequencer", True))
         self._update_channel_card_modes()
-        self.channel_layout.addStretch(1)
+        for column in range(max_cols):
+            self.channel_layout.setColumnStretch(column, 1)
+        rows = math.ceil(len(names) / max_cols)
+        if rows:
+            self.channel_layout.setRowStretch(rows, 1)
         self.channel_selector.clear()
         self.channel_selector.addItems(sorted(self._channel_profiles))
 
@@ -3415,6 +3951,23 @@ class MainWindow(QMainWindow):
         if isinstance(self.backend, DummyBackend):
             self.backend.set_channel_profiles(self._channel_profiles)
         self._save_settings()
+
+    def _on_card_section_collapse(self, name: str, section: str, collapsed: bool) -> None:
+        state = self._channel_collapse_state.setdefault(name, {})
+        state[section] = collapsed
+        self._save_settings()
+
+    def _on_card_duplicate(self, name: str) -> None:
+        index = self.channel_selector.findText(name)
+        if index >= 0:
+            self.channel_selector.setCurrentIndex(index)
+        self._duplicate_channel()
+
+    def _on_card_delete(self, name: str) -> None:
+        index = self.channel_selector.findText(name)
+        if index >= 0:
+            self.channel_selector.setCurrentIndex(index)
+        self._remove_channel()
 
     def _add_channel(self) -> None:
         dialog = ChannelBuilderDialog(self._dbc, parent=self)
@@ -4521,15 +5074,48 @@ class MainWindow(QMainWindow):
             else:
                 self.tab_widget.setTabEnabled(index, visible)
                 self.dummy_tab.setVisible(visible)
+        if hasattr(self, "show_dummy_action"):
+            self.show_dummy_action.blockSignals(True)
+            self.show_dummy_action.setChecked(self._show_dummy_advanced)
+            self.show_dummy_action.blockSignals(False)
 
-    def _on_show_dummy_tab_changed(self, state: int) -> None:
-        self._show_dummy_advanced = state == Qt.Checked
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    def _on_show_dummy_tab_changed(self, state) -> None:
+        self._show_dummy_advanced = self._to_bool(state, False)
+        if hasattr(self, "show_dummy_action"):
+            self.show_dummy_action.blockSignals(True)
+            self.show_dummy_action.setChecked(self._show_dummy_advanced)
+            self.show_dummy_action.blockSignals(False)
         self._update_dummy_tab_visibility()
-        self._save_settings()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+    def _on_compact_toggle(self, enabled: bool) -> None:
+        self._compact_ui_enabled = enabled
+        if enabled:
+            self._compact_manager.apply(self)
+        else:
+            self._compact_manager.restore(self)
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+    def _on_toolbar_visibility_changed(self, visible: bool) -> None:
+        self._toolbar_visible = visible
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
 
     # Settings persistence
     def _restore_settings(self) -> None:
-        self.backend_name = self._qt_settings.value("mode", DummyBackend.name)
+        self.backend_name = str(self._qt_settings.value("mode", DummyBackend.name))
         watchlist = self._qt_settings.value("watchlist", [])
         if isinstance(watchlist, list):
             self._pending_watchlist = [str(name) for name in watchlist]
@@ -4539,9 +5125,23 @@ class MainWindow(QMainWindow):
         plots = self._qt_settings.value("channel_plots", {})
         if isinstance(plots, dict):
             self._channel_plot_settings = {str(key): bool(value) for key, value in plots.items()}
-        self._multi_plot_paused = bool(self._qt_settings.value("multi_plot_paused", False))
-        self._show_dummy_advanced = bool(self._qt_settings.value("show_dummy_tab", False))
-        self._multi_plot_enabled = bool(self._qt_settings.value("multi_plot_enabled", False))
+        self._multi_plot_paused = self._to_bool(self._qt_settings.value("multi_plot_paused", False), False)
+        self._show_dummy_advanced = self._to_bool(self._qt_settings.value("show_dummy_tab", False), False)
+        self._multi_plot_enabled = self._to_bool(self._qt_settings.value("multi_plot_enabled", False), False)
+        self._compact_ui_enabled = self._to_bool(self._qt_settings.value("compact_ui", self._compact_ui_enabled), False)
+        self._channel_grid_cols = int(self._qt_settings.value("channel_grid_cols", self._channel_grid_cols) or 2)
+        collapse_data = self._qt_settings.value("channel_collapse", {})
+        if isinstance(collapse_data, dict):
+            parsed: Dict[str, Dict[str, bool]] = {}
+            for channel, state in collapse_data.items():
+                if isinstance(state, dict):
+                    parsed[str(channel)] = {str(key): self._to_bool(value, True) for key, value in state.items()}
+            self._channel_collapse_state = parsed
+        self._signals_log_visible = self._to_bool(
+            self._qt_settings.value("signals_log_visible", self._signals_log_visible), True
+        )
+        self._signals_log_height = int(self._qt_settings.value("signals_log_height", self._signals_log_height) or 200)
+        self._toolbar_visible = self._to_bool(self._qt_settings.value("toolbar_visible", self._toolbar_visible), True)
         sequences_data = self._qt_settings.value("channel_sequences", {})
         if isinstance(sequences_data, dict):
             for key, value in sequences_data.items():
@@ -4563,10 +5163,19 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("log_path", self.logging_path_edit.text())
         self._qt_settings.setValue("channel_plots", self._channel_plot_settings)
         self._qt_settings.setValue("multi_plot_paused", self._multi_plot_paused)
-        if hasattr(self, "show_dummy_checkbox"):
-            self._qt_settings.setValue("show_dummy_tab", self.show_dummy_checkbox.isChecked())
+        self._qt_settings.setValue("show_dummy_tab", self._show_dummy_advanced)
         if hasattr(self, "multi_plot_enable"):
             self._qt_settings.setValue("multi_plot_enabled", self.multi_plot_enable.isChecked())
+        if hasattr(self, "signals_splitter"):
+            sizes = self.signals_splitter.sizes()
+            if len(sizes) > 1:
+                self._signals_log_height = sizes[1]
+        self._qt_settings.setValue("compact_ui", self._compact_ui_enabled)
+        self._qt_settings.setValue("channel_grid_cols", int(self._channel_grid_cols))
+        self._qt_settings.setValue("channel_collapse", self._channel_collapse_state)
+        self._qt_settings.setValue("signals_log_visible", self._signals_log_visible)
+        self._qt_settings.setValue("signals_log_height", int(self._signals_log_height))
+        self._qt_settings.setValue("toolbar_visible", self._toolbar_visible)
         sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
         self._qt_settings.setValue("channel_sequences", sequence_payload)
 
