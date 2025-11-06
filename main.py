@@ -7,12 +7,14 @@ import datetime
 import math
 import os
 import random
+import re
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from enum import Enum
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import can
 import cantools
@@ -25,7 +27,7 @@ if pg.Qt.QT_LIB != "PyQt5":
         "PyQtGraph loaded Qt binding '" + pg.Qt.QT_LIB + "' but this application requires PyQt5. "
         "Ensure PyQt5 is installed and set PYQTGRAPH_QT_LIB=PyQt5 before launching."
     )
-from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
+from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, QTime, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QApplication,
@@ -55,12 +57,14 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTimeEdit,
     QToolButton,
     QTextBrowser,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QRadioButton,
     QMenu,
     QAction,
 )
@@ -203,17 +207,259 @@ class ChannelProfile:
         }
 
 
+class SequenceRepeatMode(Enum):
+    OFF = "off"
+    ENDLESS = "endless"
+    LIMIT = "limit"
+
+
 @dataclass
-class SequencerState:
-    on_seconds: float = 0.0
-    off_seconds: float = 0.0
-    total_seconds: float = 0.0
-    elapsed_total: float = 0.0
-    elapsed_phase: float = 0.0
-    running: bool = False
-    is_on_phase: bool = True
-    target_pwm: float = 0.0
-    completed: bool = False
+class SequenceCfg:
+    name: str
+    duration_s: int
+    pwm: int
+    on_s: float
+    off_s: float
+    enabled: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "duration_s": int(max(1, self.duration_s)),
+            "pwm": int(max(0, min(100, self.pwm))),
+            "on_s": float(max(0.01, self.on_s)),
+            "off_s": float(max(0.01, self.off_s)),
+            "enabled": bool(self.enabled),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SequenceCfg":
+        return cls(
+            name=str(data.get("name", "Sequence")),
+            duration_s=int(max(1, int(data.get("duration_s", 1)))),
+            pwm=int(max(0, min(100, int(data.get("pwm", 0))))),
+            on_s=float(max(0.01, float(data.get("on_s", 0.01)))),
+            off_s=float(max(0.01, float(data.get("off_s", 0.01)))),
+            enabled=bool(data.get("enabled", True)),
+        )
+
+
+@dataclass
+class ChannelConfig:
+    sequences: List[SequenceCfg] = field(default_factory=list)
+    repeat_mode: SequenceRepeatMode = SequenceRepeatMode.OFF
+    repeat_limit_s: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "sequences": [sequence.to_dict() for sequence in self.sequences],
+            "repeat_mode": self.repeat_mode.value,
+            "repeat_limit_s": int(max(0, self.repeat_limit_s)),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChannelConfig":
+        sequences_data = data.get("sequences") or []
+        sequences = [SequenceCfg.from_dict(raw) for raw in sequences_data]
+        mode_value = str(data.get("repeat_mode", SequenceRepeatMode.OFF.value))
+        try:
+            repeat_mode = SequenceRepeatMode(mode_value)
+        except ValueError:
+            repeat_mode = SequenceRepeatMode.OFF
+        repeat_limit_s = int(max(0, int(data.get("repeat_limit_s", 0))))
+        return cls(sequences=sequences, repeat_mode=repeat_mode, repeat_limit_s=repeat_limit_s)
+
+
+class SequenceRunner(QObject):
+    progressed = pyqtSignal(int, str, float)
+    finished = pyqtSignal()
+
+    def __init__(
+        self,
+        channel_id: str,
+        set_output_cb: Callable[[str, float], None],
+        parent: Optional[QObject] = None,
+        now_fn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(parent)
+        self.channel_id = channel_id
+        self._set_output_cb = set_output_cb
+        self._now_fn = now_fn
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._advance)
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(500)
+        self._progress_timer.timeout.connect(self._emit_progress)
+        self._sequences: List[SequenceCfg] = []
+        self._enabled_sequences: List[SequenceCfg] = []
+        self._repeat_mode = SequenceRepeatMode.OFF
+        self._repeat_limit_s = 0
+        self._repeat_deadline: Optional[float] = None
+        self._sequence_index = -1
+        self._phase: str = "off"
+        self._phase_end: float = 0.0
+        self._sequence_end: float = 0.0
+        self._running = False
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def sequence_count(self) -> int:
+        return len(self._enabled_sequences)
+
+    def load(
+        self,
+        sequences: List[SequenceCfg],
+        repeat_mode: SequenceRepeatMode,
+        repeat_limit_s: int,
+    ) -> None:
+        self.reset()
+        self._sequences = list(sequences)
+        self._repeat_mode = repeat_mode
+        self._repeat_limit_s = int(max(0, repeat_limit_s))
+        self._enabled_sequences = [
+            seq
+            for seq in self._sequences
+            if seq.enabled
+            and seq.duration_s > 0
+            and seq.on_s > 0
+            and seq.off_s > 0
+        ]
+
+    def start(self) -> bool:
+        if self._running:
+            return False
+        if not self._enabled_sequences:
+            return False
+        start_time = self._now_fn()
+        if self._repeat_mode == SequenceRepeatMode.LIMIT and self._repeat_limit_s > 0:
+            self._repeat_deadline = start_time + float(self._repeat_limit_s)
+        else:
+            self._repeat_deadline = None
+        self._running = True
+        self._progress_timer.start()
+        self._enter_sequence(0, start_time)
+        return True
+
+    def stop(self) -> None:
+        if not self._running:
+            return
+        self._timer.stop()
+        self._progress_timer.stop()
+        self._running = False
+        self._sequence_index = -1
+        self._phase = "off"
+        self._phase_end = 0.0
+        self._sequence_end = 0.0
+        self._repeat_deadline = None
+        self._safe_output(0.0)
+        self._emit_progress()
+
+    def reset(self) -> None:
+        self.stop()
+
+    def emit_progress(self) -> None:
+        self._emit_progress()
+
+    def _enter_sequence(self, index: int, now: float) -> None:
+        if not self._enabled_sequences:
+            self.stop()
+            return
+        if index >= len(self._enabled_sequences):
+            index = 0
+        self._sequence_index = index
+        self._phase = "on"
+        sequence = self._enabled_sequences[self._sequence_index]
+        duration = float(max(0.01, sequence.duration_s))
+        self._sequence_end = now + duration
+        self._phase_end = min(self._sequence_end, now + float(max(0.01, sequence.on_s)))
+        self._apply_phase_output(sequence)
+        self._emit_progress()
+        self._schedule_next()
+
+    def _advance(self) -> None:
+        if not self._running:
+            return
+        now = self._now_fn()
+        if self._repeat_deadline is not None and now >= self._repeat_deadline:
+            self.stop()
+            self.finished.emit()
+            return
+        if now >= self._sequence_end:
+            if not self._advance_sequence(now):
+                self.stop()
+                self.finished.emit()
+            return
+        if now >= self._phase_end:
+            self._toggle_phase(now)
+            return
+        self._schedule_next()
+
+    def _advance_sequence(self, now: float) -> bool:
+        if not self._enabled_sequences:
+            return False
+        next_index = self._sequence_index + 1
+        deadline_reached = self._repeat_deadline is not None and now >= self._repeat_deadline
+        if next_index >= len(self._enabled_sequences):
+            if self._repeat_mode == SequenceRepeatMode.ENDLESS:
+                next_index = 0
+            elif self._repeat_mode == SequenceRepeatMode.LIMIT and not deadline_reached:
+                next_index = 0
+            else:
+                return False
+        if deadline_reached:
+            return False
+        self._enter_sequence(next_index, now)
+        return True
+
+    def _toggle_phase(self, now: float) -> None:
+        if not self._enabled_sequences or self._sequence_index < 0:
+            return
+        sequence = self._enabled_sequences[self._sequence_index]
+        if self._phase == "on":
+            self._phase = "off"
+            off_duration = float(max(0.01, sequence.off_s))
+            self._phase_end = min(self._sequence_end, now + off_duration)
+        else:
+            self._phase = "on"
+            on_duration = float(max(0.01, sequence.on_s))
+            self._phase_end = min(self._sequence_end, now + on_duration)
+        self._apply_phase_output(sequence)
+        self._emit_progress()
+        self._schedule_next()
+
+    def _schedule_next(self) -> None:
+        if not self._running:
+            return
+        now = self._now_fn()
+        targets: List[float] = [self._phase_end, self._sequence_end]
+        if self._repeat_deadline is not None:
+            targets.append(self._repeat_deadline)
+        upcoming = min(targets)
+        delay_ms = max(0, int(max(0.0, upcoming - now) * 1000))
+        self._timer.start(delay_ms)
+
+    def _apply_phase_output(self, sequence: SequenceCfg) -> None:
+        pwm = float(sequence.pwm if self._phase == "on" else 0.0)
+        self._safe_output(pwm)
+
+    def _safe_output(self, pwm: float) -> None:
+        try:
+            self._set_output_cb(self.channel_id, pwm)
+        except Exception:
+            # Suppress backend errors to avoid crashing the UI; caller handles reporting.
+            pass
+
+    def _emit_progress(self) -> None:
+        if not self._running or self._sequence_index < 0 or not self._enabled_sequences:
+            self.progressed.emit(-1, "off", 0.0)
+            return
+        remaining = max(0.0, self._phase_end - self._now_fn())
+        self.progressed.emit(self._sequence_index, self._phase, remaining)
+
 
 
 class BackendError(Exception):
@@ -1729,7 +1975,8 @@ class DummySimulationWidget(QGroupBox):
 
 class ChannelCardWidget(QGroupBox):
     command_requested = pyqtSignal(str, dict)
-    sequencer_requested = pyqtSignal(str, bool, float, float, float)
+    sequencer_requested = pyqtSignal(str, str)
+    sequencer_config_changed = pyqtSignal(str, object)
     plot_visibility_changed = pyqtSignal(str, bool)
     simulation_changed = pyqtSignal(str, dict)
 
@@ -1752,19 +1999,38 @@ class ChannelCardWidget(QGroupBox):
         self.quick_max = QPushButton("100 %")
         self.apply_button = QPushButton("Apply")
         self.off_button = QPushButton("All OFF")
-        self.sequence_on = QDoubleSpinBox()
-        self.sequence_on.setRange(0.1, 3600.0)
-        self.sequence_on.setValue(5.0)
-        self.sequence_off = QDoubleSpinBox()
-        self.sequence_off.setRange(0.1, 3600.0)
-        self.sequence_off.setValue(5.0)
-        self.sequence_duration = QDoubleSpinBox()
-        self.sequence_duration.setRange(0.1, 600.0)
-        self.sequence_duration.setValue(10.0)
-        self.sequence_start = QPushButton("Start Sequence")
+        self.sequence_table = QTableWidget(0, 7)
+        self.sequence_table.setHorizontalHeaderLabels(
+            ["Order", "Name", "Duration [s]", "PWM [%]", "On [s]", "Off [s]", "Active"]
+        )
+        self.sequence_table.verticalHeader().setVisible(False)
+        self.sequence_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.sequence_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.sequence_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.sequence_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        for column in range(2, 6):
+            self.sequence_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        self.sequence_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.sequence_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self.sequence_add = QPushButton("Add")
+        self.sequence_delete = QPushButton("Delete")
+        self.sequence_duplicate = QPushButton("Duplicate")
+        self.sequence_up = QPushButton("Up")
+        self.sequence_down = QPushButton("Down")
+        self.sequence_start = QPushButton("Start")
         self.sequence_stop = QPushButton("Stop")
+        self.sequence_reset = QPushButton("Reset")
         self.sequence_stop.setEnabled(False)
+        self.sequence_reset.setEnabled(False)
         self.sequence_status = QLabel("Sequence idle")
+        self.repeat_off_radio = QRadioButton("Off")
+        self.repeat_endless_radio = QRadioButton("Endless")
+        self.repeat_limit_radio = QRadioButton("Limit")
+        self.repeat_off_radio.setChecked(True)
+        self.repeat_time_edit = QTimeEdit()
+        self.repeat_time_edit.setDisplayFormat("HH:mm:ss")
+        self.repeat_time_edit.setTime(QTime(0, 5, 0))
+        self.repeat_time_edit.setEnabled(False)
         self.values_view = QTextBrowser()
         self.values_view.setFixedHeight(90)
         self.plot_checkbox = QCheckBox("Show plot")
@@ -1781,9 +2047,12 @@ class ChannelCardWidget(QGroupBox):
         self._plot_times: deque[float] = deque()
         self._plot_command: deque[float] = deque()
         self._plot_feedback: deque[float] = deque()
+        self._updating_sequence_table = False
+        self._sequence_running = False
         self._build_layout()
         self._connect_signals()
         self._update_visibility()
+        self._update_sequence_buttons()
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -1819,16 +2088,32 @@ class ChannelCardWidget(QGroupBox):
         control_layout.addLayout(action_layout, row, 0, 1, 3)
         layout.addLayout(control_layout)
         sequencer_group = QGroupBox("Sequencer")
-        seq_layout = QGridLayout()
-        seq_layout.addWidget(QLabel("ON (s)"), 0, 0)
-        seq_layout.addWidget(self.sequence_on, 0, 1)
-        seq_layout.addWidget(QLabel("OFF (s)"), 0, 2)
-        seq_layout.addWidget(self.sequence_off, 0, 3)
-        seq_layout.addWidget(QLabel("Duration (min)"), 1, 0)
-        seq_layout.addWidget(self.sequence_duration, 1, 1)
-        seq_layout.addWidget(self.sequence_start, 1, 2)
-        seq_layout.addWidget(self.sequence_stop, 1, 3)
-        seq_layout.addWidget(self.sequence_status, 2, 0, 1, 4)
+        seq_layout = QVBoxLayout()
+        seq_layout.addWidget(self.sequence_table)
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.addWidget(self.sequence_add)
+        toolbar_layout.addWidget(self.sequence_delete)
+        toolbar_layout.addWidget(self.sequence_duplicate)
+        toolbar_layout.addWidget(self.sequence_up)
+        toolbar_layout.addWidget(self.sequence_down)
+        toolbar_layout.addStretch(1)
+        seq_layout.addLayout(toolbar_layout)
+        repeat_group = QGroupBox("Repeat")
+        repeat_layout = QHBoxLayout()
+        repeat_layout.addWidget(self.repeat_off_radio)
+        repeat_layout.addWidget(self.repeat_endless_radio)
+        repeat_layout.addWidget(self.repeat_limit_radio)
+        repeat_layout.addWidget(self.repeat_time_edit)
+        repeat_layout.addStretch(1)
+        repeat_group.setLayout(repeat_layout)
+        seq_layout.addWidget(repeat_group)
+        seq_layout.addWidget(self.sequence_status)
+        sequence_controls = QHBoxLayout()
+        sequence_controls.addWidget(self.sequence_start)
+        sequence_controls.addWidget(self.sequence_stop)
+        sequence_controls.addWidget(self.sequence_reset)
+        sequence_controls.addStretch(1)
+        seq_layout.addLayout(sequence_controls)
         sequencer_group.setLayout(seq_layout)
         layout.addWidget(sequencer_group)
         layout.addWidget(QLabel("Status signals"))
@@ -1843,8 +2128,19 @@ class ChannelCardWidget(QGroupBox):
         self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
         self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
         self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
-        self.sequence_start.clicked.connect(self._start_sequence)
-        self.sequence_stop.clicked.connect(self._stop_sequence)
+        self.sequence_add.clicked.connect(self._on_add_sequence)
+        self.sequence_delete.clicked.connect(self._on_delete_sequence)
+        self.sequence_duplicate.clicked.connect(self._on_duplicate_sequence)
+        self.sequence_up.clicked.connect(lambda: self._move_sequence(-1))
+        self.sequence_down.clicked.connect(lambda: self._move_sequence(1))
+        self.sequence_start.clicked.connect(lambda: self._emit_sequence_action("start"))
+        self.sequence_stop.clicked.connect(lambda: self._emit_sequence_action("stop"))
+        self.sequence_reset.clicked.connect(lambda: self._emit_sequence_action("reset"))
+        self.sequence_table.itemChanged.connect(self._on_sequence_item_changed)
+        self.repeat_off_radio.toggled.connect(self._on_repeat_mode_changed)
+        self.repeat_endless_radio.toggled.connect(self._on_repeat_mode_changed)
+        self.repeat_limit_radio.toggled.connect(self._on_repeat_mode_changed)
+        self.repeat_time_edit.timeChanged.connect(lambda _time: self._emit_sequence_config())
         self.plot_checkbox.toggled.connect(lambda checked: self._on_plot_toggled(checked))
 
     def _set_pwm_slider(self, value: int) -> None:
@@ -1861,21 +2157,253 @@ class ChannelCardWidget(QGroupBox):
             command["setpoint"] = 0.0
         self.command_requested.emit(self.profile.name, command)
 
-    def _start_sequence(self) -> None:
-        self.sequence_start.setEnabled(False)
-        self.sequence_stop.setEnabled(True)
-        self.sequencer_requested.emit(
-            self.profile.name,
-            True,
-            float(self.sequence_on.value()),
-            float(self.sequence_off.value()),
-            float(self.sequence_duration.value()),
-        )
+    def _emit_sequence_action(self, action: str) -> None:
+        if action == "start" and not self._has_enabled_sequences():
+            return
+        self.sequencer_requested.emit(self.profile.name, action)
 
-    def _stop_sequence(self) -> None:
-        self.sequence_start.setEnabled(True)
-        self.sequence_stop.setEnabled(False)
-        self.sequencer_requested.emit(self.profile.name, False, 0.0, 0.0, 0.0)
+    def _on_add_sequence(self) -> None:
+        self._updating_sequence_table = True
+        self._insert_sequence_row(None, self.sequence_table.rowCount())
+        self._update_sequence_order()
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _on_delete_sequence(self) -> None:
+        row = self.sequence_table.currentRow()
+        if row < 0:
+            row = self.sequence_table.rowCount() - 1
+        if row < 0:
+            return
+        self._updating_sequence_table = True
+        self.sequence_table.removeRow(row)
+        self._update_sequence_order()
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _on_duplicate_sequence(self) -> None:
+        row = self.sequence_table.currentRow()
+        if row < 0:
+            return
+        config = self._sequence_from_row(row)
+        self._updating_sequence_table = True
+        self._insert_sequence_row(config, row + 1)
+        self._update_sequence_order()
+        self.sequence_table.selectRow(row + 1)
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _move_sequence(self, offset: int) -> None:
+        row = self.sequence_table.currentRow()
+        if row < 0:
+            return
+        target = row + offset
+        if target < 0 or target >= self.sequence_table.rowCount():
+            return
+        config = self._sequence_from_row(row)
+        self._updating_sequence_table = True
+        self.sequence_table.removeRow(row)
+        self._insert_sequence_row(config, target)
+        self._update_sequence_order()
+        self.sequence_table.selectRow(target)
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _on_sequence_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_sequence_table:
+            return
+        if item.column() not in {1, 6}:
+            return
+        self._emit_sequence_config()
+
+    def _on_repeat_mode_changed(self) -> None:
+        if self._updating_sequence_table:
+            return
+        self.repeat_time_edit.setEnabled(self.repeat_limit_radio.isChecked())
+        self._emit_sequence_config()
+
+    def _insert_sequence_row(self, cfg: Optional[SequenceCfg], row: int) -> None:
+        self.sequence_table.insertRow(row)
+        order_item = QTableWidgetItem(str(row + 1))
+        order_item.setFlags(Qt.ItemIsEnabled)
+        self.sequence_table.setItem(row, 0, order_item)
+        name = cfg.name if cfg else f"Sequence {row + 1}"
+        name_item = QTableWidgetItem(name)
+        self.sequence_table.setItem(row, 1, name_item)
+        duration_spin = QSpinBox()
+        duration_spin.setRange(1, 86_400)
+        duration_spin.setValue(cfg.duration_s if cfg else 60)
+        duration_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 2, duration_spin)
+        pwm_spin = QSpinBox()
+        pwm_spin.setRange(0, 100)
+        pwm_spin.setValue(cfg.pwm if cfg else 50)
+        pwm_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 3, pwm_spin)
+        on_spin = QDoubleSpinBox()
+        on_spin.setDecimals(2)
+        on_spin.setRange(0.01, 3600.0)
+        on_spin.setSingleStep(0.1)
+        on_spin.setValue(cfg.on_s if cfg else 1.0)
+        on_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 4, on_spin)
+        off_spin = QDoubleSpinBox()
+        off_spin.setDecimals(2)
+        off_spin.setRange(0.01, 3600.0)
+        off_spin.setSingleStep(0.1)
+        off_spin.setValue(cfg.off_s if cfg else 1.0)
+        off_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 5, off_spin)
+        enabled_item = QTableWidgetItem()
+        enabled_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        enabled_item.setCheckState(Qt.Checked if (cfg.enabled if cfg else True) else Qt.Unchecked)
+        self.sequence_table.setItem(row, 6, enabled_item)
+
+    def _update_sequence_order(self) -> None:
+        for index in range(self.sequence_table.rowCount()):
+            item = self.sequence_table.item(index, 0)
+            if item:
+                item.setText(str(index + 1))
+
+    def _sequence_from_row(self, row: int) -> SequenceCfg:
+        name_item = self.sequence_table.item(row, 1)
+        name = name_item.text().strip() if name_item else f"Sequence {row + 1}"
+        duration_spin = self.sequence_table.cellWidget(row, 2)
+        pwm_spin = self.sequence_table.cellWidget(row, 3)
+        on_spin = self.sequence_table.cellWidget(row, 4)
+        off_spin = self.sequence_table.cellWidget(row, 5)
+        enabled_item = self.sequence_table.item(row, 6)
+        duration = int(duration_spin.value()) if isinstance(duration_spin, QSpinBox) else 60
+        pwm = int(pwm_spin.value()) if isinstance(pwm_spin, QSpinBox) else 0
+        on_value = float(on_spin.value()) if isinstance(on_spin, QDoubleSpinBox) else 1.0
+        off_value = float(off_spin.value()) if isinstance(off_spin, QDoubleSpinBox) else 1.0
+        enabled = enabled_item.checkState() == Qt.Checked if enabled_item else True
+        return SequenceCfg(name=name, duration_s=duration, pwm=pwm, on_s=on_value, off_s=off_value, enabled=enabled)
+
+    def _collect_sequences(self) -> List[SequenceCfg]:
+        return [self._sequence_from_row(row) for row in range(self.sequence_table.rowCount())]
+
+    def _has_enabled_sequences(self) -> bool:
+        return any(sequence.enabled for sequence in self._collect_sequences())
+
+    def _emit_sequence_config(self) -> None:
+        if self._updating_sequence_table:
+            return
+        sequences = self._collect_sequences()
+        repeat_mode = self._current_repeat_mode()
+        repeat_limit = self._repeat_limit_seconds()
+        payload = {
+            "sequences": sequences,
+            "repeat_mode": repeat_mode,
+            "repeat_limit_s": repeat_limit,
+        }
+        self.sequencer_config_changed.emit(self.profile.name, payload)
+        self._update_sequence_buttons()
+
+    def _current_repeat_mode(self) -> SequenceRepeatMode:
+        if self.repeat_endless_radio.isChecked():
+            return SequenceRepeatMode.ENDLESS
+        if self.repeat_limit_radio.isChecked():
+            return SequenceRepeatMode.LIMIT
+        return SequenceRepeatMode.OFF
+
+    def _repeat_limit_seconds(self) -> int:
+        if not self.repeat_limit_radio.isChecked():
+            return 0
+        time_value = self.repeat_time_edit.time()
+        return time_value.hour() * 3600 + time_value.minute() * 60 + time_value.second()
+
+    def set_sequencer_config(self, config: ChannelConfig) -> None:
+        self._updating_sequence_table = True
+        self.sequence_table.setRowCount(0)
+        for sequence in config.sequences:
+            self._insert_sequence_row(sequence, self.sequence_table.rowCount())
+        self._update_sequence_order()
+        if config.repeat_mode == SequenceRepeatMode.ENDLESS:
+            self.repeat_endless_radio.setChecked(True)
+        elif config.repeat_mode == SequenceRepeatMode.LIMIT:
+            self.repeat_limit_radio.setChecked(True)
+        else:
+            self.repeat_off_radio.setChecked(True)
+        self.repeat_time_edit.setTime(self._seconds_to_time(config.repeat_limit_s))
+        self.repeat_time_edit.setEnabled(config.repeat_mode == SequenceRepeatMode.LIMIT)
+        self._updating_sequence_table = False
+        self._update_sequence_buttons()
+
+    def _seconds_to_time(self, seconds: int) -> QTime:
+        seconds = max(0, int(seconds))
+        hours = min(23, seconds // 3600)
+        minutes = min(59, (seconds % 3600) // 60)
+        secs = min(59, seconds % 60)
+        return QTime(hours, minutes, secs)
+
+    def set_sequence_running(self, running: bool) -> None:
+        self._sequence_running = running
+        self.sequence_stop.setEnabled(running)
+        self.sequence_reset.setEnabled(running or self.sequence_table.rowCount() > 0)
+        self._set_sequence_controls_enabled(not running)
+        if not running:
+            self.sequence_status.setText("Sequence idle")
+        self._update_sequence_buttons()
+
+    def _set_sequence_controls_enabled(self, enabled: bool) -> None:
+        self.sequence_table.setEnabled(enabled)
+        for control in (
+            self.sequence_add,
+            self.sequence_delete,
+            self.sequence_duplicate,
+            self.sequence_up,
+            self.sequence_down,
+        ):
+            control.setEnabled(enabled)
+        for radio in (self.repeat_off_radio, self.repeat_endless_radio, self.repeat_limit_radio):
+            radio.setEnabled(enabled)
+        self.repeat_time_edit.setEnabled(enabled and self.repeat_limit_radio.isChecked())
+
+    def update_sequence_status(
+        self,
+        seq_index: Optional[int],
+        total_sequences: int,
+        phase: Optional[str],
+        remaining_s: float,
+        running: bool,
+    ) -> None:
+        self._sequence_running = running
+        if running and seq_index is not None and seq_index >= 0 and total_sequences > 0:
+            seq_no = seq_index + 1
+            phase_label = "On" if phase == "on" else "Off"
+            remaining = max(0.0, remaining_s)
+            minutes = int(remaining // 60)
+            seconds = int(remaining % 60)
+            self.sequence_status.setText(
+                f"Seq {seq_no}/{total_sequences} • Phase: {phase_label} • Rest: {minutes:02d}:{seconds:02d}"
+            )
+        else:
+            self.sequence_status.setText("Sequence idle")
+        self.sequence_stop.setEnabled(running)
+        self.sequence_reset.setEnabled((running and self.sequence_table.rowCount() > 0) or (not running and self.sequence_table.rowCount() > 0))
+        self._set_sequence_controls_enabled(not running)
+        self._update_sequence_buttons()
+
+    def _update_sequence_buttons(self) -> None:
+        has_sequences = self.sequence_table.rowCount() > 0
+        has_enabled = any(
+            self.sequence_table.item(row, 6) and self.sequence_table.item(row, 6).checkState() == Qt.Checked
+            for row in range(self.sequence_table.rowCount())
+        )
+        if not self._sequence_running:
+            self.sequence_start.setEnabled(has_sequences and has_enabled)
+        else:
+            self.sequence_start.setEnabled(False)
+        self.sequence_reset.setEnabled(has_sequences)
+        if not self._sequence_running:
+            for control in (
+                self.sequence_delete,
+                self.sequence_duplicate,
+                self.sequence_up,
+                self.sequence_down,
+            ):
+                control.setEnabled(has_sequences)
 
     def _collect_command(self) -> Dict[str, float]:
         command: Dict[str, float] = {}
@@ -1917,11 +2445,6 @@ class ChannelCardWidget(QGroupBox):
 
     def update_state_label(self, text: str) -> None:
         self.state_label.setText(text)
-
-    def update_sequencer_status(self, text: str, running: bool) -> None:
-        self.sequence_status.setText(text)
-        self.sequence_start.setEnabled(not running)
-        self.sequence_stop.setEnabled(running)
 
     def set_dummy_mode(self, enabled: bool) -> None:
         self.sim_button.setVisible(enabled)
@@ -2031,6 +2554,46 @@ class ChannelSimulationDialog(QDialog):
     def _accept(self) -> None:
         self.result_parameters = {key: float(spin.value()) for key, spin in self._spins.items()}
         self.accept()
+
+
+class ChannelDuplicateDialog(QDialog):
+    def __init__(
+        self,
+        source: ChannelProfile,
+        suggested_id: str,
+        existing_ids: Iterable[str],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Duplicate Channel")
+        self.target_combo = QComboBox()
+        self.target_combo.setEditable(True)
+        if suggested_id:
+            self.target_combo.addItem(suggested_id)
+            self.target_combo.setCurrentText(suggested_id)
+        for identifier in sorted({str(value) for value in existing_ids}):
+            if identifier != suggested_id:
+                self.target_combo.addItem(identifier)
+        self.name_edit = QLineEdit(suggested_id)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.addRow("Source", QLabel(source.name))
+        form.addRow("Target ID", self.target_combo)
+        form.addRow("Display name", self.name_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @property
+    def target_id(self) -> str:
+        return self.target_combo.currentText().strip()
+
+    @property
+    def display_name(self) -> str:
+        return self.name_edit.text().strip()
+
 
 class ChannelBuilderDialog(QDialog):
     def __init__(self, database, profile: Optional[ChannelProfile] = None, parent: Optional[QWidget] = None) -> None:
@@ -2264,7 +2827,8 @@ class MainWindow(QMainWindow):
         self._channel_cards: Dict[str, ChannelCardWidget] = {}
         self._channel_status: Dict[str, Dict[str, float]] = {}
         self._channel_commands: Dict[str, Dict[str, float]] = {}
-        self._sequencers: Dict[str, SequencerState] = {}
+        self._sequencer_configs: Dict[str, ChannelConfig] = {}
+        self._sequence_runners: Dict[str, SequenceRunner] = {}
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -2381,9 +2945,12 @@ class MainWindow(QMainWindow):
         edit_button.clicked.connect(self._edit_channel)
         remove_button = QPushButton("Remove Channel")
         remove_button.clicked.connect(self._remove_channel)
+        duplicate_button = QPushButton("Duplicate Channel")
+        duplicate_button.clicked.connect(self._duplicate_channel)
         control_layout.addWidget(add_button)
         control_layout.addWidget(edit_button)
         control_layout.addWidget(remove_button)
+        control_layout.addWidget(duplicate_button)
         control_layout.addStretch(1)
         outer_layout.addLayout(control_layout)
         self.channel_scroll = QScrollArea()
@@ -2691,11 +3258,28 @@ class MainWindow(QMainWindow):
             card = ChannelCardWidget(profile)
             card.command_requested.connect(self._on_channel_command)
             card.sequencer_requested.connect(self._on_sequencer_request)
+            card.sequencer_config_changed.connect(self._on_sequencer_config_changed)
             card.plot_visibility_changed.connect(self._on_channel_plot_visibility)
             card.simulation_changed.connect(self._on_channel_simulation)
             self.channel_layout.addWidget(card)
             self._channel_cards[name] = card
-            self._sequencers.setdefault(name, SequencerState())
+            config = self._sequencer_configs.setdefault(name, ChannelConfig())
+            card.set_sequencer_config(config)
+            runner = self._sequence_runners.get(name)
+            if runner is None:
+                runner = SequenceRunner(name, self._apply_sequence_output, parent=self)
+                runner.progressed.connect(
+                    lambda index, phase, remaining, channel=name: self._on_sequence_progress(
+                        channel, index, phase, remaining
+                    )
+                )
+                runner.finished.connect(lambda channel=name: self._on_sequence_finished(channel))
+                self._sequence_runners[name] = runner
+            if not runner.is_running:
+                runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            card.set_sequence_running(runner.is_running)
+            if runner.is_running:
+                runner.emit_progress()
             card.set_plot_checked(self._channel_plot_settings.get(name, False))
         self._update_channel_card_modes()
         self.channel_layout.addStretch(1)
@@ -2767,33 +3351,222 @@ class MainWindow(QMainWindow):
             save_channel_profiles(list(self._channel_profiles.values()))
             if self.backend:
                 self.backend.set_channel_profiles(self._channel_profiles)
+            self._sequencer_configs.pop(name, None)
+            runner = self._sequence_runners.pop(name, None)
+            if runner:
+                runner.stop()
+            self._channel_commands.pop(name, None)
+            self._channel_status.pop(name, None)
+            self._channel_plot_settings.pop(name, None)
             self._refresh_channel_cards()
+            self._save_settings()
 
-    def _on_sequencer_request(self, channel: str, start: bool, on_seconds: float, off_seconds: float, duration_min: float) -> None:
-        state = self._sequencers.setdefault(channel, SequencerState())
-        if start:
-            state.on_seconds = max(on_seconds, 0.1)
-            state.off_seconds = max(off_seconds, 0.1)
-            state.total_seconds = max(duration_min, 0.1) * 60.0
-            state.elapsed_total = 0.0
-            state.elapsed_phase = 0.0
-            state.running = True
-            state.is_on_phase = True
-            card = self._channel_cards.get(channel)
-            if card:
-                state.target_pwm = float(card.pwm_slider.value())
-            state.completed = False
-        else:
-            state.running = False
-            state.completed = True
-        self._update_card_sequencer(channel)
+    def _duplicate_channel(self) -> None:
+        source_name = self.channel_selector.currentText()
+        source_profile = self._channel_profiles.get(source_name)
+        if not source_profile:
+            return
+        suggested_id = self._suggest_duplicate_target(source_profile.name)
+        dialog = ChannelDuplicateDialog(
+            source_profile,
+            suggested_id,
+            self._channel_profiles.keys(),
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        target_id = dialog.target_id
+        if not target_id:
+            self._show_error("Target channel ID cannot be empty.")
+            return
+        display_name = dialog.display_name or target_id
+        if display_name in self._channel_profiles:
+            self._show_error(f"Channel {display_name} already exists.")
+            return
+        new_profile = copy.deepcopy(source_profile)
+        _, source_digits, _ = self._split_channel_name(source_profile.name)
+        _, target_digits, _ = self._split_channel_name(target_id)
+        if source_digits and target_digits:
+            self._remap_channel_profile(new_profile, source_digits, target_digits)
+        new_profile.name = display_name
+        conflict = self._detect_channel_conflict(new_profile, exclude=source_name)
+        if conflict:
+            self._show_error(conflict)
+            return
+        self._channel_profiles[display_name] = new_profile
+        self._channel_profiles = dict(sorted(self._channel_profiles.items()))
+        save_channel_profiles(list(self._channel_profiles.values()))
+        self._sequencer_configs[display_name] = copy.deepcopy(
+            self._sequencer_configs.get(source_name, ChannelConfig())
+        )
+        self._sequence_runners.pop(display_name, None)
+        self._channel_commands.setdefault(display_name, {})
+        self._channel_status.setdefault(display_name, {})
+        self._channel_plot_settings.setdefault(display_name, False)
+        if self.backend:
+            try:
+                self.backend.set_channel_profiles(self._channel_profiles)
+            except BackendError as exc:
+                self._channel_profiles.pop(display_name, None)
+                save_channel_profiles(list(self._channel_profiles.values()))
+                self._sequencer_configs.pop(display_name, None)
+                self._channel_commands.pop(display_name, None)
+                self._channel_status.pop(display_name, None)
+                self._channel_plot_settings.pop(display_name, None)
+                self._show_error(str(exc))
+                return
+        self._refresh_channel_cards()
+        self._save_settings()
 
-    def _update_card_sequencer(self, channel: str) -> None:
+    def _split_channel_name(self, name: str) -> Tuple[str, Optional[str], str]:
+        match = re.search(r"(\d+)", name)
+        if not match:
+            return name, None, ""
+        prefix = name[: match.start()]
+        digits = match.group(1)
+        suffix = name[match.end() :]
+        return prefix, digits, suffix
+
+    def _suggest_duplicate_target(self, base_name: str) -> str:
+        prefix, digits, suffix = self._split_channel_name(base_name)
+        existing = set(self._channel_profiles.keys())
+        if digits:
+            width = len(digits)
+            number = int(digits)
+            while True:
+                number += 1
+                candidate = f"{prefix}{number:0{width}d}{suffix}"
+                if candidate not in existing:
+                    return candidate
+        candidate = f"{base_name}_copy"
+        index = 1
+        while candidate in existing:
+            index += 1
+            candidate = f"{base_name}_copy{index}"
+        return candidate
+
+    def _remap_channel_profile(self, profile: ChannelProfile, source_digits: str, target_digits: str) -> None:
+        if not source_digits:
+            return
+        target_digits = target_digits or source_digits
+        padded_target = target_digits.zfill(len(source_digits))
+        source_plain = source_digits.lstrip("0") or source_digits
+        target_plain = target_digits.lstrip("0") or target_digits
+
+        def replace_text(text: str) -> str:
+            if not text:
+                return text
+            updated = text.replace(source_digits, padded_target)
+            pattern = re.compile(rf"(?<!\\d){re.escape(source_plain)}(?!\\d)")
+            return pattern.sub(target_plain, updated)
+
+        profile.write.message = replace_text(profile.write.message)
+        profile.write.fields = {semantic: replace_text(value) for semantic, value in profile.write.fields.items()}
+        profile.status.message = replace_text(profile.status.message)
+        profile.status.fields = {semantic: replace_text(value) for semantic, value in profile.status.fields.items()}
+
+    def _detect_channel_conflict(self, profile: ChannelProfile, exclude: Optional[str] = None) -> Optional[str]:
+        for name, existing in self._channel_profiles.items():
+            if name == exclude:
+                continue
+            if profile.write.message and profile.write.message == existing.write.message:
+                overlap = set(profile.write.fields.values()) & set(existing.write.fields.values())
+                if overlap:
+                    return f"Write mapping conflicts with {name}: {', '.join(sorted(overlap))}"
+            if profile.status.message and profile.status.message == existing.status.message:
+                overlap = set(profile.status.fields.values()) & set(existing.status.fields.values())
+                if overlap:
+                    return f"Status mapping conflicts with {name}: {', '.join(sorted(overlap))}"
+        return None
+
+    def _on_sequencer_request(self, channel: str, action: str) -> None:
+        runner = self._sequence_runners.get(channel)
         card = self._channel_cards.get(channel)
-        state = self._sequencers.get(channel)
-        if card and state:
-            status = "Sequence running" if state.running else "Sequence idle"
-            card.update_sequencer_status(status, state.running)
+        if not runner or not card:
+            return
+        config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+        if action == "start":
+            if runner.is_running:
+                return
+            enabled_sequences = [
+                sequence
+                for sequence in config.sequences
+                if sequence.enabled and sequence.duration_s > 0 and sequence.on_s > 0 and sequence.off_s > 0
+            ]
+            if not enabled_sequences:
+                self._show_error("No enabled sequences available for this channel.")
+                return
+            runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            if not runner.start():
+                self._show_error("Failed to start the sequence. Please verify configuration values.")
+                return
+            card.set_sequence_running(True)
+            runner.emit_progress()
+        elif action == "stop":
+            runner.stop()
+            card.set_sequence_running(False)
+        elif action == "reset":
+            runner.reset()
+            card.set_sequence_running(False)
+        self._save_settings()
+
+    def _apply_sequence_output(self, channel: str, pwm: float) -> None:
+        pwm_value = max(0.0, min(100.0, float(pwm)))
+        enabled = 1.0 if pwm_value > 0.0 else 0.0
+        command = {"enabled": enabled, "select": enabled, "pwm": pwm_value}
+        self._on_channel_command(channel, command)
+
+    def _on_sequencer_config_changed(self, channel: str, payload: object) -> None:
+        runner = self._sequence_runners.get(channel)
+        card = self._channel_cards.get(channel)
+        if runner and runner.is_running:
+            if card:
+                card.set_sequencer_config(self._sequencer_configs.get(channel, ChannelConfig()))
+                card.set_sequence_running(True)
+            self._show_error("Stop the running sequence before editing its configuration.")
+            return
+        data = payload if isinstance(payload, dict) else {}
+        sequences_raw = data.get("sequences", []) if isinstance(data, dict) else []
+        sequences: List[SequenceCfg] = []
+        for entry in sequences_raw:
+            if isinstance(entry, SequenceCfg):
+                sequences.append(entry)
+            elif isinstance(entry, dict):
+                sequences.append(SequenceCfg.from_dict(entry))
+        repeat_mode_value = data.get("repeat_mode") if isinstance(data, dict) else None
+        if isinstance(repeat_mode_value, SequenceRepeatMode):
+            repeat_mode = repeat_mode_value
+        else:
+            try:
+                repeat_mode = SequenceRepeatMode(str(repeat_mode_value))
+            except (TypeError, ValueError):
+                repeat_mode = SequenceRepeatMode.OFF
+        repeat_limit_s = int(max(0, int(data.get("repeat_limit_s", 0)))) if isinstance(data, dict) else 0
+        config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+        config.sequences = sequences
+        config.repeat_mode = repeat_mode
+        config.repeat_limit_s = repeat_limit_s
+        if runner:
+            runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            runner.emit_progress()
+        self._save_settings()
+
+    def _on_sequence_progress(self, channel: str, seq_index: int, phase: str, remaining_s: float) -> None:
+        card = self._channel_cards.get(channel)
+        runner = self._sequence_runners.get(channel)
+        if not card or not runner:
+            return
+        total = runner.sequence_count
+        if seq_index < 0:
+            card.update_sequence_status(None, total, None, 0.0, False)
+        else:
+            card.update_sequence_status(seq_index, total, phase, remaining_s, runner.is_running)
+
+    def _on_sequence_finished(self, channel: str) -> None:
+        card = self._channel_cards.get(channel)
+        if card:
+            card.set_sequence_running(False)
+        self._save_settings()
 
     # Signal browser / watchlist
     def _on_add_to_watchlist(self, names: List[str]) -> None:
@@ -2959,30 +3732,14 @@ class MainWindow(QMainWindow):
         except BackendError as exc:
             self._show_error(str(exc))
             return
-        self._update_sequencers(dt)
+        self._update_sequencers()
         self._refresh_values(dt)
         self._handle_logging(dt)
 
-    def _update_sequencers(self, dt: float) -> None:
-        for channel, state in self._sequencers.items():
-            if not state.running:
-                continue
-            state.elapsed_total += dt
-            state.elapsed_phase += dt
-            if state.elapsed_total >= state.total_seconds:
-                state.running = False
-                self._on_channel_command(channel, {"enabled": 0.0, "pwm": 0.0, "select": 0.0})
-                self._update_card_sequencer(channel)
-                continue
-            phase_duration = state.on_seconds if state.is_on_phase else state.off_seconds
-            if state.elapsed_phase >= phase_duration:
-                state.elapsed_phase = 0.0
-                state.is_on_phase = not state.is_on_phase
-            if state.is_on_phase:
-                self._on_channel_command(channel, {"enabled": 1.0, "select": 1.0, "pwm": state.target_pwm})
-            else:
-                self._on_channel_command(channel, {"enabled": 0.0, "select": 0.0, "pwm": 0.0})
-            self._update_card_sequencer(channel)
+    def _update_sequencers(self) -> None:
+        for runner in self._sequence_runners.values():
+            if runner.is_running:
+                runner.emit_progress()
 
     def _refresh_values(self, _dt: float) -> None:
         if not self.backend:
@@ -3103,10 +3860,10 @@ class MainWindow(QMainWindow):
         for name, profile in self._channel_profiles.items():
             if profile.write.fields:
                 self._on_channel_command(name, {"enabled": 0.0, "select": 0.0, "pwm": 0.0, "state": 0.0})
-        for state in self._sequencers.values():
-            state.running = False
-        for name in self._channel_profiles:
-            self._update_card_sequencer(name)
+        for runner in self._sequence_runners.values():
+            runner.stop()
+        for card in self._channel_cards.values():
+            card.set_sequence_running(False)
 
     def _emergency_stop(self) -> None:
         self._all_outputs_off()
@@ -3178,6 +3935,14 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = bool(self._qt_settings.value("multi_plot_paused", False))
         self._show_dummy_advanced = bool(self._qt_settings.value("show_dummy_tab", False))
         self._multi_plot_enabled = bool(self._qt_settings.value("multi_plot_enabled", False))
+        sequences_data = self._qt_settings.value("channel_sequences", {})
+        if isinstance(sequences_data, dict):
+            for key, value in sequences_data.items():
+                if isinstance(value, dict):
+                    try:
+                        self._sequencer_configs[str(key)] = ChannelConfig.from_dict(value)
+                    except Exception:
+                        continue
 
     def _save_settings(self) -> None:
         self._qt_settings.setValue("mode", self.backend_name)
@@ -3195,6 +3960,8 @@ class MainWindow(QMainWindow):
             self._qt_settings.setValue("show_dummy_tab", self.show_dummy_checkbox.isChecked())
         if hasattr(self, "multi_plot_enable"):
             self._qt_settings.setValue("multi_plot_enabled", self.multi_plot_enable.isChecked())
+        sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
+        self._qt_settings.setValue("channel_sequences", sequence_payload)
 
     def closeEvent(self, event) -> None:
         self._save_settings()
