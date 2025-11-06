@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -41,6 +42,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -1256,6 +1258,157 @@ class WatchlistWidget(QWidget):
         return [name for name, checkbox in self._plot_checkboxes.items() if checkbox.isChecked()]
 
 
+class MultiAxisPlotDock(QDockWidget):
+    closed = pyqtSignal(int)
+
+    def __init__(self, identifier: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.identifier = identifier
+        self.setWindowTitle(f"Plot Window {identifier}")
+        self.setObjectName(f"MultiAxisPlotDock{identifier}")
+        self._paused = False
+        self._signals: Dict[str, dict] = {}
+        self._legend = None
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(4, 4, 4, 4)
+        controls_layout.addStretch(1)
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.clicked.connect(self._toggle_pause)
+        controls_layout.addWidget(self.pause_button)
+        self.save_button = QPushButton("Save PNG")
+        self.save_button.clicked.connect(self._save_png)
+        controls_layout.addWidget(self.save_button)
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.clicked.connect(self.clear_all)
+        controls_layout.addWidget(self.clear_button)
+        layout.addLayout(controls_layout)
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setMinimumHeight(220)
+        self._legend = self.plot_widget.addLegend()
+        self.plot_widget.showGrid(x=True, y=True)
+        self.plot_widget.setMenuEnabled(False)
+        self.plot_item = self.plot_widget.getPlotItem()
+        self.plot_item.showAxis('right')
+        self.right_view = pg.ViewBox()
+        self.plot_item.scene().addItem(self.right_view)
+        self.plot_item.getAxis('right').linkToView(self.right_view)
+        self.right_view.setXLink(self.plot_item.vb)
+        self.plot_item.vb.sigResized.connect(self._update_views)
+        self._update_views()
+        layout.addWidget(self.plot_widget)
+        self.setWidget(container)
+
+    def _toggle_pause(self) -> None:
+        self._paused = not self._paused
+        self.pause_button.setText("Resume" if self._paused else "Pause")
+
+    def _save_png(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save plot", os.path.join(BASE_DIR, f"plot_{self.identifier}.png"), "PNG Files (*.png)")
+        if not path:
+            return
+        pixmap = self.plot_widget.grab()
+        pixmap.save(path, "PNG")
+
+    def _update_views(self) -> None:
+        rect = self.plot_item.vb.sceneBoundingRect()
+        if rect:
+            self.right_view.setGeometry(rect)
+        self.right_view.linkedViewChanged(self.plot_item.vb, self.right_view.XAxis)
+
+    def add_signal(self, name: str, unit: str, side: Optional[str] = None) -> None:
+        side = (side or "left").lower()
+        if side not in {"left", "right"}:
+            side = "left"
+        existing = self._signals.get(name)
+        if existing:
+            if existing["side"] == side:
+                return
+            self.remove_signal(name)
+        pen = pg.intColor(len(self._signals))
+        curve = pg.PlotDataItem(pen=pen)
+        curve.setZValue(1)
+        if side == "left":
+            self.plot_item.addItem(curve)
+        else:
+            self.right_view.addItem(curve)
+        if self._legend:
+            self._legend.addItem(curve, name)
+        self._signals[name] = {
+            "buffer": deque(),
+            "curve": curve,
+            "side": side,
+            "unit": unit or "",
+        }
+
+    def remove_signal(self, name: str) -> None:
+        info = self._signals.pop(name, None)
+        if not info:
+            return
+        curve = info["curve"]
+        if info["side"] == "left":
+            self.plot_item.removeItem(curve)
+        else:
+            self.right_view.removeItem(curve)
+        if self._legend:
+            try:
+                self._legend.removeItem(curve)
+            except Exception:
+                pass
+
+    def clear_all(self) -> None:
+        for info in self._signals.values():
+            buffer: deque = info["buffer"]
+            buffer.clear()
+            info["curve"].setData([], [])
+
+    def update(self, timestamp: float, values: Dict[str, Optional[float]]) -> None:
+        if not self._signals:
+            return
+        cutoff = timestamp - 60.0
+        base_time: Optional[float] = None
+        for name, info in self._signals.items():
+            buffer: deque = info["buffer"]
+            value = values.get(name)
+            if value is not None:
+                buffer.append((timestamp, float(value)))
+            while buffer and buffer[0][0] < cutoff:
+                buffer.popleft()
+            if buffer:
+                if base_time is None or buffer[0][0] < base_time:
+                    base_time = buffer[0][0]
+        if base_time is None:
+            return
+        if self._paused:
+            return
+        for name, info in self._signals.items():
+            buffer: deque = info["buffer"]
+            if not buffer:
+                continue
+            times = [entry[0] - base_time for entry in buffer]
+            samples = [entry[1] for entry in buffer]
+            if len(times) > 5_000:
+                step = max(1, math.ceil(len(times) / 5_000))
+                dec_times = times[::step]
+                dec_samples = samples[::step]
+                if dec_times[-1] != times[-1]:
+                    dec_times.append(times[-1])
+                    dec_samples.append(samples[-1])
+                times, samples = dec_times, dec_samples
+            curve = info["curve"]
+            curve.setData(times, samples)
+        self.plot_item.enableAutoRange('y', True)
+        self.right_view.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+    def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
+        return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
+
+    def closeEvent(self, event) -> None:
+        self.closed.emit(self.identifier)
+        super().closeEvent(event)
+
 class SignalSimulationDialog(QDialog):
     def __init__(self, config: SignalSimulationConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -2124,6 +2277,12 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = False
         self._show_dummy_advanced = False
         self._multi_plot_enabled = False
+        self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
+        self._plot_assignments: Dict[str, Tuple[int, str]] = {}
+        self._plot_counter = 0
+        self._max_plot_windows = 4
+        self._active_plot_id: Optional[int] = None
+        self._suspend_plot_assignment = False
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -2255,6 +2414,12 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.multi_plot_enable)
         controls_layout.addWidget(self.multi_plot_pause)
         controls_layout.addWidget(self.multi_plot_save)
+        self.new_plot_window_button = QPushButton("New Plot Window")
+        self.new_plot_window_button.clicked.connect(lambda: self._create_plot_window())
+        controls_layout.addWidget(self.new_plot_window_button)
+        self.close_plot_windows_button = QPushButton("Close All Plots")
+        self.close_plot_windows_button.clicked.connect(lambda: self._close_all_plot_windows())
+        controls_layout.addWidget(self.close_plot_windows_button)
         controls_layout.addStretch(1)
         right_layout.addLayout(controls_layout)
         self.multi_plot_widget = pg.PlotWidget()
@@ -2271,6 +2436,117 @@ class MainWindow(QMainWindow):
         self.signal_browser.simulate_requested.connect(self._on_signal_simulate)
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
         self.tab_widget.addTab(widget, "Signals")
+
+    def _create_plot_window(self) -> Optional[int]:
+        if len(self._plot_windows) >= self._max_plot_windows:
+            QMessageBox.warning(
+                self,
+                "Plot limit reached",
+                f"Cannot open more than {self._max_plot_windows} plot windows.",
+            )
+            return None
+        self._plot_counter += 1
+        identifier = self._plot_counter
+        dock = MultiAxisPlotDock(identifier, self)
+        dock.setFeatures(
+            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable
+        )
+        dock.closed.connect(self._on_plot_window_closed)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        dock.show()
+        self._plot_windows[identifier] = dock
+        self._active_plot_id = identifier
+        return identifier
+
+    def _close_all_plot_windows(self) -> None:
+        for dock in list(self._plot_windows.values()):
+            dock.close()
+        if not self._plot_windows:
+            self._active_plot_id = None
+
+    def _on_plot_window_closed(self, identifier: int) -> None:
+        dock = self._plot_windows.pop(identifier, None)
+        if dock:
+            dock.deleteLater()
+        to_clear = [name for name, (win_id, _side) in self._plot_assignments.items() if win_id == identifier]
+        for name in to_clear:
+            self._plot_assignments.pop(name, None)
+        if self._active_plot_id == identifier:
+            self._active_plot_id = next(iter(self._plot_windows), None)
+
+    def _assign_signal_via_dialog(self, name: str) -> None:
+        if not self._plot_windows:
+            created = self._create_plot_window()
+            if created is None:
+                if not self._plot_windows and not self.multi_plot_enable.isChecked():
+                    self.multi_plot_enable.setChecked(True)
+                return
+        if not self._plot_windows:
+            if not self.multi_plot_enable.isChecked():
+                self.multi_plot_enable.setChecked(True)
+            return
+        window_ids = sorted(self._plot_windows.keys())
+        default_window = self._active_plot_id if self._active_plot_id in self._plot_windows else window_ids[0]
+        suggested_side = self._suggest_axis_side(default_window, name)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Assign Plot – {name}")
+        dialog_layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        dialog_layout.addLayout(form)
+        window_combo = QComboBox()
+        for wid in window_ids:
+            dock = self._plot_windows[wid]
+            window_combo.addItem(dock.windowTitle(), wid)
+        window_combo.setCurrentIndex(window_ids.index(default_window))
+        form.addRow("Window", window_combo)
+        axis_combo = QComboBox()
+        axis_combo.addItems(["Left", "Right"])
+        axis_combo.setCurrentIndex(0 if suggested_side == "left" else 1)
+        form.addRow("Axis", axis_combo)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            self.watchlist_widget.set_plot_enabled(name, False)
+            return
+        window_id = window_combo.currentData()
+        axis_side = "left" if axis_combo.currentIndex() == 0 else "right"
+        self._assign_signal_to_plot(name, int(window_id), axis_side)
+
+    def _assign_signal_to_plot(self, name: str, window_id: int, side: str) -> None:
+        dock = self._plot_windows.get(window_id)
+        if not dock:
+            return
+        previous = self._plot_assignments.get(name)
+        if previous and previous == (window_id, side):
+            return
+        if previous:
+            prev_window, _prev_side = previous
+            prev_dock = self._plot_windows.get(prev_window)
+            if prev_dock:
+                prev_dock.remove_signal(name)
+        dock.add_signal(name, self._watch_units.get(name, ""), side)
+        self._plot_assignments[name] = (window_id, side)
+        self._active_plot_id = window_id
+
+    def _suggest_axis_side(self, window_id: int, name: str) -> str:
+        unit = (self._watch_units.get(name) or "").strip()
+        left_has = False
+        right_has = False
+        for other, (win_id, side) in self._plot_assignments.items():
+            if win_id != window_id:
+                continue
+            other_unit = (self._watch_units.get(other) or "").strip()
+            if unit and other_unit == unit:
+                return side
+            if side == "left":
+                left_has = True
+            else:
+                right_has = True
+        if left_has and right_has:
+            return "right"
+        return "left"
 
     def _build_dummy_tab(self) -> None:
         self.dummy_tab = QWidget()
@@ -2532,20 +2808,45 @@ class MainWindow(QMainWindow):
     def _on_remove_from_watchlist(self, names: List[str]) -> None:
         self.watchlist_widget.remove_signals(names)
         self._pending_watchlist = [name for name in self._pending_watchlist if name not in names]
+        for name in names:
+            assignment = self._plot_assignments.pop(name, None)
+            if assignment:
+                window_id, _side = assignment
+                dock = self._plot_windows.get(window_id)
+                if dock:
+                    dock.remove_signal(name)
         self._save_settings()
 
     def _apply_watchlist_plot_settings(self) -> None:
         if not self._pending_plot_signals:
             return
-        for name in self.watchlist_widget.signal_names:
-            self.watchlist_widget.set_plot_enabled(name, name in self._pending_plot_signals)
+        self._suspend_plot_assignment = True
+        try:
+            for name in self.watchlist_widget.signal_names:
+                self.watchlist_widget.set_plot_enabled(name, name in self._pending_plot_signals)
+        finally:
+            self._suspend_plot_assignment = False
         self._pending_plot_signals = []
 
     def _on_watchlist_plot_toggled(self, name: str, enabled: bool) -> None:
-        if enabled and not self.multi_plot_enable.isChecked():
-            # Allow selection but keep widget hidden until enabled by user.
-            pass
-        if not enabled:
+        if self._suspend_plot_assignment:
+            if not enabled:
+                self._multi_plot_buffers.pop(name, None)
+                curve = self._multi_plot_curves.pop(name, None)
+                if curve and getattr(self, "multi_plot_widget", None):
+                    self.multi_plot_widget.removeItem(curve)
+            return
+        if enabled:
+            self._assign_signal_via_dialog(name)
+            if not self._plot_windows and not self.multi_plot_enable.isChecked():
+                self.multi_plot_enable.setChecked(True)
+        else:
+            assignment = self._plot_assignments.pop(name, None)
+            if assignment:
+                window_id, _side = assignment
+                dock = self._plot_windows.get(window_id)
+                if dock:
+                    dock.remove_signal(name)
             self._multi_plot_buffers.pop(name, None)
             curve = self._multi_plot_curves.pop(name, None)
             if curve and getattr(self, "multi_plot_widget", None):
@@ -2582,7 +2883,7 @@ class MainWindow(QMainWindow):
         self._on_add_to_watchlist(names)
         for name in names:
             self.watchlist_widget.set_plot_enabled(name, True)
-        if not self.multi_plot_enable.isChecked():
+        if not self._plot_windows and not self.multi_plot_enable.isChecked():
             self.multi_plot_enable.setChecked(True)
 
     def _on_signal_simulate(self, name: str) -> None:
@@ -2704,10 +3005,12 @@ class MainWindow(QMainWindow):
                 command_value = self._extract_command_value(profile, self._channel_commands.get(channel, {}))
                 feedback_value = self._extract_feedback_value(profile, status)
                 card.record_sample(timestamp, command_value, feedback_value)
-        watch_values = {name: values.get(name, 0.0) for name in self.watchlist_widget.signal_names}
+        watch_values = {name: values.get(name) for name in self.watchlist_widget.signal_names}
         self.watchlist_widget.update_values(watch_values)
         self._pending_watchlist = self.watchlist_widget.signal_names
         self._update_multi_plot(timestamp, watch_values)
+        for dock in self._plot_windows.values():
+            dock.update(timestamp, watch_values)
 
     def _handle_logging(self, dt: float) -> None:
         if not self.logger.is_running():
