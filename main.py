@@ -12,10 +12,11 @@ import sys
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
+import json
 import can
 import cantools
 from cantools.database import errors as cantools_errors
@@ -74,6 +75,22 @@ CONFIG_DIR = os.path.join(BASE_DIR, "config")
 PROFILE_DIR = os.path.join(BASE_DIR, "profiles")
 WHITELIST_PATH = os.path.join(CONFIG_DIR, "signals.yaml")
 CHANNEL_PROFILE_PATH = os.path.join(PROFILE_DIR, "channels.yaml")
+DEFAULT_SETUP_PATH = os.path.join(PROFILE_DIR, "default_setup.json")
+DUMMY_SIMULATION_PATH = os.path.join(PROFILE_DIR, "dummy_simulations.json")
+
+
+FACTORY_DEFAULT_SETUP = {
+    "version": 1,
+    "backend": {"type": "dummy", "device_id": None},
+    "signals": {
+        "watchlist": [],
+        "plot_signals": [],
+        "multi_plot": {"enabled": False, "paused": False, "windows": []},
+    },
+    "channels": {"profiles": [], "plot_visibility": {}},
+    "sequencer": {"per_channel": {}},
+    "dummy": {"simulations": {}},
+}
 
 
 @dataclass
@@ -146,6 +163,54 @@ class SignalSimulationConfig:
             category=self.category,
             analog=copy.deepcopy(self.analog),
             digital=copy.deepcopy(self.digital),
+        )
+
+    def to_dict(self) -> dict:
+        data: Dict[str, Any] = {
+            "message_name": self.message_name,
+            "name": self.name,
+            "unit": self.unit,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            "category": self.category,
+        }
+        if self.analog is not None:
+            data["analog"] = asdict(self.analog)
+        if self.digital is not None:
+            data["digital"] = asdict(self.digital)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SignalSimulationConfig":
+        analog_data = data.get("analog") if isinstance(data, dict) else None
+        digital_data = data.get("digital") if isinstance(data, dict) else None
+        analog: Optional[AnalogSimulationProfile] = None
+        digital: Optional[DigitalSimulationProfile] = None
+        if isinstance(analog_data, dict):
+            try:
+                analog = AnalogSimulationProfile(**analog_data)
+            except TypeError:
+                analog = AnalogSimulationProfile()
+                for key, value in analog_data.items():
+                    if hasattr(analog, key):
+                        setattr(analog, key, value)
+        if isinstance(digital_data, dict):
+            try:
+                digital = DigitalSimulationProfile(**digital_data)
+            except TypeError:
+                digital = DigitalSimulationProfile()
+                for key, value in digital_data.items():
+                    if hasattr(digital, key):
+                        setattr(digital, key, value)
+        return cls(
+            message_name=str(data.get("message_name", "")),
+            name=str(data.get("name", "")),
+            unit=str(data.get("unit", "")),
+            minimum=data.get("minimum"),
+            maximum=data.get("maximum"),
+            category=str(data.get("category", "analog")),
+            analog=analog,
+            digital=digital,
         )
 
 @dataclass
@@ -2847,6 +2912,7 @@ class MainWindow(QMainWindow):
         self._max_plot_windows = 4
         self._active_plot_id: Optional[int] = None
         self._suspend_plot_assignment = False
+        self._hardware_apply_required = False
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -2857,6 +2923,7 @@ class MainWindow(QMainWindow):
 
     # UI construction
     def _build_ui(self) -> None:
+        self._build_menu()
         self.status_indicator = QLabel("●")
         self.status_indicator.setStyleSheet("color: red; font-size: 16pt;")
         self.status_message_label = QLabel("Disconnected")
@@ -2872,6 +2939,28 @@ class MainWindow(QMainWindow):
         self._build_dummy_tab()
         self._build_logging_tab()
         self._update_dummy_tab_visibility()
+
+    def _build_menu(self) -> None:
+        menu_bar = self.menuBar()
+        setup_menu = menu_bar.addMenu("Setup")
+        self.save_setup_action = QAction("Save Setup…", self)
+        self.save_setup_action.triggered.connect(self._export_setup)
+        setup_menu.addAction(self.save_setup_action)
+        self.load_setup_action = QAction("Load Setup…", self)
+        self.load_setup_action.triggered.connect(self._import_setup)
+        setup_menu.addAction(self.load_setup_action)
+        setup_menu.addSeparator()
+        self.save_default_action = QAction("Save as Default…", self)
+        self.save_default_action.triggered.connect(self._save_as_default)
+        setup_menu.addAction(self.save_default_action)
+        self.reset_defaults_action = QAction("Reset to Defaults…", self)
+        self.reset_defaults_action.triggered.connect(self._prompt_reset_defaults)
+        setup_menu.addAction(self.reset_defaults_action)
+        setup_menu.addSeparator()
+        self.apply_hardware_action = QAction("Apply to hardware", self)
+        self.apply_hardware_action.triggered.connect(self._apply_to_hardware)
+        setup_menu.addAction(self.apply_hardware_action)
+        self._update_apply_action_state()
 
     def _build_dashboard_tab(self) -> None:
         widget = QWidget()
@@ -3175,9 +3264,16 @@ class MainWindow(QMainWindow):
             self.backend.apply_database(self._dbc)
             self.backend.set_channel_profiles(self._channel_profiles)
             self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._load_dummy_profiles()
         self._update_status_indicator(False)
         self._update_channel_card_modes()
         self.signal_browser.set_allow_simulation(isinstance(self.backend, DummyBackend))
+        self._update_apply_action_state()
+
+    def _update_apply_action_state(self) -> None:
+        if hasattr(self, "apply_hardware_action"):
+            enabled = bool(self.backend) or self._hardware_apply_required
+            self.apply_hardware_action.setEnabled(enabled)
 
     def _apply_backend_configuration(self) -> None:
         if isinstance(self.backend, RealBackend):
@@ -3479,6 +3575,12 @@ class MainWindow(QMainWindow):
                     return f"Status mapping conflicts with {name}: {', '.join(sorted(overlap))}"
         return None
 
+    def _stop_all_sequences(self) -> None:
+        for runner in self._sequence_runners.values():
+            runner.stop()
+        for card in self._channel_cards.values():
+            card.set_sequence_running(False)
+
     def _on_sequencer_request(self, channel: str, action: str) -> None:
         runner = self._sequence_runners.get(channel)
         card = self._channel_cards.get(channel)
@@ -3676,6 +3778,7 @@ class MainWindow(QMainWindow):
                 self._show_error(str(exc))
                 return
             self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._save_dummy_profiles()
 
     # Dummy simulation profiles
     def _apply_simulation_profile(self, profile: SignalSimulationConfig) -> None:
@@ -3684,6 +3787,476 @@ class MainWindow(QMainWindow):
                 self.backend.update_simulation_profile(profile)
             except BackendError as exc:
                 self._show_error(str(exc))
+                return
+            self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._save_dummy_profiles()
+
+    # Setup persistence
+    def _collect_setup_payload(self) -> dict:
+        backend_type = "dummy" if self.backend_name == DummyBackend.name else "real"
+        device_id = self.channel_edit.text().strip() if backend_type == "real" else None
+        dock_assignments = {name: assignment for name, assignment in self._plot_assignments.items()}
+        inline_signals = [
+            name
+            for name in self.watchlist_widget.plot_signal_names
+            if name not in dock_assignments
+        ]
+        windows: List[dict] = []
+        if inline_signals:
+            windows.append({"id": 0, "axes": {"left": inline_signals, "right": []}})
+        for identifier, dock in sorted(self._plot_windows.items()):
+            assigned = dock.assigned_signals()
+            left = sorted([name for name, (_unit, side) in assigned.items() if side == "left"])
+            right = sorted([name for name, (_unit, side) in assigned.items() if side == "right"])
+            windows.append({"id": int(identifier), "axes": {"left": left, "right": right}})
+        dummy_profiles: Dict[str, dict] = {}
+        if isinstance(self.backend, DummyBackend):
+            for name, config in self.backend.simulation_profiles().items():
+                dummy_profiles[name] = config.to_dict()
+        else:
+            dummy_profiles = self._read_stored_dummy_profiles()
+        payload = {
+            "version": 1,
+            "backend": {"type": backend_type, "device_id": device_id or None},
+            "signals": {
+                "watchlist": list(self.watchlist_widget.signal_names),
+                "plot_signals": list(self.watchlist_widget.plot_signal_names),
+                "multi_plot": {
+                    "enabled": bool(self._multi_plot_enabled),
+                    "paused": bool(self._multi_plot_paused),
+                    "windows": windows,
+                },
+            },
+            "channels": {
+                "profiles": [profile.to_yaml() for profile in self._channel_profiles.values()],
+                "plot_visibility": dict(self._channel_plot_settings),
+            },
+            "sequencer": {
+                "per_channel": {
+                    name: {
+                        "list": [sequence.to_dict() for sequence in config.sequences],
+                        "repeat_mode": config.repeat_mode.name,
+                        "repeat_limit_s": int(config.repeat_limit_s),
+                    }
+                    for name, config in self._sequencer_configs.items()
+                }
+            },
+            "dummy": {"simulations": dummy_profiles},
+        }
+        return payload
+
+    def _export_setup(self) -> None:
+        ensure_directories()
+        default_path = os.path.join(PROFILE_DIR, "setup.json")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save setup",
+            default_path,
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        payload = self._collect_setup_payload()
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except OSError as exc:
+            self._show_error(f"Failed to save setup: {exc}")
+            return
+        self.status_message_label.setText(f"Setup saved to {os.path.basename(path)}")
+
+    def _import_setup(self) -> None:
+        ensure_directories()
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load setup",
+            PROFILE_DIR,
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        payload = self._load_setup_payload(path)
+        if payload is None:
+            return
+        self._apply_setup_payload(payload)
+        self._set_hardware_pending(True, f"Loaded {os.path.basename(path)}. Apply to hardware when ready.")
+
+    def _load_setup_payload(self, path: str) -> Optional[dict]:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            self._show_error(f"Failed to load setup: {exc}")
+            return None
+        if not isinstance(data, dict):
+            self._show_error("Invalid setup file format.")
+            return None
+        return data
+
+    def _apply_setup_payload(self, payload: dict, scopes: Optional[Set[str]] = None) -> None:
+        version_value = payload.get("version") if isinstance(payload, dict) else None
+        try:
+            version = int(version_value) if version_value is not None else 0
+        except (TypeError, ValueError):
+            version = 0
+        if version != 1:
+            self._show_error("Unsupported setup version.")
+            return
+        target_scopes = scopes or {"backend", "signals", "channels", "sequencer", "dummy"}
+        if "backend" in target_scopes:
+            self._apply_backend_section(payload.get("backend", {}))
+        if "channels" in target_scopes:
+            self._apply_channels_setup(payload.get("channels", {}))
+        if "sequencer" in target_scopes:
+            self._apply_sequencer_setup(payload.get("sequencer", {}))
+        if "signals" in target_scopes:
+            self._apply_signals_setup(payload.get("signals", {}))
+        if "dummy" in target_scopes:
+            self._apply_dummy_setup(payload.get("dummy", {}))
+        self._set_hardware_pending(True, "Setup loaded. Apply to hardware when ready.")
+        self._save_settings()
+
+    def _apply_backend_section(self, data: dict) -> None:
+        backend_value = str((data or {}).get("type", "dummy")).lower()
+        desired_backend = DummyBackend.name if backend_value != "real" else RealBackend.name
+        if desired_backend in self.backends and desired_backend != self.backend_name:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentText(desired_backend)
+            self.mode_combo.blockSignals(False)
+            self._switch_backend(desired_backend)
+        device_id = data.get("device_id") if isinstance(data, dict) else None
+        if desired_backend == RealBackend.name and isinstance(device_id, str) and device_id:
+            current = self.channel_edit.text().strip()
+            if current and current != device_id:
+                box = QMessageBox(self)
+                box.setWindowTitle("Device mismatch")
+                box.setText(
+                    "The loaded setup targets device "
+                    f"'{device_id}', but the current channel is '{current}'.\n"
+                    "Do you want to use the stored device identifier?"
+                )
+                box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                choice = box.exec_()
+                if choice == QMessageBox.Yes:
+                    self.channel_edit.setText(device_id)
+            else:
+                self.channel_edit.setText(device_id)
+
+    def _apply_signals_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        watchlist = [str(name) for name in data.get("watchlist", [])]
+        plot_signals = {str(name) for name in data.get("plot_signals", [])}
+        existing = list(self.watchlist_widget.signal_names)
+        if existing:
+            self.watchlist_widget.remove_signals(existing)
+        if watchlist:
+            self.watchlist_widget.add_signals(watchlist)
+        self._pending_watchlist = list(watchlist)
+        self._pending_plot_signals = list(plot_signals)
+        self._suspend_plot_assignment = True
+        try:
+            for name in self.watchlist_widget.signal_names:
+                self.watchlist_widget.set_plot_enabled(name, name in plot_signals)
+        finally:
+            self._suspend_plot_assignment = False
+        multi_plot = data.get("multi_plot", {}) if isinstance(data, dict) else {}
+        enabled = bool(multi_plot.get("enabled", False))
+        paused = bool(multi_plot.get("paused", False))
+        if hasattr(self, "multi_plot_enable"):
+            self.multi_plot_enable.blockSignals(True)
+            self.multi_plot_enable.setChecked(enabled)
+            self.multi_plot_enable.blockSignals(False)
+        self._multi_plot_enabled = enabled
+        if getattr(self, "multi_plot_widget", None):
+            self.multi_plot_widget.clear()
+        self._multi_plot_curves.clear()
+        self._multi_plot_buffers.clear()
+        if hasattr(self, "multi_plot_widget"):
+            if enabled:
+                self.multi_plot_widget.show()
+            else:
+                self.multi_plot_widget.hide()
+        self._multi_plot_paused = paused
+        if hasattr(self, "multi_plot_pause"):
+            self.multi_plot_pause.setText("Resume Plot" if paused else "Pause Plot")
+        self._close_all_plot_windows()
+        self._plot_assignments.clear()
+        windows = multi_plot.get("windows", []) if isinstance(multi_plot, dict) else []
+        for entry in windows:
+            if not isinstance(entry, dict):
+                continue
+            identifier = int(entry.get("id", 0))
+            if identifier <= 0:
+                continue
+            new_id = self._create_plot_window()
+            if new_id is None:
+                continue
+            axes = entry.get("axes", {}) if isinstance(entry.get("axes", {}), dict) else {}
+            left_signals = [str(name) for name in axes.get("left", [])]
+            right_signals = [str(name) for name in axes.get("right", [])]
+            for name in left_signals:
+                if name in plot_signals and name in self.watchlist_widget.signal_names:
+                    self._assign_signal_to_plot(name, new_id, "left")
+            for name in right_signals:
+                if name in plot_signals and name in self.watchlist_widget.signal_names:
+                    self._assign_signal_to_plot(name, new_id, "right")
+
+    def _apply_channels_setup(self, data: dict) -> None:
+        profiles_section = data.get("profiles", []) if isinstance(data, dict) else []
+        new_profiles: Dict[str, ChannelProfile] = {}
+        for entry in profiles_section:
+            if isinstance(entry, ChannelProfile):
+                profile = entry
+            elif isinstance(entry, dict):
+                try:
+                    profile = ChannelProfile.from_yaml(entry)
+                except Exception:
+                    continue
+            else:
+                continue
+            new_profiles[profile.name] = profile
+        if not new_profiles and self._dbc:
+            new_profiles = load_channel_profiles(self._dbc)
+        if new_profiles:
+            self._channel_profiles = dict(sorted(new_profiles.items()))
+            save_channel_profiles(list(self._channel_profiles.values()))
+            if self.backend:
+                try:
+                    self.backend.set_channel_profiles(self._channel_profiles)
+                except BackendError as exc:
+                    self._show_error(str(exc))
+        plot_visibility = data.get("plot_visibility", {}) if isinstance(data, dict) else {}
+        if isinstance(plot_visibility, dict):
+            self._channel_plot_settings = {str(key): bool(value) for key, value in plot_visibility.items()}
+        else:
+            self._channel_plot_settings = {}
+        self._refresh_channel_cards()
+        self._validate_channel_profiles()
+
+    def _apply_sequencer_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        per_channel = data.get("per_channel", {}) if isinstance(data, dict) else {}
+        self._stop_all_sequences()
+        for name in list(self._sequencer_configs.keys()):
+            if name not in self._channel_profiles:
+                self._sequencer_configs.pop(name, None)
+        for channel, config_data in per_channel.items():
+            if channel not in self._channel_profiles:
+                continue
+            sequences_raw = config_data.get("list", []) if isinstance(config_data, dict) else []
+            sequences: List[SequenceCfg] = []
+            for entry in sequences_raw:
+                if isinstance(entry, SequenceCfg):
+                    sequences.append(entry)
+                elif isinstance(entry, dict):
+                    try:
+                        sequences.append(SequenceCfg.from_dict(entry))
+                    except Exception:
+                        continue
+            repeat_value = config_data.get("repeat_mode") if isinstance(config_data, dict) else "OFF"
+            repeat_mode: SequenceRepeatMode
+            if isinstance(repeat_value, SequenceRepeatMode):
+                repeat_mode = repeat_value
+            else:
+                repeat_label = str(repeat_value).upper()
+                try:
+                    repeat_mode = SequenceRepeatMode[repeat_label]
+                except KeyError:
+                    try:
+                        repeat_mode = SequenceRepeatMode(str(repeat_value).lower())
+                    except ValueError:
+                        repeat_mode = SequenceRepeatMode.OFF
+            repeat_limit = 0
+            if isinstance(config_data, dict):
+                try:
+                    repeat_limit = int(config_data.get("repeat_limit_s", 0))
+                except (TypeError, ValueError):
+                    repeat_limit = 0
+            channel_config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+            channel_config.sequences = sequences
+            channel_config.repeat_mode = repeat_mode
+            channel_config.repeat_limit_s = max(0, int(repeat_limit))
+            runner = self._sequence_runners.get(channel)
+            if runner:
+                runner.load(channel_config.sequences, channel_config.repeat_mode, channel_config.repeat_limit_s)
+            card = self._channel_cards.get(channel)
+            if card:
+                card.set_sequencer_config(channel_config)
+                card.set_sequence_running(False)
+
+    def _apply_dummy_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        simulations = data.get("simulations", {}) if isinstance(data, dict) else {}
+        if not simulations:
+            if isinstance(self.backend, DummyBackend):
+                self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            return
+        if isinstance(self.backend, DummyBackend):
+            for name, cfg in simulations.items():
+                if not isinstance(cfg, dict):
+                    continue
+                try:
+                    profile = SignalSimulationConfig.from_dict(cfg)
+                except Exception:
+                    continue
+                try:
+                    self.backend.update_simulation_profile(profile)
+                except BackendError:
+                    continue
+            self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._save_dummy_profiles()
+        else:
+            ensure_directories()
+            try:
+                with open(DUMMY_SIMULATION_PATH, "w", encoding="utf-8") as handle:
+                    json.dump({str(k): v for k, v in simulations.items()}, handle, indent=2)
+            except OSError as exc:
+                self._show_error(f"Failed to store dummy simulations: {exc}")
+
+    def _save_as_default(self) -> None:
+        ensure_directories()
+        payload = self._collect_setup_payload()
+        try:
+            with open(DEFAULT_SETUP_PATH, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except OSError as exc:
+            self._show_error(f"Failed to save default setup: {exc}")
+            return
+        self.status_message_label.setText("Default setup saved.")
+
+    def _prompt_reset_defaults(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Reset to Defaults")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        scope_combo = QComboBox()
+        scope_combo.addItems(["All", "Signals", "Channels", "Sequencer", "Dummy"])
+        form.addRow("Scope", scope_combo)
+        layout.addLayout(form)
+        notice = QLabel("Outputs remain off until you apply the setup to hardware.")
+        notice.setWordWrap(True)
+        if isinstance(self.backend, RealBackend):
+            notice.setStyleSheet("color: orange;")
+        layout.addWidget(notice)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        choice = scope_combo.currentText().lower()
+        self._reset_to_defaults(choice)
+
+    def _reset_to_defaults(self, scope: str) -> None:
+        payload = self._load_default_setup_payload()
+        if not payload:
+            payload = copy.deepcopy(FACTORY_DEFAULT_SETUP)
+        scope_map = {
+            "all": {"backend", "signals", "channels", "sequencer", "dummy"},
+            "signals": {"signals"},
+            "channels": {"channels"},
+            "sequencer": {"sequencer"},
+            "dummy": {"dummy"},
+        }
+        scopes = scope_map.get(scope, scope_map["all"])
+        if "channels" in scopes or "sequencer" in scopes:
+            self._stop_all_sequences()
+        self._apply_setup_payload(payload, scopes)
+        self._set_hardware_pending(True, "Defaults restored. Apply to hardware when ready.")
+
+    def _load_default_setup_payload(self) -> Optional[dict]:
+        ensure_directories()
+        if os.path.exists(DEFAULT_SETUP_PATH):
+            try:
+                with open(DEFAULT_SETUP_PATH, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                if isinstance(data, dict):
+                    return data
+            except (OSError, json.JSONDecodeError) as exc:
+                self._show_error(f"Failed to load default setup: {exc}")
+        return copy.deepcopy(FACTORY_DEFAULT_SETUP)
+
+    def _save_dummy_profiles(self) -> None:
+        if not isinstance(self.backend, DummyBackend):
+            return
+        ensure_directories()
+        try:
+            payload = {name: config.to_dict() for name, config in self.backend.simulation_profiles().items()}
+            with open(DUMMY_SIMULATION_PATH, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except OSError as exc:
+            self._show_error(f"Failed to save dummy profiles: {exc}")
+
+    def _read_stored_dummy_profiles(self) -> Dict[str, dict]:
+        ensure_directories()
+        if not os.path.exists(DUMMY_SIMULATION_PATH):
+            return {}
+        try:
+            with open(DUMMY_SIMULATION_PATH, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+
+    def _load_dummy_profiles(self) -> None:
+        if not isinstance(self.backend, DummyBackend):
+            return
+        stored = self._read_stored_dummy_profiles()
+        if not stored:
+            return
+        for name, cfg in stored.items():
+            try:
+                profile = SignalSimulationConfig.from_dict(cfg)
+            except Exception:
+                continue
+            try:
+                self.backend.update_simulation_profile(profile)
+            except BackendError:
+                continue
+        self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+
+    def _validate_channel_profiles(self) -> None:
+        if not self._dbc:
+            return
+        issues: List[str] = []
+        for profile in self._channel_profiles.values():
+            write_missing: List[str] = []
+            status_missing: List[str] = []
+            if profile.write.message:
+                try:
+                    write_message = self._dbc.get_message_by_name(profile.write.message)
+                except KeyError:
+                    issues.append(f"{profile.name}: write message '{profile.write.message}' not found")
+                else:
+                    available = {signal.name for signal in write_message.signals}
+                    write_missing = [signal for signal in profile.write.fields.values() if signal not in available]
+            if profile.status.message:
+                try:
+                    status_message = self._dbc.get_message_by_name(profile.status.message)
+                except KeyError:
+                    issues.append(f"{profile.name}: status message '{profile.status.message}' not found")
+                else:
+                    available_status = {signal.name for signal in status_message.signals}
+                    status_missing = [signal for signal in profile.status.fields.values() if signal not in available_status]
+            if write_missing:
+                issues.append(f"{profile.name}: write fields missing {', '.join(sorted(write_missing))}")
+            if status_missing:
+                issues.append(f"{profile.name}: status fields missing {', '.join(sorted(status_missing))}")
+        if issues:
+            message = "Some channel mappings could not be validated:\n" + "\n".join(issues[:10])
+            if len(issues) > 10:
+                message += f"\n… {len(issues) - 10} more entries."
+            QMessageBox.warning(
+                self,
+                "Channel mapping issues",
+                message,
+            )
+
 
     # Logging
     def _browse_log_path(self) -> None:
@@ -3848,6 +4421,40 @@ class MainWindow(QMainWindow):
         self.multi_plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     # Helpers
+    def _set_hardware_pending(self, pending: bool, message: Optional[str] = None) -> None:
+        self._hardware_apply_required = pending
+        self._update_apply_action_state()
+        if pending:
+            if message:
+                self.status_message_label.setText(message)
+            else:
+                self.status_message_label.setText("Setup pending hardware apply")
+        elif message:
+            self.status_message_label.setText(message)
+
+    def _apply_to_hardware(self) -> None:
+        if not self.backend:
+            self._show_error("No backend is configured.")
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Apply to hardware")
+        box.setText("Apply the current setup to the active backend?")
+        checkbox = QCheckBox("Force 0% outputs on load")
+        box.setCheckBox(checkbox)
+        box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if box.exec_() != QMessageBox.Ok:
+            return
+        try:
+            self.backend.set_channel_profiles(self._channel_profiles)
+        except BackendError as exc:
+            self._show_error(str(exc))
+            return
+        if isinstance(self.backend, DummyBackend):
+            self._save_dummy_profiles()
+        if checkbox.isChecked():
+            self._all_outputs_off()
+        self._set_hardware_pending(False, "Setup applied to hardware.")
+
     def _update_status_indicator(self, connected: bool) -> None:
         color = "green" if connected else "red"
         self.status_indicator.setStyleSheet(f"color: {color}; font-size: 16pt;")
