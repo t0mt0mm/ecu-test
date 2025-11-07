@@ -110,7 +110,46 @@ FACTORY_DEFAULT_SETUP = {
     "channels": {"profiles": [], "plot_visibility": {}},
     "sequencer": {"per_channel": {}},
     "dummy": {"simulations": {}},
-    "startup": {"version": 1, "globals": [], "per_output": [], "teardown": []},
+    "startup": {
+        "version": 1,
+        "globals": [
+            {
+                "message": "QM_Main_switch_control",
+                "fields": {
+                    "enable_sensor_supply": 1.0,
+                    "enable_actuator_supply": 1.0,
+                    "enable_ub3": 1.0,
+                    "enable_ub2": 1.0,
+                    "enable_ub1": 1.0,
+                },
+            },
+            {
+                "message": "QM_High_side_output_init_01",
+                "fields": {
+                    "hs_out01_frequency": 20000.0,
+                    "hs_out01_pwm_min": 0.0,
+                    "hs_out01_pwm_max": 100.0,
+                    "hs_out01_Kp": 0.0,
+                    "hs_out01_Ki": 0.0,
+                    "hs_out01_Kd": 0.0,
+                    "hs_out02_frequency": 20000.0,
+                    "hs_out02_pwm_min": 0.0,
+                    "hs_out02_pwm_max": 100.0,
+                    "hs_out02_Kp": 0.0,
+                    "hs_out02_Ki": 0.0,
+                    "hs_out02_Kd": 0.0,
+                    "hs_out03_frequency": 20000.0,
+                    "hs_out03_pwm_min": 0.0,
+                    "hs_out03_pwm_max": 100.0,
+                    "hs_out03_Kp": 0.0,
+                    "hs_out03_Ki": 0.0,
+                    "hs_out03_Kd": 0.0,
+                },
+            },
+        ],
+        "per_output": [],
+        "teardown": [],
+    },
 }
 
 
@@ -850,9 +889,11 @@ class StartupStepDialog(QDialog):
         form = QFormLayout()
         self.message_combo = QComboBox()
         self.message_combo.setEditable(True)
-        self.message_combo.currentTextChanged.connect(self._on_message_changed)
+        self.message_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.message_combo.blockSignals(True)
         for name in sorted(self._signals_by_message.keys()):
             self.message_combo.addItem(name)
+        self.message_combo.blockSignals(False)
         form.addRow("Message", self.message_combo)
         if mode == "per_output":
             self.channel_combo = QComboBox()
@@ -879,6 +920,7 @@ class StartupStepDialog(QDialog):
         self.field_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.field_table.setStyleSheet("QTableView::item { padding: 0px; }")
         layout.addWidget(self.field_table)
+        self.message_combo.currentTextChanged.connect(self._on_message_changed)
         field_buttons = QHBoxLayout()
         add_field = QToolButton()
         add_field.setText("Add field")
@@ -898,6 +940,7 @@ class StartupStepDialog(QDialog):
             self._populate_from_existing(existing)
         else:
             self._add_field_row()
+        self._on_message_changed(self.message_combo.currentText())
 
     def _signal_options(self, message_name: str) -> List[str]:
         definitions = self._signals_by_message.get(message_name, [])
@@ -945,6 +988,8 @@ class StartupStepDialog(QDialog):
             self.field_table.removeRow(row)
 
     def _on_message_changed(self, _text: str) -> None:
+        if not hasattr(self, "field_table"):
+            return
         for row in range(self.field_table.rowCount()):
             widget = self.field_table.cellWidget(row, 0)
             if isinstance(widget, QComboBox):
