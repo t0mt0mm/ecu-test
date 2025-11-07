@@ -2269,10 +2269,12 @@ class ChannelCardWidget(QWidget):
         self.run_button.setAutoRaise(True)
         self.run_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.run_button.setToolTip("Start sequencer")
+        self.run_button.hide()
         self.stop_button = QToolButton()
         self.stop_button.setAutoRaise(True)
         self.stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
         self.stop_button.setToolTip("Stop sequencer")
+        self.stop_button.hide()
         self.toggle_sequencer_button = QToolButton()
         self.toggle_sequencer_button.setCheckable(True)
         self.toggle_sequencer_button.setAutoRaise(True)
@@ -2332,6 +2334,10 @@ class ChannelCardWidget(QWidget):
             self.sequence_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self.sequence_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.sequence_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        control_height = max(QSpinBox().sizeHint().height(), QDoubleSpinBox().sizeHint().height())
+        self.sequence_table.verticalHeader().setMinimumSectionSize(control_height)
+        self.sequence_table.verticalHeader().setDefaultSectionSize(control_height)
+        self.sequence_table.setStyleSheet("QTableView::item { padding: 0px; }")
         self.sequence_add = QToolButton()
         self.sequence_add.setText("Add")
         self.sequence_delete = QToolButton()
@@ -2379,7 +2385,8 @@ class ChannelCardWidget(QWidget):
         self.sim_button.setText("⚙ Sim")
         self.sim_button.clicked.connect(self._open_sim_dialog)
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setMinimumHeight(140)
+        self.plot_widget.setMinimumHeight(40)
+        self.plot_widget.setMaximumHeight(80)
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.addLegend()
         self.plot_widget.hide()
@@ -2420,8 +2427,6 @@ class ChannelCardWidget(QWidget):
         header_layout.addWidget(self.name_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.enabled_checkbox)
-        header_layout.addWidget(self.run_button)
-        header_layout.addWidget(self.stop_button)
         header_layout.addWidget(self.toggle_sequencer_button)
         header_layout.addWidget(self.duplicate_button)
         header_layout.addWidget(self.plot_checkbox)
@@ -2471,7 +2476,6 @@ class ChannelCardWidget(QWidget):
         seq_layout = QVBoxLayout(sequencer_container)
         seq_layout.setContentsMargins(0, 0, 0, 0)
         seq_layout.setSpacing(4)
-        self.sequence_table.verticalHeader().setDefaultSectionSize(18)
         self.sequence_table.horizontalHeader().setStretchLastSection(False)
         seq_layout.addWidget(self.sequence_table)
         toolbar_layout = QHBoxLayout()
@@ -3321,6 +3325,8 @@ class MainWindow(QMainWindow):
         self._compact_manager = CompactUIManager()
         self._compact_ui_enabled = False
         self._channel_grid_cols = 2
+        self._channel_columns: List[QVBoxLayout] = []
+        self._channel_columns_layout: Optional[QHBoxLayout] = None
         self._channel_collapse_state: Dict[str, Dict[str, bool]] = {}
         self._signals_log_visible = True
         self._signals_log_height = 200
@@ -3508,12 +3514,33 @@ class MainWindow(QMainWindow):
         self.channel_scroll.setWidgetResizable(True)
         self.channel_scroll.setFrameShape(QFrame.NoFrame)
         self.channel_container = QWidget()
-        self.channel_layout = QGridLayout(self.channel_container)
-        self.channel_layout.setContentsMargins(0, 0, 0, 0)
-        self.channel_layout.setSpacing(8)
+        columns_layout = QHBoxLayout(self.channel_container)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.setSpacing(8)
+        self._channel_columns_layout = columns_layout
+        self._create_channel_columns(max(1, int(self._channel_grid_cols)))
         self.channel_scroll.setWidget(self.channel_container)
         outer_layout.addWidget(self.channel_scroll)
         self.tab_widget.addTab(widget, "Channels")
+
+    def _create_channel_columns(self, count: int) -> None:
+        if self._channel_columns_layout is None:
+            return
+        while self._channel_columns_layout.count():
+            item = self._channel_columns_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._channel_columns = []
+        column_total = max(1, int(count))
+        for _ in range(column_total):
+            col_widget = QWidget()
+            col_layout = QVBoxLayout(col_widget)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(8)
+            col_layout.addStretch(1)
+            self._channel_columns.append(col_layout)
+            self._channel_columns_layout.addWidget(col_widget, 1)
 
     def _build_signals_tab(self) -> None:
         widget = QWidget()
@@ -3869,14 +3896,11 @@ class MainWindow(QMainWindow):
     # Channels management
     def _refresh_channel_cards(self) -> None:
         for card in self._channel_cards.values():
-            card.setParent(None)
+            card.deleteLater()
         self._channel_cards.clear()
-        while self.channel_layout.count():
-            item = self.channel_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
         names = list(self._channel_profiles.items())
         max_cols = max(1, int(self._channel_grid_cols))
+        self._create_channel_columns(max_cols)
         for index, (name, profile) in enumerate(names):
             card = ChannelCardWidget(profile)
             card.command_requested.connect(self._on_channel_command)
@@ -3887,9 +3911,11 @@ class MainWindow(QMainWindow):
             card.section_collapse_changed.connect(self._on_card_section_collapse)
             card.duplicate_requested.connect(self._on_card_duplicate)
             card.delete_requested.connect(self._on_card_delete)
-            row = index // max_cols
-            column = index % max_cols
-            self.channel_layout.addWidget(card, row, column)
+            if not self._channel_columns:
+                continue
+            column = index % len(self._channel_columns)
+            target_layout = self._channel_columns[column]
+            target_layout.insertWidget(max(0, target_layout.count() - 1), card)
             self._channel_cards[name] = card
             config = self._sequencer_configs.setdefault(name, ChannelConfig())
             card.set_sequencer_config(config)
@@ -3913,11 +3939,6 @@ class MainWindow(QMainWindow):
             card.set_section_collapsed("status", collapse_state.get("status", True))
             card.set_section_collapsed("sequencer", collapse_state.get("sequencer", True))
         self._update_channel_card_modes()
-        for column in range(max_cols):
-            self.channel_layout.setColumnStretch(column, 1)
-        rows = math.ceil(len(names) / max_cols)
-        if rows:
-            self.channel_layout.setRowStretch(rows, 1)
         self.channel_selector.clear()
         self.channel_selector.addItems(sorted(self._channel_profiles))
 
