@@ -40,6 +40,7 @@ from PyQt5.QtCore import (
     QPropertyAnimation,
     QEasingCurve,
     QThread,
+    QByteArray,
     pyqtSignal,
     pyqtSlot,
 )
@@ -3978,8 +3979,13 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ECU Control")
-        self.setDockOptions(self.dockOptions() | QMainWindow.AllowTabbedDocks)
-        self.setDockNestingEnabled(False)
+        self.setDockOptions(
+            self.dockOptions()
+            | QMainWindow.AllowTabbedDocks
+            | QMainWindow.AllowNestedDocks
+            | QMainWindow.AnimatedDocks
+        )
+        self.setDockNestingEnabled(True)
         ensure_directories()
         self.backends = {
             DummyBackend.name: DummyBackend,
@@ -4018,6 +4024,9 @@ class MainWindow(QMainWindow):
         self._last_plot_dock: Optional[QDockWidget] = None
         self._suspend_plot_assignment = False
         self._hardware_apply_required = False
+        self.channels_dock: Optional[QDockWidget] = None
+        self.signals_dock: Optional[QDockWidget] = None
+        self._saved_dock_state: Optional[QByteArray] = None
         self._compact_manager = CompactUIManager()
         self._compact_ui_enabled = False
         self._channel_grid_cols = 2
@@ -4073,6 +4082,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tab_widget)
         self._build_channels_tab()
         self._build_signals_tab()
+        self._apply_default_dock_layout()
+        if not self._restore_dock_layout():
+            self._apply_default_dock_layout()
         self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
@@ -4120,6 +4132,11 @@ class MainWindow(QMainWindow):
         self.show_startup_action.setChecked(self._show_startup_tab)
         self.show_startup_action.toggled.connect(self._toggle_startup_tab_visibility)
         view_menu.addAction(self.show_startup_action)
+
+        view_menu.addSeparator()
+        self.reset_layout_action = QAction("Reset Layout", self)
+        self.reset_layout_action.triggered.connect(self._reset_layout)
+        view_menu.addAction(self.reset_layout_action)
 
     def _build_dashboard_toolbar(self) -> None:
         self.dashboard_bar.clear()
@@ -4343,7 +4360,14 @@ class MainWindow(QMainWindow):
         self._create_channel_columns(max(1, int(self._channel_grid_cols)))
         self.channel_scroll.setWidget(self.channel_container)
         outer_layout.addWidget(self.channel_scroll)
-        self.tab_widget.addTab(widget, "Channels")
+        self.channels_widget = widget
+        dock = QDockWidget("Channels", self)
+        dock.setObjectName("Dock_Channels")
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        dock.setWidget(widget)
+        self.channels_dock = dock
 
     def _create_channel_columns(self, count: int) -> None:
         if self._channel_columns_layout is None:
@@ -4370,14 +4394,18 @@ class MainWindow(QMainWindow):
         outer_layout.setContentsMargins(6, 6, 6, 6)
         outer_layout.setSpacing(4)
         self.signals_splitter = QSplitter(Qt.Vertical)
-        top_widget = QWidget()
-        layout = QHBoxLayout(top_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        top_container = QWidget()
+        top_layout = QVBoxLayout(top_container)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(4)
+        self.signals_top_splitter = QSplitter(Qt.Horizontal)
+        self.signals_top_splitter.setChildrenCollapsible(False)
         self.signal_browser = SignalBrowserWidget()
+        self.signals_top_splitter.addWidget(self.signal_browser)
         self.watchlist_widget = WatchlistWidget()
         self.watchlist_widget.plot_toggled.connect(self._on_watchlist_plot_toggled)
-        right_layout = QVBoxLayout()
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
         right_layout.addWidget(self.watchlist_widget)
@@ -4409,13 +4437,15 @@ class MainWindow(QMainWindow):
         if not self._multi_plot_enabled:
             self.multi_plot_widget.hide()
         right_layout.addWidget(self.multi_plot_widget, 1)
-        layout.addWidget(self.signal_browser, 2)
-        layout.addLayout(right_layout, 3)
+        self.signals_top_splitter.addWidget(right_widget)
+        self.signals_top_splitter.setStretchFactor(0, 2)
+        self.signals_top_splitter.setStretchFactor(1, 3)
+        top_layout.addWidget(self.signals_top_splitter)
         self.signal_browser.add_requested.connect(self._on_add_to_watchlist)
         self.signal_browser.plot_requested.connect(self._on_plot_requested)
         self.signal_browser.simulate_requested.connect(self._on_signal_simulate)
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
-        self.signals_splitter.addWidget(top_widget)
+        self.signals_splitter.addWidget(top_container)
         self.logging_container = QWidget()
         self.logging_container.setMinimumWidth(180)
         self.logging_container.setMaximumWidth(320)
@@ -4475,8 +4505,42 @@ class MainWindow(QMainWindow):
         self.signals_splitter.setStretchFactor(1, 1)
         self.signals_splitter.splitterMoved.connect(self._on_signals_splitter_moved)
         outer_layout.addWidget(self.signals_splitter)
-        self.tab_widget.addTab(widget, "Signals")
+        self.signals_widget = widget
+        dock = QDockWidget("Signals", self)
+        dock.setObjectName("Dock_Signals")
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        dock.setWidget(widget)
+        self.signals_dock = dock
         self._apply_log_visibility()
+
+    def _apply_default_dock_layout(self) -> None:
+        if not self.channels_dock or not self.signals_dock:
+            return
+        for dock in (self.channels_dock, self.signals_dock):
+            dock.setFloating(False)
+            dock.show()
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.channels_dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
+        self.tabifyDockWidget(self.channels_dock, self.signals_dock)
+        self.channels_dock.raise_()
+
+    def _restore_dock_layout(self) -> bool:
+        if self._saved_dock_state is None:
+            return False
+        try:
+            restored = bool(self.restoreState(self._saved_dock_state))
+        except TypeError:
+            return False
+        return restored
+
+    def _reset_layout(self) -> None:
+        if not self.channels_dock or not self.signals_dock:
+            return
+        self._qt_settings.remove("ui/dock_state")
+        self._saved_dock_state = None
+        self._apply_default_dock_layout()
 
     # Startup configuration
     def _refresh_startup_tree(self) -> None:
@@ -6723,6 +6787,16 @@ class MainWindow(QMainWindow):
         self._show_startup_tab = self._to_bool(
             self._qt_settings.value("ui/show_startup", self._show_startup_tab), False
         )
+        dock_state = self._qt_settings.value("ui/dock_state")
+        if isinstance(dock_state, QByteArray):
+            self._saved_dock_state = QByteArray(dock_state)
+        elif isinstance(dock_state, (bytes, bytearray)):
+            self._saved_dock_state = QByteArray(dock_state)
+        elif isinstance(dock_state, str):
+            try:
+                self._saved_dock_state = QByteArray.fromHex(dock_state.encode("ascii"))
+            except ValueError:
+                self._saved_dock_state = None
         preset_value = self._qt_settings.value("csv/preset", self._csv_preset_key)
         if isinstance(preset_value, str):
             preset_key = preset_value
@@ -6783,6 +6857,7 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("signals_log_height", int(self._signals_log_height))
         self._qt_settings.setValue("toolbar_visible", self._toolbar_visible)
         self._qt_settings.setValue("ui/show_startup", self._show_startup_tab)
+        self._qt_settings.setValue("ui/dock_state", self.saveState())
         sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
         self._qt_settings.setValue("channel_sequences", sequence_payload)
         self._qt_settings.setValue("startup/on_connect", self._startup_on_connect)
