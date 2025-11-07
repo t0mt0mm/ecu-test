@@ -39,7 +39,9 @@ from PyQt5.QtCore import (
     QSize,
     QPropertyAnimation,
     QEasingCurve,
+    QThread,
     pyqtSignal,
+    pyqtSlot,
 )
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
@@ -108,6 +110,7 @@ FACTORY_DEFAULT_SETUP = {
     "channels": {"profiles": [], "plot_visibility": {}},
     "sequencer": {"per_channel": {}},
     "dummy": {"simulations": {}},
+    "startup": {"version": 1, "globals": [], "per_output": [], "teardown": []},
 }
 
 
@@ -122,11 +125,22 @@ PRESET_LABELS = {
 }
 
 
-def get_csv_opts() -> dict:
+def get_csv_preset_key() -> str:
     settings = QSettings("OpenAI", "ECUControl")
-    key = str(settings.value("csv/preset", "excel_de"))
+    value = settings.value("csv/preset", "excel_de")
+    if isinstance(value, str):
+        key = value
+    elif value is None:
+        key = "excel_de"
+    else:
+        key = str(value)
     if key not in PRESETS:
         key = "excel_de"
+    return key
+
+
+def get_csv_opts() -> dict:
+    key = get_csv_preset_key()
     return PRESETS[key]
 
 
@@ -135,11 +149,13 @@ def get_csv_preset_label(key: str) -> str:
 
 
 def write_csv(df: pd.DataFrame, path: str) -> None:
-    opts = get_csv_opts()
+    preset_key = get_csv_preset_key()
+    opts = PRESETS[preset_key]
     export = df.copy()
-    datetime_columns = export.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns
-    for column in datetime_columns:
-        export[column] = export[column].dt.strftime("%Y-%m-%d %H:%M:%S")
+    if preset_key == "excel_de":
+        datetime_columns = export.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns
+        for column in datetime_columns:
+            export[column] = export[column].dt.strftime("%Y-%m-%d %H:%M:%S")
     export.to_csv(
         path,
         index=False,
@@ -592,6 +608,379 @@ class ChannelConfig:
         repeat_limit_s = int(max(0, int(data.get("repeat_limit_s", 0))))
         return cls(sequences=sequences, repeat_mode=repeat_mode, repeat_limit_s=repeat_limit_s)
 
+
+@dataclass
+class StartupGlobalStep:
+    message: str
+    fields: Dict[str, float]
+    repeat: int = 1
+    dt_ms: int = 0
+
+    def to_dict(self) -> dict:
+        payload = {
+            "message": self.message,
+            "fields": {name: float(value) for name, value in self.fields.items()},
+        }
+        if self.repeat != 1:
+            payload["repeat"] = int(max(1, self.repeat))
+        if self.dt_ms:
+            payload["dt_ms"] = int(max(0, self.dt_ms))
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupGlobalStep":
+        message = str(data.get("message", ""))
+        fields_raw = data.get("fields", {}) if isinstance(data, dict) else {}
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        repeat = data.get("repeat", 1) if isinstance(data, dict) else 1
+        dt_ms = data.get("dt_ms", 0) if isinstance(data, dict) else 0
+        try:
+            repeat_value = int(repeat)
+        except (TypeError, ValueError):
+            repeat_value = 1
+        try:
+            delay_value = int(dt_ms)
+        except (TypeError, ValueError):
+            delay_value = 0
+        return cls(message=message, fields=fields, repeat=max(1, repeat_value), dt_ms=max(0, delay_value))
+
+
+@dataclass
+class StartupPerOutputStep:
+    channel: str
+    message: str
+    fields: Dict[str, float]
+    repeat: int = 1
+    dt_ms: int = 0
+
+    def to_dict(self) -> dict:
+        payload = {
+            "channel": self.channel,
+            "message": self.message,
+            "fields": {name: float(value) for name, value in self.fields.items()},
+        }
+        if self.repeat != 1:
+            payload["repeat"] = int(max(1, self.repeat))
+        if self.dt_ms:
+            payload["dt_ms"] = int(max(0, self.dt_ms))
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupPerOutputStep":
+        channel = str(data.get("channel", ""))
+        message = str(data.get("message", ""))
+        fields_raw = data.get("fields", {}) if isinstance(data, dict) else {}
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        repeat = data.get("repeat", 1) if isinstance(data, dict) else 1
+        dt_ms = data.get("dt_ms", 0) if isinstance(data, dict) else 0
+        try:
+            repeat_value = int(repeat)
+        except (TypeError, ValueError):
+            repeat_value = 1
+        try:
+            delay_value = int(dt_ms)
+        except (TypeError, ValueError):
+            delay_value = 0
+        return cls(
+            channel=channel,
+            message=message,
+            fields=fields,
+            repeat=max(1, repeat_value),
+            dt_ms=max(0, delay_value),
+        )
+
+
+@dataclass
+class StartupTeardownStep:
+    message: str
+    fields: Dict[str, float]
+
+    def to_dict(self) -> dict:
+        return {
+            "message": self.message,
+            "fields": {name: float(value) for name, value in self.fields.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupTeardownStep":
+        message = str(data.get("message", ""))
+        fields_raw = data.get("fields", {}) if isinstance(data, dict) else {}
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        return cls(message=message, fields=fields)
+
+
+@dataclass
+class StartupConfig:
+    version: int = 1
+    globals: List[StartupGlobalStep] = field(default_factory=list)
+    per_output: List[StartupPerOutputStep] = field(default_factory=list)
+    teardown: List[StartupTeardownStep] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "version": int(self.version),
+            "globals": [step.to_dict() for step in self.globals],
+            "per_output": [step.to_dict() for step in self.per_output],
+            "teardown": [step.to_dict() for step in self.teardown],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupConfig":
+        if not isinstance(data, dict):
+            return cls()
+        version_value = data.get("version", 1)
+        try:
+            version = int(version_value)
+        except (TypeError, ValueError):
+            version = 1
+        globals_section = data.get("globals", []) if isinstance(data, dict) else []
+        per_output_section = data.get("per_output", []) if isinstance(data, dict) else []
+        teardown_section = data.get("teardown", []) if isinstance(data, dict) else []
+        globals_steps = [StartupGlobalStep.from_dict(entry) for entry in globals_section if isinstance(entry, dict)]
+        per_output_steps = [StartupPerOutputStep.from_dict(entry) for entry in per_output_section if isinstance(entry, dict)]
+        teardown_steps = [StartupTeardownStep.from_dict(entry) for entry in teardown_section if isinstance(entry, dict)]
+        return cls(version=version, globals=globals_steps, per_output=per_output_steps, teardown=teardown_steps)
+
+
+@dataclass
+class StartupPreparedStep:
+    key: Tuple[str, Optional[str]]
+    message: str
+    payload: Dict[str, float]
+    repeat: int
+    dt_ms: int
+    channel: Optional[str] = None
+
+
+class StartupWorker(QObject):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(bool, list, str)
+
+    def __init__(
+        self,
+        backend: BackendBase,
+        steps: List[StartupPreparedStep],
+        *,
+        delay_ms: int = 0,
+        force: bool = False,
+        parent: Optional[QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._backend = backend
+        self._steps = steps
+        self._delay_ms = max(0, int(delay_ms))
+        self._force = force
+        self._stop_event = threading.Event()
+
+    def cancel(self) -> None:
+        self._stop_event.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        successes: List[Tuple[Tuple[str, Optional[str]], Dict[str, float]]] = []
+        errors: List[str] = []
+        delay = self._delay_ms / 1000.0 if self._delay_ms > 0 else 0.0
+        for index, step in enumerate(self._steps):
+            if self._stop_event.is_set():
+                errors.append("Startup cancelled")
+                break
+            description = step.message
+            if step.channel:
+                description += f" ({step.channel})"
+            try:
+                self._backend.send_message_by_name(
+                    step.message,
+                    step.payload,
+                    repeat=max(1, step.repeat),
+                    dt_ms=max(0, step.dt_ms),
+                    force=self._force,
+                )
+                self.progress.emit(f"Sent {description}: {step.payload}")
+                successes.append((step.key, dict(step.payload)))
+            except BackendError as exc:
+                error_message = f"Failed {description}: {exc}"
+                self.progress.emit(error_message)
+                errors.append(error_message)
+            if delay > 0.0 and index < len(self._steps) - 1:
+                time.sleep(delay)
+        success = not errors
+        summary = "Startup completed" if success else "Startup completed with issues"
+        if errors and success:
+            summary = "Startup completed with warnings"
+        elif errors:
+            summary = errors[-1]
+        self.finished.emit(success, successes, summary)
+
+
+class StartupStepDialog(QDialog):
+    def __init__(
+        self,
+        mode: str,
+        channels: List[str],
+        signals_by_message: Dict[str, List[SignalDefinition]],
+        *,
+        parent: Optional[QWidget] = None,
+        existing: Optional[Any] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configure startup step")
+        self._mode = mode
+        self._channels = channels
+        self._signals_by_message = signals_by_message
+        self.result_step: Optional[Any] = None
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.message_combo = QComboBox()
+        self.message_combo.setEditable(True)
+        for name in sorted(self._signals_by_message.keys()):
+            self.message_combo.addItem(name)
+        form.addRow("Message", self.message_combo)
+        if mode == "per_output":
+            self.channel_combo = QComboBox()
+            self.channel_combo.addItems(channels)
+            self.channel_combo.setEditable(True)
+            form.addRow("Channel", self.channel_combo)
+        else:
+            self.channel_combo = None
+        self.repeat_spin = QSpinBox()
+        self.repeat_spin.setRange(1, 100)
+        self.repeat_spin.setValue(1)
+        self.delay_spin = QSpinBox()
+        self.delay_spin.setRange(0, 10_000)
+        self.delay_spin.setSuffix(" ms")
+        if mode != "teardown":
+            form.addRow("Repeat", self.repeat_spin)
+            form.addRow("Delay", self.delay_spin)
+        layout.addLayout(form)
+        self.field_table = QTableWidget(0, 2)
+        self.field_table.setHorizontalHeaderLabels(["Signal", "Value"])
+        self.field_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.field_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.field_table.verticalHeader().setVisible(False)
+        self.field_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.field_table)
+        field_buttons = QHBoxLayout()
+        add_field = QToolButton()
+        add_field.setText("Add field")
+        add_field.clicked.connect(self._add_field_row)
+        remove_field = QToolButton()
+        remove_field.setText("Remove field")
+        remove_field.clicked.connect(self._remove_field_row)
+        field_buttons.addWidget(add_field)
+        field_buttons.addWidget(remove_field)
+        field_buttons.addStretch(1)
+        layout.addLayout(field_buttons)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        if existing is not None:
+            self._populate_from_existing(existing)
+        else:
+            self._add_field_row()
+
+    def _add_field_row(self) -> None:
+        row = self.field_table.rowCount()
+        self.field_table.insertRow(row)
+        self.field_table.setItem(row, 0, QTableWidgetItem(""))
+        self.field_table.setItem(row, 1, QTableWidgetItem("0"))
+
+    def _remove_field_row(self) -> None:
+        row = self.field_table.currentRow()
+        if row >= 0:
+            self.field_table.removeRow(row)
+
+    def _populate_from_existing(self, existing: Any) -> None:
+        if hasattr(existing, "message"):
+            index = self.message_combo.findText(existing.message)
+            if index >= 0:
+                self.message_combo.setCurrentIndex(index)
+            else:
+                self.message_combo.setEditText(existing.message)
+        if self.channel_combo is not None and hasattr(existing, "channel"):
+            index = self.channel_combo.findText(existing.channel)
+            if index >= 0:
+                self.channel_combo.setCurrentIndex(index)
+            elif self.channel_combo.isEditable():
+                self.channel_combo.setEditText(existing.channel)
+        if hasattr(existing, "repeat"):
+            self.repeat_spin.setValue(int(getattr(existing, "repeat", 1)))
+        if hasattr(existing, "dt_ms"):
+            self.delay_spin.setValue(int(getattr(existing, "dt_ms", 0)))
+        for name, value in existing.fields.items():
+            row = self.field_table.rowCount()
+            self.field_table.insertRow(row)
+            self.field_table.setItem(row, 0, QTableWidgetItem(str(name)))
+            self.field_table.setItem(row, 1, QTableWidgetItem(str(value)))
+        if not existing.fields:
+            self._add_field_row()
+
+    def accept(self) -> None:  # type: ignore[override]
+        message = self.message_combo.currentText().strip()
+        if not message:
+            QMessageBox.warning(self, "Invalid input", "Message name is required.")
+            return
+        fields: Dict[str, float] = {}
+        for row in range(self.field_table.rowCount()):
+            signal_item = self.field_table.item(row, 0)
+            value_item = self.field_table.item(row, 1)
+            if signal_item is None or value_item is None:
+                continue
+            signal_name = signal_item.text().strip()
+            if not signal_name:
+                continue
+            try:
+                numeric_value = float(value_item.text())
+            except (TypeError, ValueError):
+                QMessageBox.warning(self, "Invalid input", f"Value for '{signal_name}' is not numeric.")
+                return
+            fields[signal_name] = numeric_value
+        if not fields:
+            QMessageBox.warning(self, "Invalid input", "At least one signal/value pair is required.")
+            return
+        if self._mode == "per_output":
+            if self.channel_combo is None:
+                QMessageBox.warning(self, "Invalid input", "Channel selection is required.")
+                return
+            channel = self.channel_combo.currentText().strip()
+            if not channel:
+                QMessageBox.warning(self, "Invalid input", "Channel name is required.")
+                return
+            self.result_step = StartupPerOutputStep(
+                channel=channel,
+                message=message,
+                fields=fields,
+                repeat=max(1, int(self.repeat_spin.value())),
+                dt_ms=max(0, int(self.delay_spin.value())),
+            )
+        elif self._mode == "teardown":
+            self.result_step = StartupTeardownStep(message=message, fields=fields)
+        else:
+            self.result_step = StartupGlobalStep(
+                message=message,
+                fields=fields,
+                repeat=max(1, int(self.repeat_spin.value())),
+                dt_ms=max(0, int(self.delay_spin.value())),
+            )
+        super().accept()
 
 class SequenceRunner(QObject):
     progressed = pyqtSignal(int, str, float)
@@ -1129,6 +1518,17 @@ class BackendBase:
     def update_simulation_profile(self, profile: SignalSimulationConfig) -> None:
         raise BackendError("Simulation profiles are not supported by this backend.")
 
+    def send_message_by_name(
+        self,
+        message: str,
+        payload: Dict[str, Any],
+        *,
+        repeat: int = 1,
+        dt_ms: int = 0,
+        force: bool = False,
+    ) -> None:
+        raise NotImplementedError
+
 class DummyBackend(BackendBase):
     name = "Dummy"
 
@@ -1391,6 +1791,36 @@ class DummyBackend(BackendBase):
             if value is not None:
                 self._set_override(signal, value)
 
+    def send_message_by_name(
+        self,
+        message: str,
+        payload: Dict[str, Any],
+        *,
+        repeat: int = 1,
+        dt_ms: int = 0,
+        force: bool = False,
+    ) -> None:
+        _ = repeat, dt_ms, force
+        if self._dbc is None:
+            raise BackendError("No DBC loaded for Dummy backend")
+        try:
+            dbc_message = self._dbc.get_message_by_name(message)
+        except KeyError:
+            raise BackendError(f"Message {message} not found in DBC")
+        valid_names = {signal.name for signal in dbc_message.signals}
+        overrides: Dict[str, float] = {}
+        for name, value in payload.items():
+            if name not in valid_names:
+                raise BackendError(f"Signal {name} not found in message {message}")
+            try:
+                overrides[name] = float(value)
+            except (TypeError, ValueError):
+                raise BackendError(f"Invalid value for signal {name}")
+        if not overrides:
+            return
+        for name, value in overrides.items():
+            self._set_override(name, value)
+
 class RealBackend(QObject, BackendBase):
     name = "Real"
 
@@ -1509,6 +1939,60 @@ class RealBackend(QObject, BackendBase):
                     self._signal_cache[name] = float(value)
         except (ValueError, can.CanError) as exc:
             raise BackendError(str(exc))
+
+    def send_message_by_name(
+        self,
+        message: str,
+        payload: Dict[str, Any],
+        *,
+        repeat: int = 1,
+        dt_ms: int = 0,
+        force: bool = False,
+    ) -> None:
+        _ = force
+        if self._db is None or self._bus is None:
+            raise BackendError("Real backend is not connected")
+        try:
+            dbc_message = self._db.get_message_by_name(message)
+        except KeyError:
+            raise BackendError(f"Message {message} not found in DBC")
+        valid_names = {signal.name for signal in dbc_message.signals}
+        prepared: Dict[str, float] = {}
+        for name, value in payload.items():
+            if name not in valid_names:
+                raise BackendError(f"Signal {name} not found in message {message}")
+            if not is_signal_writable(name, message):
+                raise BackendError(f"Signal {name} is not writable")
+            try:
+                prepared[name] = float(value)
+            except (TypeError, ValueError):
+                raise BackendError(f"Invalid value for signal {name}")
+        if not prepared:
+            return
+        repeat_count = max(1, int(repeat))
+        interval = max(0, int(dt_ms)) / 1000.0
+        for attempt_index in range(repeat_count):
+            tries = 0
+            while tries < 3:
+                try:
+                    data = dbc_message.encode(prepared, scaling=True, strict=True)
+                    message_obj = can.Message(
+                        arbitration_id=dbc_message.frame_id,
+                        data=data,
+                        is_extended_id=False,
+                    )
+                    self._bus.send(message_obj)
+                    with self._lock:
+                        for name, value in prepared.items():
+                            self._signal_cache[name] = float(value)
+                    break
+                except (ValueError, can.CanError) as exc:
+                    tries += 1
+                    if tries >= 3:
+                        raise BackendError(str(exc))
+                    time.sleep(0.05)
+            if interval > 0.0 and attempt_index < repeat_count - 1:
+                time.sleep(interval)
 
     def update(self, dt: float) -> None:
         _ = dt
@@ -3413,6 +3897,18 @@ class MainWindow(QMainWindow):
         self._signals_log_height = 200
         self._toolbar_visible = True
         self._csv_preset_key = "excel_de"
+        self._startup_config = StartupConfig()
+        self._startup_on_connect = True
+        self._startup_on_apply = True
+        self._startup_delay_ms = 0
+        self._startup_only_on_change = False
+        self._startup_last_payloads: Dict[Tuple[str, Optional[str]], Dict[str, float]] = {}
+        self._startup_worker_thread: Optional[QThread] = None
+        self._startup_worker: Optional[StartupWorker] = None
+        self._startup_running = False
+        self._startup_pending_mode: Optional[str] = None
+        self._startup_status_messages: List[str] = []
+        self._startup_is_valid = False
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -3579,7 +4075,97 @@ class MainWindow(QMainWindow):
         csv_action = QWidgetAction(self.dashboard_bar)
         csv_action.setDefaultWidget(csv_widget)
         self.dashboard_bar.addAction(csv_action)
+        startup_action = QWidgetAction(self.dashboard_bar)
+        startup_action.setDefaultWidget(self._create_startup_toolbar_widget())
+        self.dashboard_bar.addAction(startup_action)
         self.dashboard_bar.addAction(self.show_log_action)
+
+    def _create_startup_toolbar_widget(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        toggle_layout.setSpacing(4)
+        self.startup_on_connect_check = QCheckBox("On connect")
+        self.startup_on_connect_check.setChecked(self._startup_on_connect)
+        self.startup_on_connect_check.toggled.connect(self._on_startup_on_connect_toggled)
+        toggle_layout.addWidget(self.startup_on_connect_check)
+        self.startup_on_apply_check = QCheckBox("On apply")
+        self.startup_on_apply_check.setChecked(self._startup_on_apply)
+        self.startup_on_apply_check.toggled.connect(self._on_startup_on_apply_toggled)
+        toggle_layout.addWidget(self.startup_on_apply_check)
+        self.startup_only_change_check = QCheckBox("Only if changed")
+        self.startup_only_change_check.setChecked(self._startup_only_on_change)
+        self.startup_only_change_check.toggled.connect(self._on_startup_only_change_toggled)
+        toggle_layout.addWidget(self.startup_only_change_check)
+        toggle_layout.addStretch(1)
+        layout.addLayout(toggle_layout)
+        control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(4)
+        control_layout.addWidget(QLabel("Delay"))
+        self.startup_delay_spin = QSpinBox()
+        self.startup_delay_spin.setRange(0, 10_000)
+        self.startup_delay_spin.setSuffix(" ms")
+        self.startup_delay_spin.setValue(int(self._startup_delay_ms))
+        self.startup_delay_spin.valueChanged.connect(self._on_startup_delay_changed)
+        control_layout.addWidget(self.startup_delay_spin)
+        self.startup_run_button = QPushButton("Run Startup")
+        self.startup_run_button.clicked.connect(self._trigger_manual_startup)
+        control_layout.addWidget(self.startup_run_button)
+        self.startup_dry_run_button = QPushButton("Dry Run")
+        self.startup_dry_run_button.clicked.connect(self._show_startup_dry_run)
+        control_layout.addWidget(self.startup_dry_run_button)
+        self.startup_status_badge = QLabel("Startup")
+        control_layout.addWidget(self.startup_status_badge)
+        control_layout.addStretch(1)
+        layout.addLayout(control_layout)
+        self.startup_tree = QTreeWidget()
+        self.startup_tree.setColumnCount(2)
+        self.startup_tree.setHeaderLabels(["Step", "Details"])
+        self.startup_tree.setRootIsDecorated(True)
+        self.startup_tree.setIndentation(14)
+        self.startup_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.startup_tree.itemDoubleClicked.connect(lambda *_: self._edit_startup_step())
+        self.startup_tree.itemSelectionChanged.connect(self._update_startup_controls)
+        self.startup_tree.setMinimumHeight(140)
+        layout.addWidget(self.startup_tree)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(4)
+        self.startup_add_global_button = QToolButton()
+        self.startup_add_global_button.setText("Add Global")
+        self.startup_add_global_button.setAutoRaise(True)
+        self.startup_add_global_button.clicked.connect(lambda: self._add_startup_step("global"))
+        buttons_layout.addWidget(self.startup_add_global_button)
+        self.startup_add_output_button = QToolButton()
+        self.startup_add_output_button.setText("Add Output")
+        self.startup_add_output_button.setAutoRaise(True)
+        self.startup_add_output_button.clicked.connect(lambda: self._add_startup_step("per_output"))
+        buttons_layout.addWidget(self.startup_add_output_button)
+        self.startup_add_teardown_button = QToolButton()
+        self.startup_add_teardown_button.setText("Add Teardown")
+        self.startup_add_teardown_button.setAutoRaise(True)
+        self.startup_add_teardown_button.clicked.connect(lambda: self._add_startup_step("teardown"))
+        buttons_layout.addWidget(self.startup_add_teardown_button)
+        self.startup_edit_button = QToolButton()
+        self.startup_edit_button.setText("Edit")
+        self.startup_edit_button.setAutoRaise(True)
+        self.startup_edit_button.clicked.connect(self._edit_startup_step)
+        buttons_layout.addWidget(self.startup_edit_button)
+        self.startup_remove_button = QToolButton()
+        self.startup_remove_button.setText("Remove")
+        self.startup_remove_button.setAutoRaise(True)
+        self.startup_remove_button.clicked.connect(self._remove_startup_step)
+        buttons_layout.addWidget(self.startup_remove_button)
+        buttons_layout.addStretch(1)
+        layout.addLayout(buttons_layout)
+        self._refresh_startup_tree()
+        self._update_startup_status_badge()
+        self._update_startup_controls()
+        return widget
     def _build_channels_tab(self) -> None:
         widget = QWidget()
         outer_layout = QVBoxLayout(widget)
@@ -3727,6 +4313,10 @@ class MainWindow(QMainWindow):
         self.logging_button = QPushButton("Start Logging")
         self.logging_button.clicked.connect(self._toggle_logging)
         logging_layout.addRow(self.logging_button)
+        self.startup_log_view = QTextBrowser()
+        self.startup_log_view.setReadOnly(True)
+        self.startup_log_view.setMaximumHeight(140)
+        logging_layout.addRow("Startup log", self.startup_log_view)
         self.signals_splitter.addWidget(self.logging_container)
         self.signals_splitter.setStretchFactor(0, 3)
         self.signals_splitter.setStretchFactor(1, 1)
@@ -3734,6 +4324,469 @@ class MainWindow(QMainWindow):
         outer_layout.addWidget(self.signals_splitter)
         self.tab_widget.addTab(widget, "Signals")
         self._apply_log_visibility()
+
+    # Startup configuration
+    def _refresh_startup_tree(self) -> None:
+        if not hasattr(self, "startup_tree"):
+            return
+        self.startup_tree.blockSignals(True)
+        self.startup_tree.clear()
+        sections: List[Tuple[str, str, List[Any]]] = [
+            ("global", "Global messages", list(self._startup_config.globals)),
+            ("per_output", "Per output", list(self._startup_config.per_output)),
+            ("teardown", "Teardown", list(self._startup_config.teardown)),
+        ]
+        for section_key, title, entries in sections:
+            parent = QTreeWidgetItem([title, ""])
+            parent.setData(0, Qt.UserRole, (section_key, None))
+            parent.setFirstColumnSpanned(True)
+            has_children = False
+            for index, step in enumerate(entries):
+                step_title = getattr(step, "message", "")
+                if section_key == "per_output" and getattr(step, "channel", ""):
+                    step_title = f"{step.channel} → {step.message}"
+                details = self._format_startup_details(step)
+                item = QTreeWidgetItem([step_title, details])
+                item.setData(0, Qt.UserRole, (section_key, index))
+                parent.addChild(item)
+                has_children = True
+                for name, value in sorted(step.fields.items()):
+                    field_item = QTreeWidgetItem([name, f"{value}"])
+                    item.addChild(field_item)
+            if has_children:
+                parent.setExpanded(True)
+            self.startup_tree.addTopLevelItem(parent)
+        self.startup_tree.expandToDepth(0)
+        self.startup_tree.blockSignals(False)
+        self._update_startup_controls()
+
+    def _format_startup_details(self, step: Any) -> str:
+        repeat = getattr(step, "repeat", 1)
+        dt_ms = getattr(step, "dt_ms", 0)
+        parts: List[str] = []
+        if repeat > 1:
+            parts.append(f"repeat {repeat}×")
+        if dt_ms > 0:
+            parts.append(f"dt {dt_ms} ms")
+        return ", ".join(parts)
+
+    def _update_startup_controls(self) -> None:
+        if not hasattr(self, "startup_run_button"):
+            return
+        selection = self._selected_startup_step()
+        allow_edit = selection is not None
+        self.startup_edit_button.setEnabled(allow_edit)
+        self.startup_remove_button.setEnabled(allow_edit)
+        has_steps = bool(
+            self._startup_config.globals or self._startup_config.per_output or self._startup_config.teardown
+        )
+        self.startup_run_button.setEnabled(
+            not self._startup_running and self._startup_is_valid and self.backend is not None and has_steps
+        )
+        self.startup_dry_run_button.setEnabled(self._dbc is not None and has_steps)
+
+    def _selected_startup_step(self) -> Optional[Tuple[str, int]]:
+        if not hasattr(self, "startup_tree"):
+            return None
+        item = self.startup_tree.currentItem()
+        if item is None:
+            return None
+        data = item.data(0, Qt.UserRole)
+        if not isinstance(data, tuple) or len(data) != 2:
+            return None
+        section, index = data
+        if index is None:
+            return None
+        try:
+            return str(section), int(index)
+        except (TypeError, ValueError):
+            return None
+
+    def _add_startup_step(self, section: str) -> None:
+        if section not in {"global", "per_output", "teardown"}:
+            return
+        dialog = StartupStepDialog(
+            section,
+            sorted(self._channel_profiles.keys()),
+            self._signals_by_message if hasattr(self, "_signals_by_message") else {},
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted or dialog.result_step is None:
+            return
+        step = dialog.result_step
+        if isinstance(step, StartupGlobalStep):
+            self._startup_config.globals.append(step)
+        elif isinstance(step, StartupPerOutputStep):
+            self._startup_config.per_output.append(step)
+        elif isinstance(step, StartupTeardownStep):
+            self._startup_config.teardown.append(step)
+        self._on_startup_config_changed()
+
+    def _edit_startup_step(self) -> None:
+        selection = self._selected_startup_step()
+        if not selection:
+            return
+        section, index = selection
+        existing = None
+        if section == "global" and 0 <= index < len(self._startup_config.globals):
+            existing = self._startup_config.globals[index]
+        elif section == "per_output" and 0 <= index < len(self._startup_config.per_output):
+            existing = self._startup_config.per_output[index]
+        elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
+            existing = self._startup_config.teardown[index]
+        if existing is None:
+            return
+        dialog = StartupStepDialog(
+            section,
+            sorted(self._channel_profiles.keys()),
+            self._signals_by_message if hasattr(self, "_signals_by_message") else {},
+            parent=self,
+            existing=existing,
+        )
+        if dialog.exec_() != QDialog.Accepted or dialog.result_step is None:
+            return
+        if isinstance(dialog.result_step, StartupGlobalStep) and section == "global":
+            self._startup_config.globals[index] = dialog.result_step
+        elif isinstance(dialog.result_step, StartupPerOutputStep) and section == "per_output":
+            self._startup_config.per_output[index] = dialog.result_step
+        elif isinstance(dialog.result_step, StartupTeardownStep) and section == "teardown":
+            self._startup_config.teardown[index] = dialog.result_step
+        self._on_startup_config_changed()
+
+    def _remove_startup_step(self) -> None:
+        selection = self._selected_startup_step()
+        if not selection:
+            return
+        section, index = selection
+        if section == "global" and 0 <= index < len(self._startup_config.globals):
+            del self._startup_config.globals[index]
+        elif section == "per_output" and 0 <= index < len(self._startup_config.per_output):
+            del self._startup_config.per_output[index]
+        elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
+            del self._startup_config.teardown[index]
+        else:
+            return
+        self._on_startup_config_changed()
+
+    def _on_startup_config_changed(self) -> None:
+        self._startup_last_payloads.clear()
+        self._refresh_startup_tree()
+        self._validate_startup_config()
+        self._set_hardware_pending(True, "Startup configuration changed. Apply to hardware when ready.")
+
+    def _on_startup_on_connect_toggled(self, enabled: bool) -> None:
+        self._startup_on_connect = enabled
+        self._save_settings()
+
+    def _on_startup_on_apply_toggled(self, enabled: bool) -> None:
+        self._startup_on_apply = enabled
+        self._save_settings()
+
+    def _on_startup_only_change_toggled(self, enabled: bool) -> None:
+        self._startup_only_on_change = enabled
+        self._save_settings()
+
+    def _on_startup_delay_changed(self, value: int) -> None:
+        self._startup_delay_ms = max(0, int(value))
+        self._save_settings()
+
+    def _trigger_manual_startup(self) -> None:
+        self._run_startup(mode="normal", force=True)
+
+    def _update_startup_status_badge(self) -> None:
+        if not hasattr(self, "startup_status_badge"):
+            return
+        if not self._startup_status_messages and self._startup_is_valid:
+            self.startup_status_badge.setText("Startup OK")
+            self.startup_status_badge.setStyleSheet("color: green; font-weight: 600;")
+            self.startup_status_badge.setToolTip("Startup configuration is valid.")
+        elif not self._startup_is_valid:
+            text = "Startup ⚠"
+            self.startup_status_badge.setText(text)
+            self.startup_status_badge.setStyleSheet("color: red; font-weight: 600;")
+            tooltip = "\n".join(self._startup_status_messages) if self._startup_status_messages else "Startup configuration is invalid."
+            self.startup_status_badge.setToolTip(tooltip)
+        else:
+            self.startup_status_badge.setText("Startup ⚠")
+            self.startup_status_badge.setStyleSheet("color: orange; font-weight: 600;")
+            tooltip = "\n".join(self._startup_status_messages) if self._startup_status_messages else "Startup warnings present."
+            self.startup_status_badge.setToolTip(tooltip)
+        self._update_startup_controls()
+
+    def _validate_startup_config(self) -> None:
+        errors: List[str] = []
+        warnings: List[str] = []
+        if self._dbc is None:
+            warnings.append("DBC not loaded")
+        else:
+            message_cache: Dict[str, Any] = {}
+            def ensure_message(name: str) -> Optional[Any]:
+                if name in message_cache:
+                    return message_cache[name]
+                try:
+                    message_cache[name] = self._dbc.get_message_by_name(name)
+                except KeyError:
+                    errors.append(f"Message '{name}' not found in DBC")
+                    message_cache[name] = None
+                return message_cache[name]
+
+            def validate_step(step: Any, label: str) -> None:
+                if not getattr(step, "message", ""):
+                    errors.append(f"{label}: message name missing")
+                    return
+                dbc_message = ensure_message(step.message)
+                if dbc_message is None:
+                    return
+                available = {signal.name for signal in getattr(dbc_message, "signals", [])}
+                if not step.fields:
+                    warnings.append(f"{label}: no fields specified")
+                for signal_name in step.fields:
+                    if signal_name not in available:
+                        errors.append(f"{label}: signal '{signal_name}' missing")
+                    elif not is_signal_writable(signal_name, step.message):
+                        errors.append(f"{label}: signal '{signal_name}' not writable")
+                repeat_value = getattr(step, "repeat", 1)
+                delay_value = getattr(step, "dt_ms", 0)
+                if repeat_value < 1:
+                    errors.append(f"{label}: repeat must be >= 1")
+                if delay_value < 0:
+                    errors.append(f"{label}: delay must be >= 0")
+
+            for idx, step in enumerate(self._startup_config.globals):
+                validate_step(step, f"Global {idx + 1}")
+            for idx, step in enumerate(self._startup_config.per_output):
+                if step.channel not in self._channel_profiles:
+                    errors.append(f"Per output {idx + 1}: channel '{step.channel}' missing")
+                validate_step(step, f"Per output {idx + 1}")
+            for idx, step in enumerate(self._startup_config.teardown):
+                if not getattr(step, "message", ""):
+                    errors.append(f"Teardown {idx + 1}: message name missing")
+                else:
+                    dbc_message = ensure_message(step.message)
+                    if dbc_message is None:
+                        continue
+                    available = {signal.name for signal in getattr(dbc_message, "signals", [])}
+                    for signal_name in step.fields:
+                        if signal_name not in available:
+                            errors.append(f"Teardown {idx + 1}: signal '{signal_name}' missing")
+                        elif not is_signal_writable(signal_name, step.message):
+                            errors.append(f"Teardown {idx + 1}: signal '{signal_name}' not writable")
+        self._startup_status_messages = errors + warnings
+        self._startup_is_valid = not errors and self._dbc is not None
+        self._update_startup_status_badge()
+
+    def _prepare_startup_steps(self, mode: str, force: bool) -> List[StartupPreparedStep]:
+        steps: List[StartupPreparedStep] = []
+        if mode == "teardown":
+            for step in self._startup_config.teardown:
+                payload = {name: float(value) for name, value in step.fields.items()}
+                if not payload and not force:
+                    continue
+                key = (f"teardown:{step.message}", None)
+                steps.append(StartupPreparedStep(key, step.message, payload, 1, 0))
+            return steps
+
+        def should_include(step_key: Tuple[str, Optional[str]], payload: Dict[str, float]) -> bool:
+            if force or not self._startup_only_on_change:
+                return True
+            return self._startup_last_payloads.get(step_key) != payload
+
+        for step in self._startup_config.globals:
+            payload = {name: float(value) for name, value in step.fields.items()}
+            if not payload and not force:
+                continue
+            key = (step.message, None)
+            if should_include(key, payload):
+                steps.append(
+                    StartupPreparedStep(
+                        key=key,
+                        message=step.message,
+                        payload=payload,
+                        repeat=max(1, int(step.repeat)),
+                        dt_ms=max(0, int(step.dt_ms)),
+                    )
+                )
+        order_map = {
+            "Supply": 0,
+            "Power": 0,
+            "HBridge": 1,
+            "HighSide": 2,
+            "LowSide": 2,
+            "AO_0_10V": 3,
+            "AO_4_20mA": 3,
+        }
+
+        def sort_key(step: StartupPerOutputStep) -> Tuple[int, str]:
+            profile = self._channel_profiles.get(step.channel)
+            channel_type = profile.type if profile else ""
+            return (order_map.get(channel_type, 50), step.channel)
+
+        for step in sorted(self._startup_config.per_output, key=sort_key):
+            if step.channel not in self._channel_profiles:
+                continue
+            payload = {name: float(value) for name, value in step.fields.items()}
+            if not payload and not force:
+                continue
+            key = (step.message, step.channel)
+            if should_include(key, payload):
+                steps.append(
+                    StartupPreparedStep(
+                        key=key,
+                        message=step.message,
+                        payload=payload,
+                        repeat=max(1, int(step.repeat)),
+                        dt_ms=max(0, int(step.dt_ms)),
+                        channel=step.channel,
+                    )
+                )
+        return steps
+
+    def _run_startup(self, *, mode: str = "normal", force: bool = False) -> None:
+        if not self.backend:
+            self._show_error("No backend is configured.")
+            return
+        if self._startup_running:
+            self._show_error("Startup sequence already running.")
+            return
+        if mode != "teardown" and not self._startup_is_valid:
+            self._show_error("Startup configuration is invalid.")
+            return
+        steps = self._prepare_startup_steps(mode, force)
+        if not steps:
+            if mode != "teardown":
+                self.status_message_label.setText("Startup skipped; no changes required.")
+            return
+        delay_ms = 0 if mode == "teardown" else max(0, int(self._startup_delay_ms))
+        worker_force = force or not self._startup_only_on_change
+        worker = StartupWorker(self.backend, steps, delay_ms=delay_ms, force=worker_force)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_startup_progress)
+        worker.finished.connect(self._on_startup_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._cleanup_startup_worker)
+        self._startup_worker = worker
+        self._startup_worker_thread = thread
+        self._startup_running = True
+        self._startup_pending_mode = mode
+        self._append_startup_log(f"Startup initiated ({mode})")
+        self._update_startup_controls()
+        thread.start()
+
+    def _on_startup_progress(self, message: str) -> None:
+        self._append_startup_log(message)
+
+    def _on_startup_finished(self, success: bool, successes: list, summary: str) -> None:
+        self._startup_running = False
+        mode = self._startup_pending_mode or "normal"
+        if mode != "teardown":
+            for key, payload in successes:
+                self._startup_last_payloads[key] = dict(payload)
+        self._append_startup_log(summary)
+        if not success:
+            self.status_message_label.setText(summary)
+        self._startup_pending_mode = None
+        self._update_startup_controls()
+        if mode == "teardown":
+            self._all_outputs_off()
+
+    def _cleanup_startup_worker(self) -> None:
+        self._startup_worker_thread = None
+        self._startup_worker = None
+
+    def _append_startup_log(self, message: str) -> None:
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = f"{timestamp} • {message}"
+        if hasattr(self, "startup_log_view") and self.startup_log_view is not None:
+            self.startup_log_view.append(entry)
+        self.status_message_label.setText(message)
+
+    def _show_startup_dry_run(self) -> None:
+        preview = self._generate_startup_preview()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Startup dry run")
+        layout = QVBoxLayout(dialog)
+        view = QTextBrowser()
+        view.setReadOnly(True)
+        view.setMinimumSize(420, 240)
+        view.setPlainText("\n".join(preview))
+        layout.addWidget(view)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec_()
+
+    def _generate_startup_preview(self) -> List[str]:
+        if self._dbc is None:
+            return ["DBC not loaded"]
+        lines: List[str] = []
+        steps = self._prepare_startup_steps("normal", force=True)
+        if not steps:
+            return ["No startup steps defined"]
+        for step in steps:
+            try:
+                message = self._dbc.get_message_by_name(step.message)
+            except KeyError:
+                lines.append(f"{step.message}: message not found")
+                continue
+            try:
+                encoded = message.encode(step.payload, scaling=True, strict=True)
+            except (ValueError, KeyError) as exc:
+                lines.append(f"{step.message}: failed to encode ({exc})")
+                continue
+            data_hex = " ".join(f"{byte:02X}" for byte in encoded)
+            info = f"{step.message} (0x{message.frame_id:03X})"
+            if step.channel:
+                info += f" [{step.channel}]"
+            info += f" → {data_hex}"
+            lines.append(info)
+        return lines
+
+    def _suggest_startup_defaults(self) -> None:
+        if self._dbc is None:
+            return
+        if self._startup_config.globals or self._startup_config.per_output or self._startup_config.teardown:
+            return
+        suggestions_added = False
+        for message in getattr(self._dbc, "messages", []):
+            name_lower = message.name.lower()
+            if "main_switch" in name_lower or "supply" in name_lower:
+                fields: Dict[str, float] = {}
+                for signal in message.signals:
+                    if is_signal_writable(signal.name, message.name):
+                        fields[signal.name] = 0.0
+                if fields:
+                    self._startup_config.globals.append(StartupGlobalStep(message=message.name, fields=fields))
+                    suggestions_added = True
+                    break
+        for channel, profile in self._channel_profiles.items():
+            if not profile.write.message:
+                continue
+            if any(step.channel == channel for step in self._startup_config.per_output):
+                continue
+            message_name = profile.write.message
+            fields: Dict[str, float] = {}
+            for semantic, signal_name in profile.write.fields.items():
+                if not is_signal_writable(signal_name, message_name):
+                    continue
+                if semantic in {"enable", "select", "state"}:
+                    fields[signal_name] = 0.0
+                elif semantic in {"pwm", "setpoint"}:
+                    fields[signal_name] = 0.0
+                elif semantic == "direction":
+                    fields[signal_name] = 0.0
+            if fields:
+                self._startup_config.per_output.append(
+                    StartupPerOutputStep(channel=channel, message=message_name, fields=fields)
+                )
+                suggestions_added = True
+        if suggestions_added:
+            self._refresh_startup_tree()
+
 
     def _apply_log_visibility(self) -> None:
         if not hasattr(self, "logging_container"):
@@ -3975,6 +5028,8 @@ class MainWindow(QMainWindow):
                 return
         self._update_status_indicator(True)
         self.status_message_label.setText("Connected")
+        if self._startup_on_connect:
+            self._run_startup(mode="normal", force=not self._startup_only_on_change)
 
     def _disconnect_backend(self) -> None:
         if self.backend:
@@ -3991,6 +5046,7 @@ class MainWindow(QMainWindow):
     def _on_connection_changed(self, connected: bool, message: str) -> None:
         self._update_status_indicator(connected)
         self.status_message_label.setText(message)
+        self._update_startup_controls()
 
     def _on_status_updated(self) -> None:
         pass
@@ -4521,6 +5577,13 @@ class MainWindow(QMainWindow):
                 }
             },
             "dummy": {"simulations": dummy_profiles},
+            "startup": {
+                **self._startup_config.to_dict(),
+                "on_connect": bool(self._startup_on_connect),
+                "on_apply": bool(self._startup_on_apply),
+                "delay_ms": int(self._startup_delay_ms),
+                "only_on_change": bool(self._startup_only_on_change),
+            },
         }
         return payload
 
@@ -4581,7 +5644,7 @@ class MainWindow(QMainWindow):
         if version != 1:
             self._show_error("Unsupported setup version.")
             return
-        target_scopes = scopes or {"backend", "signals", "channels", "sequencer", "dummy"}
+        target_scopes = scopes or {"backend", "signals", "channels", "sequencer", "dummy", "startup"}
         if "backend" in target_scopes:
             self._apply_backend_section(payload.get("backend", {}))
         if "channels" in target_scopes:
@@ -4592,6 +5655,8 @@ class MainWindow(QMainWindow):
             self._apply_signals_setup(payload.get("signals", {}))
         if "dummy" in target_scopes:
             self._apply_dummy_setup(payload.get("dummy", {}))
+        if "startup" in target_scopes:
+            self._apply_startup_setup(payload.get("startup", {}))
         self._set_hardware_pending(True, "Setup loaded. Apply to hardware when ready.")
         self._save_settings()
 
@@ -4795,6 +5860,41 @@ class MainWindow(QMainWindow):
             except OSError as exc:
                 self._show_error(f"Failed to store dummy simulations: {exc}")
 
+    def _apply_startup_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        self._startup_config = StartupConfig.from_dict(data)
+        self._startup_last_payloads.clear()
+        if "on_connect" in data:
+            self._startup_on_connect = bool(data.get("on_connect", self._startup_on_connect))
+        if "on_apply" in data:
+            self._startup_on_apply = bool(data.get("on_apply", self._startup_on_apply))
+        if "delay_ms" in data:
+            try:
+                self._startup_delay_ms = max(0, int(data.get("delay_ms", self._startup_delay_ms)))
+            except (TypeError, ValueError):
+                self._startup_delay_ms = 0
+        if "only_on_change" in data:
+            self._startup_only_on_change = bool(data.get("only_on_change", self._startup_only_on_change))
+        if hasattr(self, "startup_on_connect_check"):
+            self.startup_on_connect_check.blockSignals(True)
+            self.startup_on_connect_check.setChecked(self._startup_on_connect)
+            self.startup_on_connect_check.blockSignals(False)
+        if hasattr(self, "startup_on_apply_check"):
+            self.startup_on_apply_check.blockSignals(True)
+            self.startup_on_apply_check.setChecked(self._startup_on_apply)
+            self.startup_on_apply_check.blockSignals(False)
+        if hasattr(self, "startup_only_change_check"):
+            self.startup_only_change_check.blockSignals(True)
+            self.startup_only_change_check.setChecked(self._startup_only_on_change)
+            self.startup_only_change_check.blockSignals(False)
+        if hasattr(self, "startup_delay_spin"):
+            self.startup_delay_spin.blockSignals(True)
+            self.startup_delay_spin.setValue(int(self._startup_delay_ms))
+            self.startup_delay_spin.blockSignals(False)
+        self._refresh_startup_tree()
+        self._validate_startup_config()
+
     def _save_as_default(self) -> None:
         ensure_directories()
         payload = self._collect_setup_payload()
@@ -4834,7 +5934,7 @@ class MainWindow(QMainWindow):
         if not payload:
             payload = copy.deepcopy(FACTORY_DEFAULT_SETUP)
         scope_map = {
-            "all": {"backend", "signals", "channels", "sequencer", "dummy"},
+            "all": {"backend", "signals", "channels", "sequencer", "dummy", "startup"},
             "signals": {"signals"},
             "channels": {"channels"},
             "sequencer": {"sequencer"},
@@ -4898,6 +5998,28 @@ class MainWindow(QMainWindow):
             except BackendError:
                 continue
         self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+
+    def _load_startup_defaults(self) -> None:
+        ensure_directories()
+        config_data: Optional[dict] = None
+        if os.path.exists(DEFAULT_SETUP_PATH):
+            try:
+                with open(DEFAULT_SETUP_PATH, "r", encoding="utf-8") as handle:
+                    stored = json.load(handle)
+                if isinstance(stored, dict):
+                    section = stored.get("startup")
+                    if isinstance(section, dict):
+                        config_data = section
+            except (OSError, json.JSONDecodeError):
+                config_data = None
+        if config_data is None:
+            fallback = FACTORY_DEFAULT_SETUP.get("startup", {})
+            if isinstance(fallback, dict):
+                config_data = fallback
+            else:
+                config_data = {"version": 1, "globals": [], "per_output": [], "teardown": []}
+        self._startup_config = StartupConfig.from_dict(config_data)
+        self._startup_last_payloads.clear()
 
     def _validate_channel_profiles(self) -> None:
         if not self._dbc:
@@ -5132,7 +6254,11 @@ class MainWindow(QMainWindow):
             self._save_dummy_profiles()
         if checkbox.isChecked():
             self._all_outputs_off()
-        self._set_hardware_pending(False, "Setup applied to hardware.")
+        if self._startup_on_apply:
+            self._run_startup(mode="normal", force=not self._startup_only_on_change)
+            self._set_hardware_pending(False, "Startup sequence triggered.")
+        else:
+            self._set_hardware_pending(False, "Setup applied to hardware.")
 
     def _update_status_indicator(self, connected: bool) -> None:
         color = "green" if connected else "red"
@@ -5156,7 +6282,10 @@ class MainWindow(QMainWindow):
             card.set_sequence_running(False)
 
     def _emergency_stop(self) -> None:
-        self._all_outputs_off()
+        if self._startup_config.teardown:
+            self._run_startup(mode="teardown", force=True)
+        else:
+            self._all_outputs_off()
         if self.logger.is_running():
             self.logger.stop()
             self.logging_button.setText("Start Logging")
@@ -5193,6 +6322,8 @@ class MainWindow(QMainWindow):
             self.backend.set_channel_profiles(self._channel_profiles)
             if isinstance(self.backend, DummyBackend):
                 self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+        self._suggest_startup_defaults()
+        self._validate_startup_config()
         self._save_settings()
 
     def _update_dummy_tab_visibility(self) -> None:
@@ -5298,6 +6429,19 @@ class MainWindow(QMainWindow):
         if preset_key not in PRESETS:
             preset_key = "excel_de"
         self._csv_preset_key = preset_key
+        self._startup_on_connect = self._to_bool(
+            self._qt_settings.value("startup/on_connect", self._startup_on_connect), True
+        )
+        self._startup_on_apply = self._to_bool(
+            self._qt_settings.value("startup/on_apply", self._startup_on_apply), True
+        )
+        try:
+            self._startup_delay_ms = int(self._qt_settings.value("startup/delay_ms", self._startup_delay_ms) or 0)
+        except (TypeError, ValueError):
+            self._startup_delay_ms = 0
+        self._startup_only_on_change = self._to_bool(
+            self._qt_settings.value("startup/only_on_change", self._startup_only_on_change), False
+        )
         sequences_data = self._qt_settings.value("channel_sequences", {})
         if isinstance(sequences_data, dict):
             for key, value in sequences_data.items():
@@ -5306,6 +6450,7 @@ class MainWindow(QMainWindow):
                         self._sequencer_configs[str(key)] = ChannelConfig.from_dict(value)
                     except Exception:
                         continue
+        self._load_startup_defaults()
 
     def _save_settings(self) -> None:
         self._qt_settings.setValue("mode", self.backend_name)
@@ -5335,6 +6480,10 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("toolbar_visible", self._toolbar_visible)
         sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
         self._qt_settings.setValue("channel_sequences", sequence_payload)
+        self._qt_settings.setValue("startup/on_connect", self._startup_on_connect)
+        self._qt_settings.setValue("startup/on_apply", self._startup_on_apply)
+        self._qt_settings.setValue("startup/delay_ms", int(self._startup_delay_ms))
+        self._qt_settings.setValue("startup/only_on_change", self._startup_only_on_change)
 
     def closeEvent(self, event) -> None:
         self._save_settings()
