@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import datetime
 import math
 import os
@@ -21,6 +22,7 @@ import can
 import cantools
 from cantools.database import errors as cantools_errors
 import yaml
+import pandas as pd
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
 import pyqtgraph as pg
 if pg.Qt.QT_LIB != "PyQt5":
@@ -107,6 +109,63 @@ FACTORY_DEFAULT_SETUP = {
     "sequencer": {"per_channel": {}},
     "dummy": {"simulations": {}},
 }
+
+
+PRESETS = {
+    "excel_de": {"sep": ";", "decimal": ",", "encoding": "utf-8-sig"},
+    "generic_en": {"sep": ",", "decimal": ".", "encoding": "utf-8"},
+}
+
+PRESET_LABELS = {
+    "excel_de": "Excel (DE)",
+    "generic_en": "Generic (EN)",
+}
+
+
+def get_csv_opts() -> dict:
+    settings = QSettings("OpenAI", "ECUControl")
+    key = str(settings.value("csv/preset", "excel_de"))
+    if key not in PRESETS:
+        key = "excel_de"
+    return PRESETS[key]
+
+
+def get_csv_preset_label(key: str) -> str:
+    return PRESET_LABELS.get(key, PRESET_LABELS["excel_de"])
+
+
+def write_csv(df: pd.DataFrame, path: str) -> None:
+    opts = get_csv_opts()
+    export = df.copy()
+    datetime_columns = export.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns
+    for column in datetime_columns:
+        export[column] = export[column].dt.strftime("%Y-%m-%d %H:%M:%S")
+    export.to_csv(
+        path,
+        index=False,
+        sep=opts["sep"],
+        decimal=opts["decimal"],
+        encoding=opts["encoding"],
+        quoting=csv.QUOTE_MINIMAL,
+    )
+
+
+def read_csv(path: str) -> pd.DataFrame:
+    opts = get_csv_opts()
+    frame = pd.read_csv(path, sep=opts["sep"], decimal=opts["decimal"], encoding=opts["encoding"])
+    object_columns = list(frame.select_dtypes(include=["object"]).columns)
+    if object_columns:
+        decimal = opts["decimal"]
+        for column in object_columns:
+            series = frame[column]
+            if decimal != ".":
+                normalized = series.astype(str).str.replace(decimal, ".", regex=False)
+            else:
+                normalized = series
+            converted = pd.to_numeric(normalized, errors="coerce")
+            if converted.notna().any():
+                frame[column] = converted
+    return frame
 
 
 class CompactUIManager:
@@ -1493,6 +1552,8 @@ class Logger:
         self._started = False
         self._signal_names: List[str] = []
         self._last_error = ""
+        self._writer: Optional[csv.writer] = None
+        self._decimal = "."
 
     def start(self, path: str, signal_names: Iterable[str]) -> bool:
         self.stop()
@@ -1500,15 +1561,24 @@ class Logger:
             directory = os.path.dirname(path)
             if directory and not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
-            self._file = open(path, "w", encoding="utf-8")
+            opts = get_csv_opts()
+            self._decimal = opts.get("decimal", ".")
+            self._file = open(path, "w", encoding=opts.get("encoding", "utf-8"), newline="")
+            self._writer = csv.writer(
+                self._file,
+                delimiter=opts.get("sep", ","),
+                quoting=csv.QUOTE_MINIMAL,
+            )
         except OSError as exc:
             self._file = None
+            self._writer = None
             self._last_error = str(exc)
             return False
         self._signal_names = list(signal_names)
         header = ["timestamp"] + self._signal_names
-        self._file.write(",".join(header) + "\n")
-        self._file.flush()
+        if self._writer is not None:
+            self._writer.writerow(header)
+            self._file.flush()
         self._path = path
         self._started = True
         self._last_error = ""
@@ -1518,13 +1588,24 @@ class Logger:
         if self._file is not None:
             self._file.close()
         self._file = None
+        self._writer = None
         self._started = False
 
     def log_row(self, timestamp: str, values: Dict[str, float]) -> None:
-        if not self._started or self._file is None:
+        if not self._started or self._file is None or self._writer is None:
             return
-        ordered = [timestamp] + [f"{values.get(name, 0.0):.6f}" for name in self._signal_names]
-        self._file.write(",".join(ordered) + "\n")
+        ordered: List[str] = [timestamp]
+        for name in self._signal_names:
+            value = values.get(name, 0.0)
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            formatted = f"{numeric:.6f}"
+            if self._decimal != ".":
+                formatted = formatted.replace(".", self._decimal)
+            ordered.append(formatted)
+        self._writer.writerow(ordered)
 
     def is_running(self) -> bool:
         return self._started
@@ -3331,6 +3412,7 @@ class MainWindow(QMainWindow):
         self._signals_log_visible = True
         self._signals_log_height = 200
         self._toolbar_visible = True
+        self._csv_preset_key = "excel_de"
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -3348,6 +3430,8 @@ class MainWindow(QMainWindow):
         status_bar = QStatusBar()
         status_bar.addWidget(self.status_indicator)
         status_bar.addWidget(self.status_message_label, 1)
+        self.csv_preset_status_label = QLabel()
+        status_bar.addPermanentWidget(self.csv_preset_status_label)
         self.setStatusBar(status_bar)
         self.dashboard_bar = QToolBar("Dashboard", self)
         self.dashboard_bar.setMovable(False)
@@ -3364,6 +3448,7 @@ class MainWindow(QMainWindow):
         self._update_dummy_tab_visibility()
         if self._compact_ui_enabled:
             self._compact_manager.apply(self)
+        self._update_csv_status_label()
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
@@ -3477,6 +3562,23 @@ class MainWindow(QMainWindow):
         self.show_dummy_action.setChecked(self._show_dummy_advanced)
         self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
         self.dashboard_bar.addAction(self.show_dummy_action)
+        csv_widget = QWidget()
+        csv_layout = QHBoxLayout(csv_widget)
+        csv_layout.setContentsMargins(0, 0, 0, 0)
+        csv_layout.setSpacing(4)
+        csv_layout.addWidget(QLabel("CSV"))
+        self.csv_preset_combo = QComboBox()
+        self.csv_preset_combo.addItem("Excel (DE)", "excel_de")
+        self.csv_preset_combo.addItem("Generic (EN)", "generic_en")
+        index = max(0, self.csv_preset_combo.findData(self._csv_preset_key))
+        self.csv_preset_combo.blockSignals(True)
+        self.csv_preset_combo.setCurrentIndex(index)
+        self.csv_preset_combo.blockSignals(False)
+        self.csv_preset_combo.currentIndexChanged.connect(self._on_csv_preset_changed)
+        csv_layout.addWidget(self.csv_preset_combo)
+        csv_action = QWidgetAction(self.dashboard_bar)
+        csv_action.setDefaultWidget(csv_widget)
+        self.dashboard_bar.addAction(csv_action)
         self.dashboard_bar.addAction(self.show_log_action)
     def _build_channels_tab(self) -> None:
         widget = QWidget()
@@ -5036,6 +5138,10 @@ class MainWindow(QMainWindow):
         color = "green" if connected else "red"
         self.status_indicator.setStyleSheet(f"color: {color}; font-size: 16pt;")
 
+    def _update_csv_status_label(self) -> None:
+        if hasattr(self, "csv_preset_status_label"):
+            self.csv_preset_status_label.setText(f"CSV: {get_csv_preset_label(self._csv_preset_key)}")
+
     def _show_error(self, message: str) -> None:
         self.status_message_label.setText(message)
         QMessageBox.critical(self, "Error", message)
@@ -5132,6 +5238,22 @@ class MainWindow(QMainWindow):
         if hasattr(self, "logging_rate_spin"):
             self._save_settings()
 
+    def _on_csv_preset_changed(self) -> None:
+        if not hasattr(self, "csv_preset_combo"):
+            return
+        key = self.csv_preset_combo.currentData()
+        if not isinstance(key, str):
+            return
+        if key not in PRESETS:
+            key = "excel_de"
+        if key == self._csv_preset_key:
+            return
+        self._csv_preset_key = key
+        self._qt_settings.setValue("csv/preset", self._csv_preset_key)
+        self._update_csv_status_label()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
     def _on_toolbar_visibility_changed(self, visible: bool) -> None:
         self._toolbar_visible = visible
         if hasattr(self, "logging_rate_spin"):
@@ -5166,6 +5288,16 @@ class MainWindow(QMainWindow):
         )
         self._signals_log_height = int(self._qt_settings.value("signals_log_height", self._signals_log_height) or 200)
         self._toolbar_visible = self._to_bool(self._qt_settings.value("toolbar_visible", self._toolbar_visible), True)
+        preset_value = self._qt_settings.value("csv/preset", self._csv_preset_key)
+        if isinstance(preset_value, str):
+            preset_key = preset_value
+        elif preset_value is None:
+            preset_key = self._csv_preset_key
+        else:
+            preset_key = str(preset_value)
+        if preset_key not in PRESETS:
+            preset_key = "excel_de"
+        self._csv_preset_key = preset_key
         sequences_data = self._qt_settings.value("channel_sequences", {})
         if isinstance(sequences_data, dict):
             for key, value in sequences_data.items():
@@ -5198,6 +5330,7 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("channel_grid_cols", int(self._channel_grid_cols))
         self._qt_settings.setValue("channel_collapse", self._channel_collapse_state)
         self._qt_settings.setValue("signals_log_visible", self._signals_log_visible)
+        self._qt_settings.setValue("csv/preset", self._csv_preset_key)
         self._qt_settings.setValue("signals_log_height", int(self._signals_log_height))
         self._qt_settings.setValue("toolbar_visible", self._toolbar_visible)
         sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
