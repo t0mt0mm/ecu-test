@@ -850,6 +850,7 @@ class StartupStepDialog(QDialog):
         form = QFormLayout()
         self.message_combo = QComboBox()
         self.message_combo.setEditable(True)
+        self.message_combo.currentTextChanged.connect(self._on_message_changed)
         for name in sorted(self._signals_by_message.keys()):
             self.message_combo.addItem(name)
         form.addRow("Message", self.message_combo)
@@ -876,6 +877,7 @@ class StartupStepDialog(QDialog):
         self.field_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.field_table.verticalHeader().setVisible(False)
         self.field_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.field_table.setStyleSheet("QTableView::item { padding: 0px; }")
         layout.addWidget(self.field_table)
         field_buttons = QHBoxLayout()
         add_field = QToolButton()
@@ -897,16 +899,56 @@ class StartupStepDialog(QDialog):
         else:
             self._add_field_row()
 
+    def _signal_options(self, message_name: str) -> List[str]:
+        definitions = self._signals_by_message.get(message_name, [])
+        names: List[str] = []
+        for definition in definitions:
+            if is_signal_writable(definition.name, message_name):
+                names.append(definition.name)
+        return names
+
+    def _populate_field_combo(self, combo: QComboBox, selected: str = "") -> None:
+        message_name = self.message_combo.currentText().strip()
+        options = self._signal_options(message_name) if message_name else []
+        current = selected or combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        for name in options:
+            combo.addItem(name)
+        if current and current not in options:
+            combo.addItem(current)
+        if current:
+            combo.setCurrentText(current)
+        elif options:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
     def _add_field_row(self) -> None:
         row = self.field_table.rowCount()
         self.field_table.insertRow(row)
-        self.field_table.setItem(row, 0, QTableWidgetItem(""))
-        self.field_table.setItem(row, 1, QTableWidgetItem("0"))
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self._populate_field_combo(combo)
+        self.field_table.setCellWidget(row, 0, combo)
+        value_item = QTableWidgetItem("0")
+        self.field_table.setItem(row, 1, value_item)
+        header = self.field_table.verticalHeader()
+        combo_height = combo.sizeHint().height()
+        header.setMinimumSectionSize(combo_height)
+        header.setDefaultSectionSize(combo_height)
 
     def _remove_field_row(self) -> None:
         row = self.field_table.currentRow()
         if row >= 0:
             self.field_table.removeRow(row)
+
+    def _on_message_changed(self, _text: str) -> None:
+        for row in range(self.field_table.rowCount()):
+            widget = self.field_table.cellWidget(row, 0)
+            if isinstance(widget, QComboBox):
+                self._populate_field_combo(widget)
 
     def _populate_from_existing(self, existing: Any) -> None:
         if hasattr(existing, "message"):
@@ -925,12 +967,23 @@ class StartupStepDialog(QDialog):
             self.repeat_spin.setValue(int(getattr(existing, "repeat", 1)))
         if hasattr(existing, "dt_ms"):
             self.delay_spin.setValue(int(getattr(existing, "dt_ms", 0)))
-        for name, value in existing.fields.items():
-            row = self.field_table.rowCount()
-            self.field_table.insertRow(row)
-            self.field_table.setItem(row, 0, QTableWidgetItem(str(name)))
-            self.field_table.setItem(row, 1, QTableWidgetItem(str(value)))
-        if not existing.fields:
+        if existing.fields:
+            for name, value in existing.fields.items():
+                row = self.field_table.rowCount()
+                self.field_table.insertRow(row)
+                combo = QComboBox()
+                combo.setEditable(True)
+                combo.setInsertPolicy(QComboBox.NoInsert)
+                combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+                self.field_table.setCellWidget(row, 0, combo)
+                self._populate_field_combo(combo, str(name))
+                value_item = QTableWidgetItem(str(value))
+                self.field_table.setItem(row, 1, value_item)
+                header = self.field_table.verticalHeader()
+                combo_height = combo.sizeHint().height()
+                header.setMinimumSectionSize(combo_height)
+                header.setDefaultSectionSize(combo_height)
+        else:
             self._add_field_row()
 
     def accept(self) -> None:  # type: ignore[override]
@@ -940,11 +993,11 @@ class StartupStepDialog(QDialog):
             return
         fields: Dict[str, float] = {}
         for row in range(self.field_table.rowCount()):
-            signal_item = self.field_table.item(row, 0)
+            widget = self.field_table.cellWidget(row, 0)
             value_item = self.field_table.item(row, 1)
-            if signal_item is None or value_item is None:
+            if not isinstance(widget, QComboBox) or value_item is None:
                 continue
-            signal_name = signal_item.text().strip()
+            signal_name = widget.currentText().strip()
             if not signal_name:
                 continue
             try:
@@ -3940,6 +3993,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tab_widget)
         self._build_channels_tab()
         self._build_signals_tab()
+        self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
         if self._compact_ui_enabled:
@@ -4075,16 +4129,13 @@ class MainWindow(QMainWindow):
         csv_action = QWidgetAction(self.dashboard_bar)
         csv_action.setDefaultWidget(csv_widget)
         self.dashboard_bar.addAction(csv_action)
-        startup_action = QWidgetAction(self.dashboard_bar)
-        startup_action.setDefaultWidget(self._create_startup_toolbar_widget())
-        self.dashboard_bar.addAction(startup_action)
         self.dashboard_bar.addAction(self.show_log_action)
 
-    def _create_startup_toolbar_widget(self) -> QWidget:
+    def _build_startup_tab(self) -> None:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         toggle_layout = QHBoxLayout()
         toggle_layout.setContentsMargins(0, 0, 0, 0)
         toggle_layout.setSpacing(4)
@@ -4150,6 +4201,11 @@ class MainWindow(QMainWindow):
         self.startup_add_teardown_button.setAutoRaise(True)
         self.startup_add_teardown_button.clicked.connect(lambda: self._add_startup_step("teardown"))
         buttons_layout.addWidget(self.startup_add_teardown_button)
+        self.startup_duplicate_button = QToolButton()
+        self.startup_duplicate_button.setText("Duplicate")
+        self.startup_duplicate_button.setAutoRaise(True)
+        self.startup_duplicate_button.clicked.connect(self._duplicate_startup_step)
+        buttons_layout.addWidget(self.startup_duplicate_button)
         self.startup_edit_button = QToolButton()
         self.startup_edit_button.setText("Edit")
         self.startup_edit_button.setAutoRaise(True)
@@ -4165,7 +4221,8 @@ class MainWindow(QMainWindow):
         self._refresh_startup_tree()
         self._update_startup_status_badge()
         self._update_startup_controls()
-        return widget
+        self.startup_tab = widget
+        self.tab_widget.addTab(widget, "Startup")
     def _build_channels_tab(self) -> None:
         widget = QWidget()
         outer_layout = QVBoxLayout(widget)
@@ -4377,6 +4434,7 @@ class MainWindow(QMainWindow):
         allow_edit = selection is not None
         self.startup_edit_button.setEnabled(allow_edit)
         self.startup_remove_button.setEnabled(allow_edit)
+        self.startup_duplicate_button.setEnabled(allow_edit)
         has_steps = bool(
             self._startup_config.globals or self._startup_config.per_output or self._startup_config.teardown
         )
@@ -4464,6 +4522,24 @@ class MainWindow(QMainWindow):
             del self._startup_config.per_output[index]
         elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
             del self._startup_config.teardown[index]
+        else:
+            return
+        self._on_startup_config_changed()
+
+    def _duplicate_startup_step(self) -> None:
+        selection = self._selected_startup_step()
+        if not selection:
+            return
+        section, index = selection
+        if section == "global" and 0 <= index < len(self._startup_config.globals):
+            duplicate = copy.deepcopy(self._startup_config.globals[index])
+            self._startup_config.globals.insert(index + 1, duplicate)
+        elif section == "per_output" and 0 <= index < len(self._startup_config.per_output):
+            duplicate = copy.deepcopy(self._startup_config.per_output[index])
+            self._startup_config.per_output.insert(index + 1, duplicate)
+        elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
+            duplicate = copy.deepcopy(self._startup_config.teardown[index])
+            self._startup_config.teardown.insert(index + 1, duplicate)
         else:
             return
         self._on_startup_config_changed()
@@ -4752,8 +4828,62 @@ class MainWindow(QMainWindow):
         if self._startup_config.globals or self._startup_config.per_output or self._startup_config.teardown:
             return
         suggestions_added = False
-        for message in getattr(self._dbc, "messages", []):
+        messages = list(getattr(self._dbc, "messages", []))
+        message_by_name = {message.name: message for message in messages}
+
+        def add_global(message_name: str, fields: Dict[str, float]) -> bool:
+            if any(step.message == message_name for step in self._startup_config.globals):
+                return False
+            message = message_by_name.get(message_name)
+            if message is None:
+                return False
+            payload: Dict[str, float] = {}
+            available = {signal.name for signal in message.signals}
+            for field_name, value in fields.items():
+                if field_name in available and is_signal_writable(field_name, message_name):
+                    payload[field_name] = float(value)
+            if not payload:
+                return False
+            self._startup_config.globals.append(StartupGlobalStep(message=message_name, fields=payload))
+            return True
+
+        main_switch_added = add_global(
+            "QM_Main_switch_control",
+            {
+                "enable_sensor_supply": 1.0,
+                "enable_actuator_supply": 1.0,
+                "enable_ub3": 1.0,
+                "enable_ub2": 1.0,
+                "enable_ub1": 1.0,
+            },
+        )
+        high_side_defaults = {
+            "hs_out01_frequency": 20000.0,
+            "hs_out01_pwm_min": 0.0,
+            "hs_out01_pwm_max": 100.0,
+            "hs_out01_Kp": 0.0,
+            "hs_out01_Ki": 0.0,
+            "hs_out01_Kd": 0.0,
+            "hs_out02_frequency": 20000.0,
+            "hs_out02_pwm_min": 0.0,
+            "hs_out02_pwm_max": 100.0,
+            "hs_out02_Kp": 0.0,
+            "hs_out02_Ki": 0.0,
+            "hs_out02_Kd": 0.0,
+            "hs_out03_frequency": 20000.0,
+            "hs_out03_pwm_min": 0.0,
+            "hs_out03_pwm_max": 100.0,
+            "hs_out03_Kp": 0.0,
+            "hs_out03_Ki": 0.0,
+            "hs_out03_Kd": 0.0,
+        }
+        high_side_added = add_global("QM_High_side_output_init_01", high_side_defaults)
+        suggestions_added = main_switch_added or high_side_added
+
+        for message in messages:
             name_lower = message.name.lower()
+            if any(step.message == message.name for step in self._startup_config.globals):
+                continue
             if "main_switch" in name_lower or "supply" in name_lower:
                 fields: Dict[str, float] = {}
                 for signal in message.signals:
