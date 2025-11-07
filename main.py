@@ -1444,27 +1444,13 @@ def ensure_directories() -> None:
     os.makedirs(PROFILE_DIR, exist_ok=True)
 
 
-def _load_signal_whitelist(path: str) -> List[str]:
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle) or {}
-    except (OSError, yaml.YAMLError):
-        return []
-    values = data.get("writable_signals", [])
-    return [str(entry) for entry in values]
-
-
-WRITABLE_SIGNALS = set(_load_signal_whitelist(WHITELIST_PATH))
-
-
 def is_signal_writable(signal_name: str, message_name: str) -> bool:
-    if signal_name in WRITABLE_SIGNALS:
+    keywords = ("ctrl", "control", "init", "write", "cmd")
+    lower_message = message_name.lower()
+    if any(keyword in lower_message for keyword in keywords):
         return True
     lower_name = signal_name.lower()
-    lower_message = message_name.lower()
-    return "write" in lower_message or "cmd" in lower_message or "cmd" in lower_name
+    return any(keyword in lower_name for keyword in keywords)
 
 class _SignalSimulator:
     def __init__(self, config: SignalSimulationConfig) -> None:
