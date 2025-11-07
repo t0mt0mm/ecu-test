@@ -122,8 +122,11 @@ FACTORY_DEFAULT_SETUP = {
                     "enable_ub2": 1.0,
                     "enable_ub1": 1.0,
                 },
-            },
+            }
+        ],
+        "per_output": [
             {
+                "channel": "HS1",
                 "message": "QM_High_side_output_init_01",
                 "fields": {
                     "hs_out01_frequency": 20000.0,
@@ -146,8 +149,49 @@ FACTORY_DEFAULT_SETUP = {
                     "hs_out03_Kd": 0.0,
                 },
             },
+            {
+                "channel": "HS2",
+                "message": "QM_High_side_output_init_02",
+                "fields": {
+                    "hs_out04_frequency": 20000.0,
+                    "hs_out04_pwm_min": 0.0,
+                    "hs_out04_pwm_max": 100.0,
+                    "hs_out04_Kp": 0.0,
+                    "hs_out04_Ki": 0.0,
+                    "hs_out04_Kd": 0.0,
+                    "hs_out05_frequency": 20000.0,
+                    "hs_out05_pwm_min": 0.0,
+                    "hs_out05_pwm_max": 100.0,
+                    "hs_out05_Kp": 0.0,
+                    "hs_out05_Ki": 0.0,
+                    "hs_out05_Kd": 0.0,
+                    "hs_out06_frequency": 20000.0,
+                    "hs_out06_pwm_min": 0.0,
+                    "hs_out06_pwm_max": 100.0,
+                    "hs_out06_Kp": 0.0,
+                    "hs_out06_Ki": 0.0,
+                    "hs_out06_Kd": 0.0,
+                },
+            },
+            {
+                "channel": "HS3",
+                "message": "QM_High_side_output_init_03",
+                "fields": {
+                    "hs_out07_frequency": 20000.0,
+                    "hs_out07_pwm_min": 0.0,
+                    "hs_out07_pwm_max": 100.0,
+                    "hs_out07_Kp": 0.0,
+                    "hs_out07_Ki": 0.0,
+                    "hs_out07_Kd": 0.0,
+                    "hs_out08_frequency": 20000.0,
+                    "hs_out08_pwm_min": 0.0,
+                    "hs_out08_pwm_max": 100.0,
+                    "hs_out08_Kp": 0.0,
+                    "hs_out08_Ki": 0.0,
+                    "hs_out08_Kd": 0.0,
+                },
+            },
         ],
-        "per_output": [],
         "teardown": [],
     },
 }
@@ -3934,6 +3978,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ECU Control")
+        self.setDockOptions(self.dockOptions() | QMainWindow.AllowTabbedDocks)
+        self.setDockNestingEnabled(False)
         ensure_directories()
         self.backends = {
             DummyBackend.name: DummyBackend,
@@ -3967,8 +4013,9 @@ class MainWindow(QMainWindow):
         self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
         self._plot_assignments: Dict[str, Tuple[int, str]] = {}
         self._plot_counter = 0
-        self._max_plot_windows = 4
+        self._max_plot_windows = 8
         self._active_plot_id: Optional[int] = None
+        self._last_plot_dock: Optional[QDockWidget] = None
         self._suspend_plot_assignment = False
         self._hardware_apply_required = False
         self._compact_manager = CompactUIManager()
@@ -3981,6 +4028,8 @@ class MainWindow(QMainWindow):
         self._signals_log_height = 200
         self._toolbar_visible = True
         self._csv_preset_key = "excel_de"
+        self._show_startup_tab = False
+        self._startup_tab_index: int = -1
         self._startup_config = StartupConfig()
         self._startup_on_connect = True
         self._startup_on_apply = True
@@ -4066,6 +4115,12 @@ class MainWindow(QMainWindow):
         self.show_log_action.toggled.connect(self._toggle_log_visibility)
         view_menu.addAction(self.show_log_action)
 
+        self.show_startup_action = QAction("Startup", self)
+        self.show_startup_action.setCheckable(True)
+        self.show_startup_action.setChecked(self._show_startup_tab)
+        self.show_startup_action.toggled.connect(self._toggle_startup_tab_visibility)
+        view_menu.addAction(self.show_startup_action)
+
     def _build_dashboard_toolbar(self) -> None:
         self.dashboard_bar.clear()
         mode_widget = QWidget()
@@ -4143,23 +4198,6 @@ class MainWindow(QMainWindow):
         self.show_dummy_action.setChecked(self._show_dummy_advanced)
         self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
         self.dashboard_bar.addAction(self.show_dummy_action)
-        csv_widget = QWidget()
-        csv_layout = QHBoxLayout(csv_widget)
-        csv_layout.setContentsMargins(0, 0, 0, 0)
-        csv_layout.setSpacing(4)
-        csv_layout.addWidget(QLabel("CSV"))
-        self.csv_preset_combo = QComboBox()
-        self.csv_preset_combo.addItem("Excel (DE)", "excel_de")
-        self.csv_preset_combo.addItem("Generic (EN)", "generic_en")
-        index = max(0, self.csv_preset_combo.findData(self._csv_preset_key))
-        self.csv_preset_combo.blockSignals(True)
-        self.csv_preset_combo.setCurrentIndex(index)
-        self.csv_preset_combo.blockSignals(False)
-        self.csv_preset_combo.currentIndexChanged.connect(self._on_csv_preset_changed)
-        csv_layout.addWidget(self.csv_preset_combo)
-        csv_action = QWidgetAction(self.dashboard_bar)
-        csv_action.setDefaultWidget(csv_widget)
-        self.dashboard_bar.addAction(csv_action)
         self.dashboard_bar.addAction(self.show_log_action)
 
     def _build_startup_tab(self) -> None:
@@ -4253,7 +4291,15 @@ class MainWindow(QMainWindow):
         self._update_startup_status_badge()
         self._update_startup_controls()
         self.startup_tab = widget
-        self.tab_widget.addTab(widget, "Startup")
+        index = self.tab_widget.addTab(widget, "Startup")
+        self._startup_tab_index = index
+        if not self._show_startup_tab:
+            try:
+                self.tab_widget.setTabVisible(index, False)
+            except AttributeError:
+                widget.setVisible(False)
+        else:
+            self.tab_widget.setCurrentIndex(index)
     def _build_channels_tab(self) -> None:
         widget = QWidget()
         outer_layout = QVBoxLayout(widget)
@@ -4371,6 +4417,9 @@ class MainWindow(QMainWindow):
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
         self.signals_splitter.addWidget(top_widget)
         self.logging_container = QWidget()
+        self.logging_container.setMinimumWidth(180)
+        self.logging_container.setMaximumWidth(320)
+        self.logging_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         logging_layout = QFormLayout(self.logging_container)
         logging_layout.setContentsMargins(0, 0, 0, 0)
         logging_layout.setSpacing(4)
@@ -4385,6 +4434,22 @@ class MainWindow(QMainWindow):
         self.logging_rate_spin.setRange(1.0, 50.0)
         self.logging_rate_spin.setValue(float(self._qt_settings.value("log_rate", 10.0)))
         logging_layout.addRow("Rate (Hz)", self.logging_rate_spin)
+        csv_widget = QWidget()
+        csv_layout = QHBoxLayout(csv_widget)
+        csv_layout.setContentsMargins(0, 0, 0, 0)
+        csv_layout.setSpacing(4)
+        csv_layout.addWidget(QLabel("Preset"))
+        self.csv_preset_combo = QComboBox()
+        self.csv_preset_combo.addItem("Excel (DE)", "excel_de")
+        self.csv_preset_combo.addItem("Generic (EN)", "generic_en")
+        index = max(0, self.csv_preset_combo.findData(self._csv_preset_key))
+        self.csv_preset_combo.blockSignals(True)
+        self.csv_preset_combo.setCurrentIndex(index)
+        self.csv_preset_combo.blockSignals(False)
+        self.csv_preset_combo.currentIndexChanged.connect(self._on_csv_preset_changed)
+        csv_layout.addWidget(self.csv_preset_combo)
+        csv_layout.addStretch(1)
+        logging_layout.addRow("Export", csv_widget)
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.setSpacing(4)
@@ -4888,28 +4953,45 @@ class MainWindow(QMainWindow):
                 "enable_ub1": 1.0,
             },
         )
-        high_side_defaults = {
-            "hs_out01_frequency": 20000.0,
-            "hs_out01_pwm_min": 0.0,
-            "hs_out01_pwm_max": 100.0,
-            "hs_out01_Kp": 0.0,
-            "hs_out01_Ki": 0.0,
-            "hs_out01_Kd": 0.0,
-            "hs_out02_frequency": 20000.0,
-            "hs_out02_pwm_min": 0.0,
-            "hs_out02_pwm_max": 100.0,
-            "hs_out02_Kp": 0.0,
-            "hs_out02_Ki": 0.0,
-            "hs_out02_Kd": 0.0,
-            "hs_out03_frequency": 20000.0,
-            "hs_out03_pwm_min": 0.0,
-            "hs_out03_pwm_max": 100.0,
-            "hs_out03_Kp": 0.0,
-            "hs_out03_Ki": 0.0,
-            "hs_out03_Kd": 0.0,
-        }
-        high_side_added = add_global("QM_High_side_output_init_01", high_side_defaults)
-        suggestions_added = main_switch_added or high_side_added
+        def default_init_value(signal_name: str) -> float:
+            lowered = signal_name.lower()
+            if "frequency" in lowered:
+                return 20000.0
+            if "pwm_max" in lowered:
+                return 100.0
+            return 0.0
+
+        def add_per_output_step(channel_name: str, message_name: str) -> bool:
+            if any(
+                step.channel == channel_name and step.message == message_name
+                for step in self._startup_config.per_output
+            ):
+                return False
+            message = message_by_name.get(message_name)
+            if message is None:
+                return False
+            payload: Dict[str, float] = {}
+            for signal in message.signals:
+                if not is_signal_writable(signal.name, message_name):
+                    continue
+                payload[signal.name] = default_init_value(signal.name)
+            if not payload:
+                return False
+            self._startup_config.per_output.append(
+                StartupPerOutputStep(channel=channel_name, message=message_name, fields=payload)
+            )
+            return True
+
+        suggestions_added = main_switch_added
+        high_side_messages = [
+            ("HS1", "QM_High_side_output_init_01"),
+            ("HS2", "QM_High_side_output_init_02"),
+            ("HS3", "QM_High_side_output_init_03"),
+        ]
+        for channel_hint, message_name in high_side_messages:
+            target_channel = channel_hint if channel_hint in self._channel_profiles else message_name
+            if add_per_output_step(target_channel, message_name):
+                suggestions_added = True
 
         for message in messages:
             name_lower = message.name.lower()
@@ -4978,6 +5060,26 @@ class MainWindow(QMainWindow):
         if hasattr(self, "logging_rate_spin"):
             self._save_settings()
 
+    def _toggle_startup_tab_visibility(self, visible: bool) -> None:
+        self._show_startup_tab = visible
+        if hasattr(self, "show_startup_action"):
+            self.show_startup_action.blockSignals(True)
+            self.show_startup_action.setChecked(visible)
+            self.show_startup_action.blockSignals(False)
+        if hasattr(self, "tab_widget") and self._startup_tab_index >= 0:
+            try:
+                self.tab_widget.setTabVisible(self._startup_tab_index, visible)
+            except AttributeError:
+                if not visible:
+                    if self.tab_widget.currentIndex() == self._startup_tab_index:
+                        self.tab_widget.setCurrentIndex(0)
+                self.tab_widget.widget(self._startup_tab_index).setVisible(visible)
+            else:
+                if visible:
+                    self.tab_widget.setCurrentIndex(self._startup_tab_index)
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
     def _on_signals_splitter_moved(self, _pos: int, _index: int) -> None:
         sizes = self.signals_splitter.sizes()
         if len(sizes) > 1:
@@ -5004,10 +5106,20 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable
         )
         dock.closed.connect(self._on_plot_window_closed)
+        previous: Optional[QDockWidget] = None
+        if self._plot_windows:
+            if self._active_plot_id and self._active_plot_id in self._plot_windows:
+                previous = self._plot_windows[self._active_plot_id]
+            else:
+                previous = next(reversed(self._plot_windows.values()))
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        if previous is not None:
+            self.tabifyDockWidget(previous, dock)
         dock.show()
+        dock.raise_()
         self._plot_windows[identifier] = dock
         self._active_plot_id = identifier
+        self._last_plot_dock = dock
         return identifier
 
     def _close_all_plot_windows(self) -> None:
@@ -5020,6 +5132,8 @@ class MainWindow(QMainWindow):
         dock = self._plot_windows.pop(identifier, None)
         if dock:
             dock.deleteLater()
+            if self._last_plot_dock is dock:
+                self._last_plot_dock = next(reversed(self._plot_windows.values())) if self._plot_windows else None
         to_clear = [name for name, (win_id, _side) in self._plot_assignments.items() if win_id == identifier]
         for name in to_clear:
             self._plot_assignments.pop(name, None)
@@ -6317,7 +6431,7 @@ class MainWindow(QMainWindow):
         if not self.backend:
             return
         values = self.backend.read_signal_values(signals)
-        timestamp = datetime.datetime.now().isoformat()
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
         self.logger.log_row(timestamp, values)
 
     def _extract_command_value(self, profile: ChannelProfile, command: Dict[str, float]) -> Optional[float]:
@@ -6443,6 +6557,7 @@ class MainWindow(QMainWindow):
             card.set_sequence_running(False)
 
     def _emergency_stop(self) -> None:
+        self._send_emergency_disables()
         if self._startup_config.teardown:
             self._run_startup(mode="teardown", force=True)
         else:
@@ -6451,6 +6566,31 @@ class MainWindow(QMainWindow):
             self.logger.stop()
             self.logging_button.setText("Start Logging")
         self.status_message_label.setText("Emergency stop activated")
+
+    def _send_emergency_disables(self) -> None:
+        if not self.backend:
+            return
+        payloads: Dict[str, Dict[str, float]] = {}
+
+        def is_enable_field(name: str) -> bool:
+            lowered = name.lower()
+            return "enable" in lowered or lowered.endswith("_en")
+
+        for step in list(self._startup_config.globals) + list(self._startup_config.per_output):
+            message_fields = payloads.setdefault(step.message, {})
+            for name in step.fields:
+                if is_enable_field(name):
+                    message_fields[name] = 0.0
+
+        for message, fields in payloads.items():
+            if not fields:
+                continue
+            try:
+                self.backend.send_message_by_name(message, fields, force=True)
+                self._append_startup_log(f"Emergency disable {message}: {fields}")
+            except BackendError as exc:
+                self._append_startup_log(f"Emergency disable failed for {message}: {exc}")
+                self.status_message_label.setText(str(exc))
 
     def _browse_dbc(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select DBC", self.dbc_edit.text(), "DBC Files (*.dbc)")
@@ -6580,6 +6720,9 @@ class MainWindow(QMainWindow):
         )
         self._signals_log_height = int(self._qt_settings.value("signals_log_height", self._signals_log_height) or 200)
         self._toolbar_visible = self._to_bool(self._qt_settings.value("toolbar_visible", self._toolbar_visible), True)
+        self._show_startup_tab = self._to_bool(
+            self._qt_settings.value("ui/show_startup", self._show_startup_tab), False
+        )
         preset_value = self._qt_settings.value("csv/preset", self._csv_preset_key)
         if isinstance(preset_value, str):
             preset_key = preset_value
@@ -6639,6 +6782,7 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("csv/preset", self._csv_preset_key)
         self._qt_settings.setValue("signals_log_height", int(self._signals_log_height))
         self._qt_settings.setValue("toolbar_visible", self._toolbar_visible)
+        self._qt_settings.setValue("ui/show_startup", self._show_startup_tab)
         sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
         self._qt_settings.setValue("channel_sequences", sequence_payload)
         self._qt_settings.setValue("startup/on_connect", self._startup_on_connect)
