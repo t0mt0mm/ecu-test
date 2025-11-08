@@ -89,6 +89,7 @@ from PyQt5.QtWidgets import (
     QRadioButton,
     QMenu,
     QAction,
+    QStackedWidget,
 )
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -4078,8 +4079,17 @@ class MainWindow(QMainWindow):
         self.dashboard_bar.visibilityChanged.connect(self._on_toolbar_visibility_changed)
         self.dashboard_bar.setVisible(self._toolbar_visible)
         self._build_dashboard_toolbar()
+        self.central_stack = QStackedWidget()
+        self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._central_placeholder = QWidget()
+        self._central_placeholder.setMinimumSize(0, 0)
+        self._central_placeholder.setMaximumSize(0, 0)
+        self._central_placeholder.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.central_stack.addWidget(self._central_placeholder)
         self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
+        self.central_stack.addWidget(self.tab_widget)
+        self.central_stack.setCurrentWidget(self._central_placeholder)
+        self.setCentralWidget(self.central_stack)
         self._build_channels_tab()
         self._build_signals_tab()
         self._apply_default_dock_layout()
@@ -4088,6 +4098,7 @@ class MainWindow(QMainWindow):
         self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
+        self._update_central_stack_visibility()
         if self._compact_ui_enabled:
             self._compact_manager.apply(self)
         self._update_csv_status_label()
@@ -4447,12 +4458,12 @@ class MainWindow(QMainWindow):
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
         self.signals_splitter.addWidget(top_container)
         self.logging_container = QWidget()
-        self.logging_container.setMinimumWidth(180)
-        self.logging_container.setMaximumWidth(320)
         self.logging_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         logging_layout = QFormLayout(self.logging_container)
+        logging_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         logging_layout.setContentsMargins(0, 0, 0, 0)
         logging_layout.setSpacing(4)
+        logging_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.logging_mode_combo = QComboBox()
         self.logging_mode_combo.addItems(["Watchlist", "Manual"])
         logging_layout.addRow("Source", self.logging_mode_combo)
@@ -4526,6 +4537,35 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.channels_dock, self.signals_dock)
         self.channels_dock.raise_()
 
+    def _update_central_stack_visibility(self) -> None:
+        if (
+            not hasattr(self, "central_stack")
+            or not hasattr(self, "tab_widget")
+            or not hasattr(self, "_central_placeholder")
+        ):
+            return
+        visible = False
+        for index in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(index)
+            if widget is None:
+                continue
+            tab_visible = True
+            try:
+                tab_visible = self.tab_widget.isTabVisible(index)
+            except AttributeError:
+                tab_visible = not widget.isHidden()
+            if tab_visible and not widget.isHidden():
+                visible = True
+                break
+        target = self.tab_widget if visible else self._central_placeholder
+        if visible:
+            self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        else:
+            self.central_stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        if self.central_stack.currentWidget() is not target:
+            self.central_stack.setCurrentWidget(target)
+        self.central_stack.updateGeometry()
+
     def _restore_dock_layout(self) -> bool:
         if self._saved_dock_state is None:
             return False
@@ -4541,6 +4581,7 @@ class MainWindow(QMainWindow):
         self._qt_settings.remove("ui/dock_state")
         self._saved_dock_state = None
         self._apply_default_dock_layout()
+        self._update_central_stack_visibility()
 
     # Startup configuration
     def _refresh_startup_tree(self) -> None:
@@ -5141,6 +5182,7 @@ class MainWindow(QMainWindow):
             else:
                 if visible:
                     self.tab_widget.setCurrentIndex(self._startup_tab_index)
+        self._update_central_stack_visibility()
         if hasattr(self, "logging_rate_spin"):
             self._save_settings()
 
@@ -6704,6 +6746,7 @@ class MainWindow(QMainWindow):
             self.show_dummy_action.blockSignals(True)
             self.show_dummy_action.setChecked(self._show_dummy_advanced)
             self.show_dummy_action.blockSignals(False)
+        self._update_central_stack_visibility()
 
     @staticmethod
     def _to_bool(value: Any, default: bool = False) -> bool:
