@@ -16,6 +16,8 @@ from collections import deque
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*sipPyTypeDict.*")
 
 import json
 import can
@@ -4024,6 +4026,7 @@ class MainWindow(QMainWindow):
         status_bar.addPermanentWidget(self.csv_preset_status_label)
         self.setStatusBar(status_bar)
         self.dashboard_bar = QToolBar("Dashboard", self)
+        self.dashboard_bar.setObjectName("Toolbar_Dashboard") 
         self.dashboard_bar.setMovable(False)
         self.dashboard_bar.setIconSize(QSize(16, 16))
         self.addToolBar(Qt.TopToolBarArea, self.dashboard_bar)
@@ -4043,9 +4046,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_stack)
         self._build_channels_tab()
         self._build_signals_tab()
+        #self._apply_default_dock_layout()
+        #if not self._restore_dock_layout():
+        #    self._apply_default_dock_layout()
+        self._saved_dock_state = None   # zur Sicherheit
         self._apply_default_dock_layout()
-        if not self._restore_dock_layout():
-            self._apply_default_dock_layout()
         self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
@@ -4079,7 +4084,12 @@ class MainWindow(QMainWindow):
         self.show_log_action.setCheckable(True)
         self.show_log_action.setChecked(self._signals_log_visible)
         self.show_log_action.toggled.connect(self._toggle_log_visibility)
+        self.show_dummy_action = QAction("Dummy Advanced", self)
+        self.show_dummy_action.setCheckable(True)
+        self.show_dummy_action.setChecked(self._show_dummy_advanced)
+        self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
         view_menu.addAction(self.show_log_action)
+        view_menu.addAction(self.show_dummy_action)
 
         self.show_startup_action = QAction("Startup", self)
         self.show_startup_action.setCheckable(True)
@@ -4140,12 +4150,27 @@ class MainWindow(QMainWindow):
         self.bitrate_spin.setSingleStep(10_000)
         self.bitrate_spin.setValue(int(self._qt_settings.value("bitrate", 500_000)))
         self.bitrate_spin.setMaximumWidth(90)
-        bus_layout.addWidget(QLabel("Bus"))
-        bus_layout.addWidget(self.bustype_combo)
-        bus_layout.addWidget(QLabel("Ch"))
-        bus_layout.addWidget(self.channel_edit)
-        bus_layout.addWidget(QLabel("Bitrate"))
-        bus_layout.addWidget(self.bitrate_spin)
+        bus_layout.setContentsMargins(0, 0, 0, 0)
+        bus_layout.setSpacing(6)
+
+        def add_pair(layout, text, widget):
+            w = QWidget()
+            row = QHBoxLayout(w)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            lab = QLabel(text + ":")
+            lab.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            row.addWidget(lab)
+            row.addWidget(widget)
+            layout.addWidget(w)
+
+        add_pair(bus_layout, "Bus",     self.bustype_combo)
+        add_pair(bus_layout, "Ch",      self.channel_edit)
+        # direkt nach dem Erzeugen von self.channel_edit:
+        self.channel_edit.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.channel_edit.setMaximumWidth(70)  # oder passend z.B. 60–90 px
+
+        add_pair(bus_layout, "Bitrate", self.bitrate_spin)
         bus_action = QWidgetAction(self.dashboard_bar)
         bus_action.setDefaultWidget(bus_widget)
         self.dashboard_bar.addAction(bus_action)
@@ -4168,8 +4193,8 @@ class MainWindow(QMainWindow):
         self.show_dummy_action.setCheckable(True)
         self.show_dummy_action.setChecked(self._show_dummy_advanced)
         self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
-        self.dashboard_bar.addAction(self.show_dummy_action)
-        self.dashboard_bar.addAction(self.show_log_action)
+        #self.dashboard_bar.addAction(self.show_dummy_action)
+        #self.dashboard_bar.addAction(self.show_log_action)
 
     def _build_startup_tab(self) -> None:
         widget = QWidget()
@@ -4475,10 +4500,16 @@ class MainWindow(QMainWindow):
         for dock in (self.channels_dock, self.signals_dock):
             dock.setFloating(False)
             dock.show()
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.channels_dock)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
-        self.tabifyDockWidget(self.channels_dock, self.signals_dock)
-        self.channels_dock.raise_()
+           # … und Signals daneben horizontal splitten (statt tabify)
+        self.splitDockWidget(self.signals_dock, self.channels_dock, Qt.Horizontal)
+        try:
+            self.resizeDocks([self.signals_dock, self.channels_dock], [1000, 1000], Qt.Horizontal)
+        except Exception:
+            pass
+        #self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
+        #self.tabifyDockWidget(self.channels_dock, self.signals_dock)
+        #self.channels_dock.raise_()
 
     def _update_central_stack_visibility(self) -> None:
         if (
