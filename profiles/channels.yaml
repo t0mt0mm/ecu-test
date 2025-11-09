@@ -32,9 +32,37 @@
     tau: 0.5
     current_gain: 8.0
     noise: 0.1
-- name: AI1
-  type: AI_V
-  status:
-    message: QM_Analog_Input_status
+- name: HS3
+  type: HighSide
+  write:
+    message: QM_High_side_output_write
     fields:
-      an_pin_01_voltage: value
+      hs_out03_select: select
+      hs_out03_mode: mode
+      hs_out03_value_pwm: pwm
+  status:
+    message: QM_High_side_output_status
+    fields:
+      hs_out03_current: current
+      hs_out03_pwm: pwm_feedback
+  sim:
+    tau: 0.5
+    current_gain: 8.0
+    noise: 0.1
+- name: HS4
+  type: HighSide
+  write:
+    message: QM_High_side_output_write
+    fields:
+      hs_out04_select: select
+      hs_out04_mode: mode
+      hs_out04_value_pwm: pwm
+  status:
+    message: QM_High_side_output_status
+    fields:
+      hs_out04_current: current
+      hs_out04_pwm: pwm_feedback
+  sim:
+    tau: 0.5
+    current_gain: 8.0
+    noise: 0.1

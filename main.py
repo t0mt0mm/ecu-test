@@ -44,7 +44,7 @@ from PyQt5.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -91,6 +91,50 @@ from PyQt5.QtWidgets import (
     QAction,
     QStackedWidget,
 )
+
+APP_QSS = """
+/* Global */
+QMainWindow, QDialog, QWidget { background: #ffffff; color: #1f1f1f; }
+QAbstractScrollArea,
+QAbstractScrollArea > QWidget#qt_scrollarea_viewport { background: #ffffff; }
+
+/* Tables / Trees */
+QHeaderView::section { background: #f5f5f7; padding: 6px; border: 1px solid #e6e6e6; }
+QTableView, QTreeView {
+    background: #ffffff;
+    alternate-background-color: #f7f7f9;
+    gridline-color: #e0e0e0;
+    selection-background-color: #e6f2ff;
+    selection-color: #1f1f1f;
+}
+
+/* Inputs */
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit {
+    background: #ffffff; border: 1px solid #d0d0d0; border-radius: 4px; padding: 4px 6px;
+}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
+    border-color: #4096ff;
+}
+
+/* Buttons */
+QPushButton { background: #f7f7f8; border: 1px solid #d0d0d0; border-radius: 6px; padding: 6px 10px; }
+QPushButton:hover { background: #fbfbfc; }
+QPushButton:pressed { background: #ededee; }
+QPushButton:disabled { color: #9aa0a6; background: #f3f4f6; border-color: #e5e7eb; }
+
+/* Gruppen / Tabs / Docks */
+QGroupBox { margin-top: 12px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; top: -6px; padding: 0 4px; background: transparent; }
+QTabWidget::pane { border: 1px solid #e0e0e0; }
+QTabBar::tab { background: #eef1f5; border: 1px solid #e0e0e0; padding: 6px 10px; margin: 1px; }
+QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
+QMainWindow::separator { background: #d0d0d0; width: 2px; height: 2px; }
+QDockWidget { border: 1px solid #d0d0d0; }
+QDockWidget::title { padding: 4px 6px; }
+QStatusBar, QToolBar, QMenuBar { background: #ffffff; }
+"""
+
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
@@ -199,6 +243,7 @@ FACTORY_DEFAULT_SETUP = {
 }
 
 
+
 PRESETS = {
     "excel_de": {"sep": ";", "decimal": ",", "encoding": "utf-8-sig"},
     "generic_en": {"sep": ",", "decimal": ".", "encoding": "utf-8"},
@@ -268,101 +313,6 @@ def read_csv(path: str) -> pd.DataFrame:
                 frame[column] = converted
     return frame
 
-
-class CompactUIManager:
-    """Apply and restore compact styling across the application."""
-
-    STYLE_SHEET = """
-    QWidget { font-size: 11px; }
-    QToolButton { padding: 2px; }
-    QGroupBox { margin-top: 6px; }
-    QGroupBox::title { subcontrol-origin: margin; left: 6px; font-weight: 600; font-size: 10px; }
-    QTabBar::tab { min-height: 18px; padding: 3px 6px; }
-    QTableView, QTreeView { gridline-color: palette(mid); font-size: 10px; }
-    QHeaderView::section { padding: 3px; font-size: 10px; }
-    QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit { min-height: 18px; padding: 1px 4px; font-size: 10px; }
-    """
-
-    def __init__(self) -> None:
-        self._applied = False
-        self._original_font = None
-        self._original_style_sheet = ""
-        self._original_icon_size = QSize()
-
-    def apply(self, window: QMainWindow) -> None:
-        app = QApplication.instance()
-        if not app or self._applied:
-            return
-        self._applied = True
-        self._original_font = app.font()
-        self._original_style_sheet = app.styleSheet()
-        self._original_icon_size = window.iconSize()
-        app.setStyle("Fusion")
-        font = app.font()
-        if font.pointSize() > 0:
-            font.setPointSize(max(6, font.pointSize() - 1))
-        app.setFont(font)
-        window.setIconSize(QSize(16, 16))
-        app.setStyleSheet(self.STYLE_SHEET)
-        self._apply_layouts(window)
-
-    def restore(self, window: QMainWindow) -> None:
-        app = QApplication.instance()
-        if not app or not self._applied:
-            return
-        self._applied = False
-        if self._original_font is not None:
-            app.setFont(self._original_font)
-        app.setStyleSheet(self._original_style_sheet)
-        if self._original_icon_size.isValid():
-            window.setIconSize(self._original_icon_size)
-        self._restore_layouts(window)
-
-    def _apply_layouts(self, widget: QWidget) -> None:
-        layout = widget.layout()
-        if layout:
-            self._apply_layout(layout)
-
-    def _apply_layout(self, layout) -> None:
-        if layout.property("_compact_original_margins") is None:
-            margins = layout.contentsMargins()
-            layout.setProperty(
-                "_compact_original_margins",
-                (margins.left(), margins.top(), margins.right(), margins.bottom()),
-            )
-        if layout.property("_compact_original_spacing") is None:
-            layout.setProperty("_compact_original_spacing", layout.spacing())
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        for index in range(layout.count()):
-            item = layout.itemAt(index)
-            child_layout = item.layout()
-            if child_layout:
-                self._apply_layout(child_layout)
-            child_widget = item.widget()
-            if child_widget and child_widget.layout():
-                self._apply_layout(child_widget.layout())
-
-    def _restore_layouts(self, widget: QWidget) -> None:
-        layout = widget.layout()
-        if layout:
-            self._restore_layout(layout)
-
-    def _restore_layout(self, layout) -> None:
-        margins = layout.property("_compact_original_margins")
-        if isinstance(margins, tuple) and len(margins) == 4:
-            layout.setContentsMargins(*margins)
-        spacing = layout.property("_compact_original_spacing")
-        if isinstance(spacing, int) and spacing >= -1:
-            layout.setSpacing(spacing)
-        for index in range(layout.count()):
-            item = layout.itemAt(index)
-            child_layout = item.layout()
-            if child_layout:
-                self._restore_layout(child_layout)
-            child_widget = item.widget()
-            if child_widget and child_widget.layout():
-                self._restore_layout(child_widget.layout())
 
 
 class CollapsibleSection(QWidget):
@@ -963,6 +913,7 @@ class StartupStepDialog(QDialog):
         self.field_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.field_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.field_table.verticalHeader().setVisible(False)
+        self.field_table.setAlternatingRowColors(True)
         self.field_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.field_table.setStyleSheet("QTableView::item { padding: 0px; }")
         layout.addWidget(self.field_table)
@@ -2375,6 +2326,7 @@ class WatchlistWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
         button_layout = QHBoxLayout()
         remove_button = QPushButton("Remove Selected")
@@ -3033,6 +2985,7 @@ class ChannelCardWidget(QWidget):
         self.sequence_table.verticalHeader().setMinimumSectionSize(control_height)
         self.sequence_table.verticalHeader().setDefaultSectionSize(control_height)
         self.sequence_table.setStyleSheet("QTableView::item { padding: 0px; }")
+        self.sequence_table.setAlternatingRowColors(True)  # ← HIER
         self.sequence_add = QToolButton()
         self.sequence_add.setText("Add")
         self.sequence_delete = QToolButton()
@@ -4028,8 +3981,6 @@ class MainWindow(QMainWindow):
         self.channels_dock: Optional[QDockWidget] = None
         self.signals_dock: Optional[QDockWidget] = None
         self._saved_dock_state: Optional[QByteArray] = None
-        self._compact_manager = CompactUIManager()
-        self._compact_ui_enabled = False
         self._channel_grid_cols = 2
         self._channel_columns: List[QVBoxLayout] = []
         self._channel_columns_layout: Optional[QHBoxLayout] = None
@@ -4099,8 +4050,6 @@ class MainWindow(QMainWindow):
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
         self._update_central_stack_visibility()
-        if self._compact_ui_enabled:
-            self._compact_manager.apply(self)
         self._update_csv_status_label()
 
     def _build_menu(self) -> None:
@@ -4126,12 +4075,6 @@ class MainWindow(QMainWindow):
         self._update_apply_action_state()
 
         view_menu = menu_bar.addMenu("View")
-        self.compact_action = QAction("Compact UI", self)
-        self.compact_action.setCheckable(True)
-        self.compact_action.setChecked(self._compact_ui_enabled)
-        self.compact_action.toggled.connect(self._on_compact_toggle)
-        view_menu.addAction(self.compact_action)
-
         self.show_log_action = QAction("Show Log", self)
         self.show_log_action.setCheckable(True)
         self.show_log_action.setChecked(self._signals_log_visible)
@@ -6768,14 +6711,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "logging_rate_spin"):
             self._save_settings()
 
-    def _on_compact_toggle(self, enabled: bool) -> None:
-        self._compact_ui_enabled = enabled
-        if enabled:
-            self._compact_manager.apply(self)
-        else:
-            self._compact_manager.restore(self)
-        if hasattr(self, "logging_rate_spin"):
-            self._save_settings()
 
     def _on_csv_preset_changed(self) -> None:
         if not hasattr(self, "csv_preset_combo"):
@@ -6813,7 +6748,6 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = self._to_bool(self._qt_settings.value("multi_plot_paused", False), False)
         self._show_dummy_advanced = self._to_bool(self._qt_settings.value("show_dummy_tab", False), False)
         self._multi_plot_enabled = self._to_bool(self._qt_settings.value("multi_plot_enabled", False), False)
-        self._compact_ui_enabled = self._to_bool(self._qt_settings.value("compact_ui", self._compact_ui_enabled), False)
         self._channel_grid_cols = int(self._qt_settings.value("channel_grid_cols", self._channel_grid_cols) or 2)
         collapse_data = self._qt_settings.value("channel_collapse", {})
         if isinstance(collapse_data, dict):
@@ -6892,7 +6826,6 @@ class MainWindow(QMainWindow):
             sizes = self.signals_splitter.sizes()
             if len(sizes) > 1:
                 self._signals_log_height = sizes[1]
-        self._qt_settings.setValue("compact_ui", self._compact_ui_enabled)
         self._qt_settings.setValue("channel_grid_cols", int(self._channel_grid_cols))
         self._qt_settings.setValue("channel_collapse", self._channel_collapse_state)
         self._qt_settings.setValue("signals_log_visible", self._signals_log_visible)
@@ -6915,6 +6848,8 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")          # optional, sorgt für konsistente Metrics
+    app.setStyleSheet(APP_QSS)      # QSS aktivieren
     window = MainWindow()
     if geometry := window._qt_settings.value("geometry"):
         if isinstance(geometry, bytes):
