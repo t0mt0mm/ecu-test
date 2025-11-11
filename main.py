@@ -6,6 +6,7 @@ import copy
 import csv
 import datetime
 import math
+import numpy as np
 import os
 import random
 import re
@@ -2452,6 +2453,28 @@ class MultiAxisPlotDock(QDockWidget):
         self.right_view.setXLink(self.plot_item.vb)
         self.plot_item.vb.sigResized.connect(self._update_views)
         self._update_views()
+        self._measurement_cursors_enabled = False
+        self._cursor_lines: Dict[str, pg.InfiniteLine] = {}
+        self._cursor_labels: Dict[str, pg.InfLineLabel] = {}
+        self._hud_item = pg.TextItem("", anchor=(1, 0))
+        self._hud_item.setZValue(100)
+        self.plot_item.addItem(self._hud_item, ignoreBounds=True)
+        self._hud_item.hide()
+        self._updating_cursors = False
+        self._active_curve: Optional[pg.PlotDataItem] = None
+        self.plot_item.vb.sigRangeChanged.connect(self._update_hud_position)
+        self._cursor_menu_action: Optional[QAction] = None
+        self._swap_cursor_action: Optional[QAction] = None
+        if hasattr(self.plot_item, "vb") and hasattr(self.plot_item.vb, "menu"):
+            menu = self.plot_item.vb.menu
+            self._cursor_menu_action = QAction("Measurement cursors", menu)
+            self._cursor_menu_action.setCheckable(True)
+            self._cursor_menu_action.toggled.connect(self._on_cursor_menu_toggled)
+            menu.addAction(self._cursor_menu_action)
+            self._swap_cursor_action = QAction("Swap A/B", menu)
+            self._swap_cursor_action.triggered.connect(self._swap_cursors)
+            self._swap_cursor_action.setEnabled(False)
+            menu.addAction(self._swap_cursor_action)
         layout.addWidget(self.plot_widget)
         self.setWidget(container)
 
@@ -2483,7 +2506,9 @@ class MultiAxisPlotDock(QDockWidget):
             self.remove_signal(name)
         pen = pg.intColor(len(self._signals))
         curve = pg.PlotDataItem(pen=pen)
-        curve.setZValue(1)
+        curve.setZValue(len(self._signals) + 2)
+        curve.setClickable(True)
+        curve.sigClicked.connect(self._on_curve_clicked)
         if side == "left":
             self.plot_item.addItem(curve)
         else:
@@ -2496,12 +2521,19 @@ class MultiAxisPlotDock(QDockWidget):
             "side": side,
             "unit": unit or "",
         }
+        if self._active_curve is None:
+            self._active_curve = curve
+        self._update_cursor_info()
 
     def remove_signal(self, name: str) -> None:
         info = self._signals.pop(name, None)
         if not info:
             return
         curve = info["curve"]
+        try:
+            curve.sigClicked.disconnect(self._on_curve_clicked)
+        except Exception:
+            pass
         if info["side"] == "left":
             self.plot_item.removeItem(curve)
         else:
@@ -2511,6 +2543,9 @@ class MultiAxisPlotDock(QDockWidget):
                 self._legend.removeItem(curve)
             except Exception:
                 pass
+        if self._active_curve is curve:
+            self._active_curve = self._select_fallback_curve()
+        self._update_cursor_info()
 
     def clear_all(self) -> None:
         for info in self._signals.values():
@@ -2555,6 +2590,8 @@ class MultiAxisPlotDock(QDockWidget):
             curve.setData(times, samples)
         self.plot_item.enableAutoRange('y', True)
         self.right_view.enableAutoRange(axis=pg.ViewBox.YAxis)
+        if self._measurement_cursors_enabled:
+            self._update_cursor_info()
 
     def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
         return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
@@ -2562,6 +2599,256 @@ class MultiAxisPlotDock(QDockWidget):
     def closeEvent(self, event) -> None:
         self.closed.emit(self.identifier)
         super().closeEvent(event)
+
+    def set_measurement_cursors_enabled(self, enabled: bool) -> None:
+        if self._measurement_cursors_enabled == enabled and (self._cursor_lines or not enabled):
+            return
+        self._measurement_cursors_enabled = enabled
+        if self._cursor_menu_action is not None:
+            self._cursor_menu_action.blockSignals(True)
+            self._cursor_menu_action.setChecked(enabled)
+            self._cursor_menu_action.blockSignals(False)
+        if self._swap_cursor_action is not None:
+            self._swap_cursor_action.setEnabled(enabled)
+        if enabled:
+            self._ensure_cursor_items()
+            self._hud_item.show()
+            for line in self._cursor_lines.values():
+                line.show()
+            for label in self._cursor_labels.values():
+                label.setVisible(True)
+            self._update_cursor_info()
+            self._update_hud_position()
+        else:
+            for line in self._cursor_lines.values():
+                line.hide()
+            for label in self._cursor_labels.values():
+                label.setVisible(False)
+            self._hud_item.hide()
+
+    def _on_cursor_menu_toggled(self, enabled: bool) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "measurement_cursors_action"):
+            action = getattr(parent, "measurement_cursors_action")
+            if isinstance(action, QAction):
+                action.setChecked(enabled)
+                return
+        self.set_measurement_cursors_enabled(enabled)
+
+    def _ensure_cursor_items(self) -> None:
+        if self._cursor_lines:
+            return
+        view_range = self.plot_item.vb.viewRange()
+        if view_range:
+            x_range = view_range[0]
+            xmin, xmax = x_range
+            width = xmax - xmin
+            if not math.isfinite(width) or width <= 0:
+                width = 1.0
+            start_a = xmin + width * 0.3
+            start_b = xmin + width * 0.6
+        else:
+            start_a = 0.0
+            start_b = 1.0
+        self._create_cursor("A", start_a, (255, 0, 0))
+        self._create_cursor("B", start_b, (0, 128, 255))
+        self._update_cursor_info()
+
+    def _create_cursor(self, label: str, position: float, color: Tuple[int, int, int]) -> None:
+        line = pg.InfiniteLine(pos=position, angle=90, movable=True, pen=pg.mkPen(color, width=1.5))
+        line.setZValue(50)
+        line.sigPositionChanged.connect(self._on_cursor_moved)
+        line.sigDragFinished.connect(self._on_cursor_released)
+        self.plot_item.addItem(line, ignoreBounds=True)
+        inf_label = pg.InfLineLabel(line, label, position=0.02, movable=False)
+        inf_label.setZValue(60)
+        self._cursor_lines[label] = line
+        self._cursor_labels[label] = inf_label
+        if not self._measurement_cursors_enabled:
+            line.hide()
+
+    def _on_cursor_moved(self) -> None:
+        if self._updating_cursors:
+            return
+        self._update_cursor_info()
+
+    def _on_cursor_released(self) -> None:
+        if self._updating_cursors:
+            return
+        for line in self._cursor_lines.values():
+            self._snap_line_to_curve(line)
+        self._update_cursor_info()
+
+    def _snap_line_to_curve(self, line: pg.InfiniteLine) -> None:
+        curve = self._get_active_curve()
+        if curve is None:
+            return
+        x_data = curve.xData
+        if x_data is None or len(x_data) == 0:
+            return
+        pos = float(line.value())
+        idx = int(np.searchsorted(x_data, pos))
+        idx = max(0, min(idx, len(x_data) - 1))
+        if idx > 0 and abs(pos - x_data[idx - 1]) <= abs(pos - x_data[idx]):
+            idx -= 1
+        snapped = float(x_data[idx])
+        if snapped != pos:
+            self._set_line_value(line, snapped)
+
+    def _set_line_value(self, line: pg.InfiniteLine, value: float) -> None:
+        self._updating_cursors = True
+        try:
+            line.setValue(value)
+        finally:
+            self._updating_cursors = False
+
+    def _update_cursor_info(self) -> None:
+        if not self._measurement_cursors_enabled or not self._cursor_lines:
+            return
+        curve = self._get_active_curve()
+        if curve is None:
+            self._hud_item.setText("Measurement cursors\nNo active curve")
+            return
+        x_data = curve.xData
+        y_data = curve.yData
+        if x_data is None or y_data is None or len(x_data) == 0:
+            self._hud_item.setText("Measurement cursors\nNo data")
+            return
+        pos_a = float(self._cursor_lines["A"].value())
+        pos_b = float(self._cursor_lines["B"].value())
+        y_a = self._interpolate_value(x_data, y_data, pos_a)
+        y_b = self._interpolate_value(x_data, y_data, pos_b)
+        delta_t = pos_b - pos_a
+        delta_y = y_b - y_a
+        integral = self._integrate_between(x_data, y_data, pos_a, pos_b, y_a, y_b)
+        unit = self._curve_unit(curve)
+        unit_suffix = f" {unit}" if unit else ""
+        area_suffix = f" {unit}·s" if unit else ""
+        def fmt(value: float) -> str:
+            return f"{value:.4g}"
+        lines = [
+            f"A: t={fmt(pos_a)} s, y={fmt(y_a)}{unit_suffix}",
+            f"B: t={fmt(pos_b)} s, y={fmt(y_b)}{unit_suffix}",
+            f"Δt: {fmt(delta_t)} s",
+            f"Δy: {fmt(delta_y)}{unit_suffix}",
+        ]
+        if integral is not None:
+            lines.append(f"∫y·dt: {fmt(integral)}{area_suffix}")
+        else:
+            lines.append("∫y·dt: —")
+        self._hud_item.setText("\n".join(lines))
+        self._update_hud_position()
+
+    def _integrate_between(
+        self,
+        x_data: np.ndarray,
+        y_data: np.ndarray,
+        pos_a: float,
+        pos_b: float,
+        y_a: float,
+        y_b: float,
+    ) -> Optional[float]:
+        left = min(pos_a, pos_b)
+        right = max(pos_a, pos_b)
+        if not math.isfinite(left) or not math.isfinite(right):
+            return None
+        if abs(right - left) < 1e-12:
+            return 0.0
+        mask = np.where((x_data >= left) & (x_data <= right))[0]
+        xs = [left]
+        ys = [y_a if pos_a <= pos_b else y_b]
+        if mask.size:
+            for idx in mask:
+                x_val = float(x_data[idx])
+                y_val = float(y_data[idx])
+                if x_val <= left + 1e-12 or x_val >= right - 1e-12:
+                    continue
+                xs.append(x_val)
+                ys.append(y_val)
+        xs.append(right)
+        ys.append(y_b if pos_a <= pos_b else y_a)
+        if len(xs) < 2:
+            return None
+        xs_array = np.array(xs, dtype=float)
+        ys_array = np.array(ys, dtype=float)
+        try:
+            return float(np.trapz(ys_array, xs_array))
+        except Exception:
+            return None
+
+    def _interpolate_value(self, x_data: np.ndarray, y_data: np.ndarray, position: float) -> float:
+        if len(x_data) == 0:
+            return float("nan")
+        idx = int(np.searchsorted(x_data, position))
+        idx = max(0, min(idx, len(x_data) - 1))
+        if idx == 0:
+            return float(y_data[0])
+        if idx >= len(x_data):
+            return float(y_data[-1])
+        x0 = float(x_data[idx - 1])
+        x1 = float(x_data[idx])
+        y0 = float(y_data[idx - 1])
+        y1 = float(y_data[idx])
+        if x1 == x0:
+            return y0
+        ratio = (position - x0) / (x1 - x0)
+        ratio = max(0.0, min(1.0, ratio))
+        return y0 + ratio * (y1 - y0)
+
+    def _curve_unit(self, curve: pg.PlotDataItem) -> str:
+        for info in self._signals.values():
+            if info["curve"] is curve:
+                return info.get("unit", "")
+        return ""
+
+    def _update_hud_position(self) -> None:
+        if not self._hud_item.isVisible():
+            return
+        view_range = self.plot_item.vb.viewRange()
+        if not view_range:
+            return
+        x_range, y_range = view_range
+        if not x_range or not y_range:
+            return
+        x_pos = x_range[1]
+        y_pos = y_range[1]
+        if not math.isfinite(x_pos) or not math.isfinite(y_pos):
+            return
+        self._hud_item.setPos(x_pos, y_pos)
+
+    def _swap_cursors(self) -> None:
+        if not self._cursor_lines:
+            return
+        pos_a = float(self._cursor_lines["A"].value())
+        pos_b = float(self._cursor_lines["B"].value())
+        self._set_line_value(self._cursor_lines["A"], pos_b)
+        self._set_line_value(self._cursor_lines["B"], pos_a)
+        self._update_cursor_info()
+
+    def _on_curve_clicked(self, curve: pg.PlotDataItem, _points) -> None:
+        self._set_active_curve(curve)
+
+    def _set_active_curve(self, curve: Optional[pg.PlotDataItem]) -> None:
+        if curve is not None and curve not in [info["curve"] for info in self._signals.values()]:
+            return
+        self._active_curve = curve
+        self._update_cursor_info()
+
+    def _get_active_curve(self) -> Optional[pg.PlotDataItem]:
+        if self._active_curve in [info["curve"] for info in self._signals.values()]:
+            return self._active_curve
+        fallback = self._select_fallback_curve()
+        self._active_curve = fallback
+        return fallback
+
+    def _select_fallback_curve(self) -> Optional[pg.PlotDataItem]:
+        curves = [info["curve"] for info in self._signals.values() if info["curve"].xData is not None]
+        if not curves:
+            curves = [info["curve"] for info in self._signals.values()]
+        if not curves:
+            return None
+        curves.sort(key=lambda c: c.zValue(), reverse=True)
+        return curves[0]
 
 class SignalSimulationDialog(QDialog):
     def __init__(self, config: SignalSimulationConfig, parent: Optional[QWidget] = None) -> None:
@@ -4016,6 +4303,7 @@ class MainWindow(QMainWindow):
         self._last_plot_dock: Optional[QDockWidget] = None
         self._suspend_plot_assignment = False
         self._hardware_apply_required = False
+        self._measurement_cursors_enabled = False
         self.channels_dock: Optional[QDockWidget] = None
         self.signals_dock: Optional[QDockWidget] = None
         self._saved_dock_state: Optional[QByteArray] = None
@@ -4135,6 +4423,15 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.show_startup_action)
 
         view_menu.addSeparator()
+        self.measurement_cursors_action = QAction("Measurement cursors", self)
+        self.measurement_cursors_action.setCheckable(True)
+        self.measurement_cursors_action.setChecked(self._measurement_cursors_enabled)
+        self.measurement_cursors_action.setShortcut("C")
+        self.measurement_cursors_action.setShortcutContext(Qt.ApplicationShortcut)
+        self.measurement_cursors_action.toggled.connect(self._on_toggle_measurement_cursors)
+        view_menu.addAction(self.measurement_cursors_action)
+        self.addAction(self.measurement_cursors_action)
+
         self.reset_layout_action = QAction("Reset Layout", self)
         self.reset_layout_action.triggered.connect(self._reset_layout)
         view_menu.addAction(self.reset_layout_action)
@@ -5213,6 +5510,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "logging_rate_spin"):
             self._save_settings()
 
+    def _on_toggle_measurement_cursors(self, enabled: bool) -> None:
+        self._measurement_cursors_enabled = enabled
+        for dock in self._plot_windows.values():
+            dock.set_measurement_cursors_enabled(enabled)
+
     def _toggle_startup_tab_visibility(self, visible: bool) -> None:
         self._show_startup_tab = visible
         if hasattr(self, "show_startup_action"):
@@ -5271,6 +5573,7 @@ class MainWindow(QMainWindow):
             self.tabifyDockWidget(previous, dock)
         dock.show()
         dock.raise_()
+        dock.set_measurement_cursors_enabled(self._measurement_cursors_enabled)
         self._plot_windows[identifier] = dock
         self._active_plot_id = identifier
         self._last_plot_dock = dock
