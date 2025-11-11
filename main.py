@@ -2510,7 +2510,10 @@ class MultiAxisPlotDock(QDockWidget):
         pen = pg.intColor(len(self._signals))
         curve = pg.PlotDataItem(pen=pen)
         curve.setZValue(len(self._signals) + 2)
-        curve.setClickable(True)
+        if hasattr(curve, "setCurveClickable"):
+            curve.setCurveClickable(True)
+        elif hasattr(curve, "setClickable"):
+            curve.setClickable(True)
         curve.sigClicked.connect(self._on_curve_clicked)
         if side == "left":
             self.plot_item.addItem(curve)
