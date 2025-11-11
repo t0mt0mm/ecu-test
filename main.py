@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import csv
 import datetime
+import logging
 import math
 import numpy as np
 import os
@@ -94,6 +95,8 @@ from PyQt5.QtWidgets import (
     QAction,
     QStackedWidget,
 )
+
+logger = logging.getLogger(__name__)
 
 APP_QSS = """
 /* Global */
@@ -2096,7 +2099,17 @@ class RealBackend(QObject, BackendBase):
 
     def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
         with self._lock:
-            return {name: self._signal_cache.get(name) for name in signal_names}
+            values: Dict[str, float] = {}
+            for name in signal_names:
+                value = self._signal_cache.get(name)
+                if value is None:
+                    values[name] = 0.0
+                else:
+                    try:
+                        values[name] = float(value)
+                    except (TypeError, ValueError):
+                        values[name] = 0.0
+            return values
 
     def _handle_status(self, message: can.Message) -> None:
         if self._db is None:
@@ -4217,25 +4230,90 @@ class ChannelBuilderDialog(QDialog):
         self.result_profile = result
         self.accept()
 
-def load_channel_profiles(database) -> Dict[str, ChannelProfile]:
-    ensure_directories()
-    profiles: Dict[str, ChannelProfile] = {}
-    if os.path.exists(CHANNEL_PROFILE_PATH):
+def load_ecu_profile(path: str) -> dict:
+    resolved = path
+    if not os.path.isabs(resolved):
+        resolved = os.path.join(BASE_DIR, path)
+    try:
+        with open(resolved, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        logger.warning("ECU profile file not found: %s", resolved)
+        return {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.error("Failed to load ECU profile %s: %s", resolved, exc)
+        return {}
+    if not isinstance(data, dict):
+        logger.error("ECU profile %s has invalid format (expected mapping)", resolved)
+        return {}
+    return data
+
+
+def load_channel_profiles_from_ecu_profile(profile: dict) -> Dict[str, ChannelProfile]:
+    channels_section = profile.get("channels") if isinstance(profile, dict) else None
+    result: Dict[str, ChannelProfile] = {}
+    if not isinstance(channels_section, dict):
+        if channels_section is not None:
+            logger.error("ECU profile 'channels' section must be a mapping")
+        return result
+    for name, raw_data in channels_section.items():
+        if not isinstance(raw_data, dict):
+            logger.warning("Channel definition for %s is not a mapping and will be skipped", name)
+            continue
+        payload = dict(raw_data)
+        payload.setdefault("name", str(name))
         try:
-            with open(CHANNEL_PROFILE_PATH, "r", encoding="utf-8") as handle:
-                data = yaml.safe_load(handle) or []
-        except (OSError, yaml.YAMLError):
-            data = []
-        for entry in data:
-            try:
-                profile = ChannelProfile.from_yaml(entry)
-                profiles[profile.name] = profile
-            except Exception:
-                continue
-    if not profiles:
-        profiles = {profile.name: profile for profile in default_channel_profiles(database)}
-        save_channel_profiles(list(profiles.values()))
+            profile_obj = ChannelProfile.from_yaml(payload)
+        except Exception as exc:
+            logger.error("Failed to parse channel profile %s: %s", name, exc)
+            continue
+        result[profile_obj.name] = profile_obj
+    return result
+
+
+def load_saved_channel_profiles() -> Dict[str, ChannelProfile]:
+    ensure_directories()
+    if not os.path.exists(CHANNEL_PROFILE_PATH):
+        return {}
+    try:
+        with open(CHANNEL_PROFILE_PATH, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or []
+    except (OSError, yaml.YAMLError) as exc:
+        logger.error("Failed to load saved channel profiles from %s: %s", CHANNEL_PROFILE_PATH, exc)
+        return {}
+    profiles: Dict[str, ChannelProfile] = {}
+    for entry in data:
+        if isinstance(entry, ChannelProfile):
+            profiles[entry.name] = entry
+            continue
+        if not isinstance(entry, dict):
+            logger.warning("Ignoring channel profile entry with unexpected type: %r", type(entry))
+            continue
+        try:
+            profile = ChannelProfile.from_yaml(entry)
+        except Exception as exc:
+            logger.error("Failed to parse saved channel profile entry: %s", exc)
+            continue
+        profiles[profile.name] = profile
     return profiles
+
+
+def load_channel_profiles_from_sources() -> Dict[str, ChannelProfile]:
+    ecu_profile_path = os.path.join(PROFILE_DIR, "fccu.yaml")
+    ecu_profile = load_ecu_profile(ecu_profile_path)
+    base_profiles = load_channel_profiles_from_ecu_profile(ecu_profile)
+    profiles = dict(base_profiles)
+    saved_profiles = load_saved_channel_profiles()
+    if saved_profiles:
+        profiles.update(saved_profiles)
+    if not profiles:
+        logger.warning("No channel profiles could be loaded from %s or %s", ecu_profile_path, CHANNEL_PROFILE_PATH)
+    return profiles
+
+
+def load_channel_profiles(database=None) -> Dict[str, ChannelProfile]:
+    _ = database
+    return load_channel_profiles_from_sources()
 
 
 def save_channel_profiles(profiles: List[ChannelProfile]) -> None:
@@ -4244,56 +4322,8 @@ def save_channel_profiles(profiles: List[ChannelProfile]) -> None:
     try:
         with open(CHANNEL_PROFILE_PATH, "w", encoding="utf-8") as handle:
             yaml.safe_dump(data, handle, sort_keys=False)
-    except OSError:
-        pass
-
-
-def default_channel_profiles(database) -> List[ChannelProfile]:
-    profiles: List[ChannelProfile] = []
-    if not database:
-        return profiles
-    try:
-        hs_write = database.get_message_by_name("QM_High_side_output_write")
-        hs_status = database.get_message_by_name("QM_High_side_output_status")
-    except KeyError:
-        hs_write = None
-        hs_status = None
-    if hs_write and hs_status:
-        for index in range(1, 6):
-            select = f"hs_out{index:02d}_select"
-            mode = f"hs_out{index:02d}_mode"
-            pwm = f"hs_out{index:02d}_value_pwm"
-            current = f"hs_out{index:02d}_current"
-            pwm_feedback = f"hs_out{index:02d}_pwm"
-            profile = ChannelProfile(
-                name=f"HS{index}",
-                type="HighSide",
-                write=ChannelMapping(message=hs_write.name, fields={"select": select, "mode": mode, "pwm": pwm}),
-                status=ChannelMapping(message=hs_status.name, fields={"current": current, "pwm_feedback": pwm_feedback}),
-                sim={"tau": 0.5, "current_gain": 8.0, "noise": 0.1},
-            )
-            profiles.append(profile)
-    try:
-        ai_status = database.get_message_by_name("QM_Analog_Input_status")
-    except KeyError:
-        ai_status = None
-    if ai_status:
-        for index in range(1, 6):
-            voltage = f"an_pin_{index:02d}_voltage"
-            current = f"an_pin_{index:02d}_current"
-            profile = ChannelProfile(
-                name=f"AI{index}",
-                type="AI_V",
-                status=ChannelMapping(message=ai_status.name, fields={"value": voltage}),
-            )
-            profiles.append(profile)
-            profile_current = ChannelProfile(
-                name=f"AI{index}_I",
-                type="AI_I",
-                status=ChannelMapping(message=ai_status.name, fields={"value": current}),
-            )
-            profiles.append(profile_current)
-    return profiles
+    except OSError as exc:
+        logger.error("Failed to save channel profiles to %s: %s", CHANNEL_PROFILE_PATH, exc)
 
 
 def collect_signal_definitions(database) -> Dict[str, List[SignalDefinition]]:
@@ -6558,8 +6588,8 @@ class MainWindow(QMainWindow):
             else:
                 continue
             new_profiles[profile.name] = profile
-        if not new_profiles and self._dbc:
-            new_profiles = load_channel_profiles(self._dbc)
+        if not new_profiles:
+            new_profiles = load_channel_profiles_from_sources()
         if new_profiles:
             self._channel_profiles = dict(sorted(new_profiles.items()))
             save_channel_profiles(list(self._channel_profiles.values()))
@@ -7135,7 +7165,16 @@ class MainWindow(QMainWindow):
         self.signal_browser.set_signals(self._signals_by_message)
         self._watch_units = {definition.name: definition.unit for defs in self._signals_by_message.values() for definition in defs}
         self.watchlist_widget.set_units(self._watch_units)
-        self._channel_profiles = dict(sorted(load_channel_profiles(database).items()))
+        ecu_profile_path = os.path.join(PROFILE_DIR, "fccu.yaml")
+        ecu_profile = load_ecu_profile(ecu_profile_path)
+        base_profiles = load_channel_profiles_from_ecu_profile(ecu_profile)
+        saved_profiles = load_saved_channel_profiles()
+        combined_profiles: Dict[str, ChannelProfile] = dict(base_profiles)
+        if saved_profiles:
+            combined_profiles.update(saved_profiles)
+        if combined_profiles and not saved_profiles:
+            save_channel_profiles(list(combined_profiles.values()))
+        self._channel_profiles = dict(sorted(combined_profiles.items()))
         self._refresh_channel_cards()
         if self._pending_watchlist:
             self.watchlist_widget.add_signals(self._pending_watchlist)
