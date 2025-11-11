@@ -1,0 +1,210 @@
+ecu_name: "FCCU"
+dbc: "ecu-test2.dbc"
+
+channels:
+  HS1:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out01_select: select
+        hs_out01_mode: mode
+        hs_out01_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out01_current: current
+        hs_out01_pwm: pwm_feedback
+
+  HS2:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out02_select: select
+        hs_out02_mode: mode
+        hs_out02_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out02_current: current
+        hs_out02_pwm: pwm_feedback
+
+  HS3:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out03_select: select
+        hs_out03_mode: mode
+        hs_out03_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out03_current: current
+        hs_out03_pwm: pwm_feedback
+
+  HS4:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out04_select: select
+        hs_out04_mode: mode
+        hs_out04_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out04_current: current
+        hs_out04_pwm: pwm_feedback
+
+  HS5:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out05_select: select
+        hs_out05_mode: mode
+        hs_out05_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out05_current: current
+        hs_out05_pwm: pwm_feedback
+
+  HS6:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out06_select: select
+        hs_out06_mode: mode
+        hs_out06_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out06_current: current
+        hs_out06_pwm: pwm_feedback
+
+  HS7:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out07_select: select
+        hs_out07_mode: mode
+        hs_out07_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out07_current: current
+        hs_out07_pwm: pwm_feedback
+
+  HS8:
+    type: "HighSide"
+    write:
+      message: "QM_High_side_output_write"
+      fields:
+        hs_out08_select: select
+        hs_out08_mode: mode
+        hs_out08_pwm: pwm
+    status:
+      message: "QM_High_side_output_status"
+      fields:
+        hs_out08_current: current
+        hs_out08_pwm: pwm_feedback
+
+startup:
+  version: 1
+  globals: []   # kann später über QM_Main_switch_control etc. ergänzt werden
+
+  per_output:
+    # HS1 (Init_01)
+    - channel: "HS1"
+      message: "QM_High_side_output_init_01"
+      fields:
+        hs_out01_frequency: 1000.0
+        hs_out01_pwm_min: 0.0
+        hs_out01_pwm_max: 100.0
+        hs_out01_Kp: 0.0
+        hs_out01_Ki: 0.0
+        hs_out01_Kd: 0.0
+
+    # HS2 (Init_01)
+    - channel: "HS2"
+      message: "QM_High_side_output_init_01"
+      fields:
+        hs_out02_frequency: 1000.0
+        hs_out02_pwm_min: 0.0
+        hs_out02_pwm_max: 100.0
+        hs_out02_Kp: 0.0
+        hs_out02_Ki: 0.0
+        hs_out02_Kd: 0.0
+
+    # HS3 (Init_01)
+    - channel: "HS3"
+      message: "QM_High_side_output_init_01"
+      fields:
+        hs_out03_frequency: 1000.0
+        hs_out03_pwm_min: 0.0
+        hs_out03_pwm_max: 100.0
+        hs_out03_Kp: 0.0
+        hs_out03_Ki: 0.0
+        hs_out03_Kd: 0.0
+
+    # HS4 (Init_02)
+    - channel: "HS4"
+      message: "QM_High_side_output_init_02"
+      fields:
+        hs_out04_frequency: 1000.0
+        hs_out04_pwm_min: 0.0
+        hs_out04_pwm_max: 100.0
+        hs_out04_Kp: 0.0
+        hs_out04_Ki: 0.0
+        hs_out04_Kd: 0.0
+
+    # HS5 (Init_02)
+    - channel: "HS5"
+      message: "QM_High_side_output_init_02"
+      fields:
+        hs_out05_frequency: 1000.0
+        hs_out05_pwm_min: 0.0
+        hs_out05_pwm_max: 100.0
+        hs_out05_Kp: 0.0
+        hs_out05_Ki: 0.0
+        hs_out05_Kd: 0.0
+
+    # HS6 (Init_02)
+    - channel: "HS6"
+      message: "QM_High_side_output_init_02"
+      fields:
+        hs_out06_frequency: 1000.0
+        hs_out06_pwm_min: 0.0
+        hs_out06_pwm_max: 100.0
+        hs_out06_Kp: 0.0
+        hs_out06_Ki: 0.0
+        hs_out06_Kd: 0.0
+
+    # HS7 (Init_03)
+    - channel: "HS7"
+      message: "QM_High_side_output_init_03"
+      fields:
+        hs_out07_frequency: 1000.0
+        hs_out07_pwm_min: 0.0
+        hs_out07_pwm_max: 100.0
+        hs_out07_Kp: 0.0
+        hs_out07_Ki: 0.0
+        hs_out07_Kd: 0.0
+
+    # HS8 (Init_03)
+    - channel: "HS8"
+      message: "QM_High_side_output_init_03"
+      fields:
+        hs_out08_frequency: 1000.0
+        hs_out08_pwm_min: 0.0
+        hs_out08_pwm_max: 100.0
+        hs_out08_Kp: 0.0
+        hs_out08_Ki: 0.0
+        hs_out08_Kd: 0.0
+
+teardown: []
