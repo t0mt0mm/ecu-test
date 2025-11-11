@@ -2455,7 +2455,7 @@ class MultiAxisPlotDock(QDockWidget):
         self._update_views()
         self._measurement_cursors_enabled = False
         self._cursor_lines: Dict[str, pg.InfiniteLine] = {}
-        self._cursor_labels: Dict[str, pg.InfLineLabel] = {}
+        self._cursor_labels: Dict[str, Any] = {}
         self._hud_item = pg.TextItem("", anchor=(1, 0))
         self._hud_item.setZValue(100)
         self.plot_item.addItem(self._hud_item, ignoreBounds=True)
@@ -2607,8 +2607,11 @@ class MultiAxisPlotDock(QDockWidget):
         super().closeEvent(event)
 
     def set_measurement_cursors_enabled(self, enabled: bool) -> None:
-        if self._measurement_cursors_enabled == enabled and (self._cursor_lines or not enabled):
-            return
+        if self._measurement_cursors_enabled == enabled:
+            if enabled and not self._cursor_lines:
+                pass
+            else:
+                return
         self._measurement_cursors_enabled = enabled
         if self._cursor_menu_action is not None:
             self._cursor_menu_action.blockSignals(True)
@@ -2643,6 +2646,11 @@ class MultiAxisPlotDock(QDockWidget):
 
     def _ensure_cursor_items(self) -> None:
         if self._cursor_lines:
+            if self._measurement_cursors_enabled:
+                for line in self._cursor_lines.values():
+                    line.show()
+                for label in self._cursor_labels.values():
+                    label.setVisible(True)
             return
         view_range = self.plot_item.vb.viewRange()
         if view_range:
@@ -2666,12 +2674,21 @@ class MultiAxisPlotDock(QDockWidget):
         line.sigPositionChanged.connect(self._on_cursor_moved)
         line.sigDragFinished.connect(self._on_cursor_released)
         self.plot_item.addItem(line, ignoreBounds=True)
-        inf_label = pg.InfLineLabel(line, label, position=0.02, movable=False)
-        inf_label.setZValue(60)
         self._cursor_lines[label] = line
+        try:
+            inf_label = pg.InfLineLabel(line, label, position=0.02, movable=False)
+        except Exception:
+            text = pg.TextItem(label, anchor=(0.5, 1.0), color=pg.mkColor(color))
+            text.setParentItem(line)
+            inf_label = text
+        inf_label.setZValue(60)
         self._cursor_labels[label] = inf_label
-        if not self._measurement_cursors_enabled:
+        if self._measurement_cursors_enabled:
+            line.show()
+            inf_label.setVisible(True)
+        else:
             line.hide()
+            inf_label.setVisible(False)
 
     def _on_cursor_moved(self) -> None:
         if self._updating_cursors:
