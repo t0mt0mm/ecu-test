@@ -2466,7 +2466,10 @@ class MultiAxisPlotDock(QDockWidget):
         self._cursor_menu_action: Optional[QAction] = None
         self._swap_cursor_action: Optional[QAction] = None
         if hasattr(self.plot_item, "vb") and hasattr(self.plot_item.vb, "menu"):
-            menu = self.plot_item.vb.menu
+            menu = getattr(self.plot_item.vb, "menu", None)
+        else:
+            menu = None
+        if menu is not None:
             self._cursor_menu_action = QAction("Measurement cursors", menu)
             self._cursor_menu_action.setCheckable(True)
             self._cursor_menu_action.toggled.connect(self._on_cursor_menu_toggled)
