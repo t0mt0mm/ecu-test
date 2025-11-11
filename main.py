@@ -3,29 +3,56 @@
 from __future__ import annotations
 
 import copy
+import csv
 import datetime
 import math
 import os
 import random
+import re
 import sys
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*sipPyTypeDict.*")
 
+import json
 import can
 import cantools
 from cantools.database import errors as cantools_errors
 import yaml
+import pandas as pd
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
 import pyqtgraph as pg
-from PyQt5.QtCore import QObject, QSettings, QTimer, Qt, pyqtSignal
-from PyQt5.QtGui import QColor
+if pg.Qt.QT_LIB != "PyQt5":
+    raise RuntimeError(
+        "PyQtGraph loaded Qt binding '" + pg.Qt.QT_LIB + "' but this application requires PyQt5. "
+        "Ensure PyQt5 is installed and set PYQTGRAPH_QT_LIB=PyQt5 before launching."
+    )
+from PyQt5.QtCore import (
+    QObject,
+    QSettings,
+    QTimer,
+    Qt,
+    QTime,
+    QSize,
+    QPropertyAnimation,
+    QEasingCurve,
+    QThread,
+    QByteArray,
+    pyqtSignal,
+    pyqtSlot,
+)
+from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -35,34 +62,294 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QScrollArea,
     QSlider,
     QSpinBox,
     QStatusBar,
+    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTimeEdit,
+    QToolBar,
     QToolButton,
     QTextBrowser,
     QTreeWidget,
     QTreeWidgetItem,
+    QWidgetAction,
+    QSizePolicy,
+    QFrame,
     QVBoxLayout,
     QWidget,
+    QRadioButton,
     QMenu,
     QAction,
+    QStackedWidget,
 )
+
+APP_QSS = """
+/* Global */
+QMainWindow, QDialog, QWidget { background: #ffffff; color: #1f1f1f; }
+QAbstractScrollArea,
+QAbstractScrollArea > QWidget#qt_scrollarea_viewport { background: #ffffff; }
+
+/* Tables / Trees */
+QHeaderView::section { background: #f5f5f7; padding: 6px; border: 1px solid #e6e6e6; }
+QTableView, QTreeView {
+    background: #ffffff;
+    alternate-background-color: #f7f7f9;
+    gridline-color: #e0e0e0;
+    selection-background-color: #e6f2ff;
+    selection-color: #1f1f1f;
+}
+
+/* Inputs */
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit {
+    background: #ffffff; border: 1px solid #d0d0d0; border-radius: 4px; padding: 4px 6px;
+}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
+    border-color: #4096ff;
+}
+
+/* Buttons */
+QPushButton { background: #f7f7f8; border: 1px solid #d0d0d0; border-radius: 6px; padding: 6px 10px; }
+QPushButton:hover { background: #fbfbfc; }
+QPushButton:pressed { background: #ededee; }
+QPushButton:disabled { color: #9aa0a6; background: #f3f4f6; border-color: #e5e7eb; }
+
+/* Gruppen / Tabs / Docks */
+QGroupBox { margin-top: 12px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; top: -6px; padding: 0 4px; background: transparent; }
+QTabWidget::pane { border: 1px solid #e0e0e0; }
+QTabBar::tab { background: #eef1f5; border: 1px solid #e0e0e0; padding: 6px 10px; margin: 1px; }
+QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
+QMainWindow::separator { background: #d0d0d0; width: 2px; height: 2px; }
+QDockWidget { border: 1px solid #d0d0d0; }
+QDockWidget::title { padding: 4px 6px; }
+QStatusBar, QToolBar, QMenuBar { background: #ffffff; }
+"""
+
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 PROFILE_DIR = os.path.join(BASE_DIR, "profiles")
 WHITELIST_PATH = os.path.join(CONFIG_DIR, "signals.yaml")
 CHANNEL_PROFILE_PATH = os.path.join(PROFILE_DIR, "channels.yaml")
+DEFAULT_SETUP_PATH = os.path.join(PROFILE_DIR, "default_setup.json")
+DUMMY_SIMULATION_PATH = os.path.join(PROFILE_DIR, "dummy_simulations.json")
 
+
+FACTORY_DEFAULT_SETUP = {
+    "version": 1,
+    "backend": {"type": "dummy", "device_id": None},
+    "signals": {
+        "watchlist": [],
+        "plot_signals": [],
+        "multi_plot": {"enabled": False, "paused": False, "windows": []},
+    },
+    "channels": {"profiles": [], "plot_visibility": {}},
+    "sequencer": {"per_channel": {}},
+    "dummy": {"simulations": {}},
+    "startup": {
+        "version": 1,
+        "globals": [],
+        "per_output": [
+            {
+                "channel": "HS1",
+                "message": "QM_High_side_output_init_01",
+                "fields": {
+                    "hs_out01_frequency": 1000.0,
+                    "hs_out01_pwm_min": 0.0,
+                    "hs_out01_pwm_max": 100.0,
+                    "hs_out01_Kp": 0.0,
+                    "hs_out01_Ki": 0.0,
+                    "hs_out01_Kd": 0.0,
+                    "hs_out02_frequency": 1000.0,
+                    "hs_out02_pwm_min": 0.0,
+                    "hs_out02_pwm_max": 100.0,
+                    "hs_out02_Kp": 0.0,
+                    "hs_out02_Ki": 0.0,
+                    "hs_out02_Kd": 0.0,
+                    "hs_out03_frequency": 1000.0,
+                    "hs_out03_pwm_min": 0.0,
+                    "hs_out03_pwm_max": 100.0,
+                    "hs_out03_Kp": 0.0,
+                    "hs_out03_Ki": 0.0,
+                    "hs_out03_Kd": 0.0,
+                },
+            },
+        ],
+        "teardown": [],
+    },
+}
+
+
+
+PRESETS = {
+    "excel_de": {"sep": ";", "decimal": ",", "encoding": "utf-8-sig"},
+    "generic_en": {"sep": ",", "decimal": ".", "encoding": "utf-8"},
+}
+
+PRESET_LABELS = {
+    "excel_de": "Excel (DE)",
+    "generic_en": "Generic (EN)",
+}
+
+
+def get_csv_preset_key() -> str:
+    settings = QSettings("OpenAI", "ECUControl")
+    value = settings.value("csv/preset", "excel_de")
+    if isinstance(value, str):
+        key = value
+    elif value is None:
+        key = "excel_de"
+    else:
+        key = str(value)
+    if key not in PRESETS:
+        key = "excel_de"
+    return key
+
+
+def get_csv_opts() -> dict:
+    key = get_csv_preset_key()
+    return PRESETS[key]
+
+
+def get_csv_preset_label(key: str) -> str:
+    return PRESET_LABELS.get(key, PRESET_LABELS["excel_de"])
+
+
+def write_csv(df: pd.DataFrame, path: str) -> None:
+    preset_key = get_csv_preset_key()
+    opts = PRESETS[preset_key]
+    export = df.copy()
+    if preset_key == "excel_de":
+        datetime_columns = export.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns
+        for column in datetime_columns:
+            export[column] = export[column].dt.strftime("%Y-%m-%d %H:%M:%S")
+    export.to_csv(
+        path,
+        index=False,
+        sep=opts["sep"],
+        decimal=opts["decimal"],
+        encoding=opts["encoding"],
+        quoting=csv.QUOTE_MINIMAL,
+    )
+
+
+def read_csv(path: str) -> pd.DataFrame:
+    opts = get_csv_opts()
+    frame = pd.read_csv(path, sep=opts["sep"], decimal=opts["decimal"], encoding=opts["encoding"])
+    object_columns = list(frame.select_dtypes(include=["object"]).columns)
+    if object_columns:
+        decimal = opts["decimal"]
+        for column in object_columns:
+            series = frame[column]
+            if decimal != ".":
+                normalized = series.astype(str).str.replace(decimal, ".", regex=False)
+            else:
+                normalized = series
+            converted = pd.to_numeric(normalized, errors="coerce")
+            if converted.notna().any():
+                frame[column] = converted
+    return frame
+
+
+
+class CollapsibleSection(QWidget):
+    """A collapsible container with animated content height."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self._badge = ""
+        self.toggle_button = QToolButton()
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle_button.setArrowType(Qt.RightArrow)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)
+        self.toggle_button.setAutoRaise(True)
+        self.toggle_button.toggled.connect(self._on_toggled)
+        self.badge_label = QLabel()
+        self.badge_label.setStyleSheet("font-weight: 600; color: palette(dark);")
+        self._block_signal = False
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
+        header_layout.addWidget(self.toggle_button)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.badge_label)
+        self.content_area = QFrame()
+        self.content_area.setFrameShape(QFrame.NoFrame)
+        self.content_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.content_area.setMaximumHeight(0)
+        self.animation = QPropertyAnimation(self.content_area, b"maximumHeight", self)
+        self.animation.setDuration(160)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addLayout(header_layout)
+        layout.addWidget(self.content_area)
+        self._update_title()
+
+    def set_content(self, widget: QWidget) -> None:
+        container_layout = QVBoxLayout()
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(widget)
+        self.content_area.setLayout(container_layout)
+
+    def set_badge(self, text: str) -> None:
+        self._badge = text
+        self.badge_label.setText(text)
+
+    def set_collapsed(self, collapsed: bool, animate: bool = False) -> None:
+        if self.toggle_button.isChecked() == (not collapsed):
+            return
+        self._block_signal = True
+        self.toggle_button.setChecked(not collapsed)
+        self._block_signal = False
+        self._apply_toggle(animate=animate)
+
+    def is_collapsed(self) -> bool:
+        return not self.toggle_button.isChecked()
+
+    def _on_toggled(self, checked: bool) -> None:
+        if self._block_signal:
+            return
+        self._apply_toggle(animate=True)
+        self.toggled.emit(checked)
+
+    def _apply_toggle(self, animate: bool) -> None:
+        expanded = self.toggle_button.isChecked()
+        self.toggle_button.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        if self.content_area.layout():
+            content_height = self.content_area.layout().sizeHint().height()
+        else:
+            content_height = 0
+        end_value = content_height if expanded else 0
+        if animate:
+            self.animation.stop()
+            self.animation.setStartValue(self.content_area.maximumHeight())
+            self.animation.setEndValue(end_value)
+            self.animation.start()
+        else:
+            self.content_area.setMaximumHeight(end_value)
+
+    def _update_title(self) -> None:
+        text = self._title
+        self.toggle_button.setText(text)
 
 @dataclass
 class OutputState:
@@ -136,6 +423,54 @@ class SignalSimulationConfig:
             digital=copy.deepcopy(self.digital),
         )
 
+    def to_dict(self) -> dict:
+        data: Dict[str, Any] = {
+            "message_name": self.message_name,
+            "name": self.name,
+            "unit": self.unit,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            "category": self.category,
+        }
+        if self.analog is not None:
+            data["analog"] = asdict(self.analog)
+        if self.digital is not None:
+            data["digital"] = asdict(self.digital)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SignalSimulationConfig":
+        analog_data = data.get("analog") if isinstance(data, dict) else None
+        digital_data = data.get("digital") if isinstance(data, dict) else None
+        analog: Optional[AnalogSimulationProfile] = None
+        digital: Optional[DigitalSimulationProfile] = None
+        if isinstance(analog_data, dict):
+            try:
+                analog = AnalogSimulationProfile(**analog_data)
+            except TypeError:
+                analog = AnalogSimulationProfile()
+                for key, value in analog_data.items():
+                    if hasattr(analog, key):
+                        setattr(analog, key, value)
+        if isinstance(digital_data, dict):
+            try:
+                digital = DigitalSimulationProfile(**digital_data)
+            except TypeError:
+                digital = DigitalSimulationProfile()
+                for key, value in digital_data.items():
+                    if hasattr(digital, key):
+                        setattr(digital, key, value)
+        return cls(
+            message_name=str(data.get("message_name", "")),
+            name=str(data.get("name", "")),
+            unit=str(data.get("unit", "")),
+            minimum=data.get("minimum"),
+            maximum=data.get("maximum"),
+            category=str(data.get("category", "analog")),
+            analog=analog,
+            digital=digital,
+        )
+
 @dataclass
 class ChannelMapping:
     message: str = ""
@@ -195,17 +530,692 @@ class ChannelProfile:
         }
 
 
+class SequenceRepeatMode(Enum):
+    OFF = "off"
+    ENDLESS = "endless"
+    LIMIT = "limit"
+
+
 @dataclass
-class SequencerState:
-    on_seconds: float = 0.0
-    off_seconds: float = 0.0
-    total_seconds: float = 0.0
-    elapsed_total: float = 0.0
-    elapsed_phase: float = 0.0
-    running: bool = False
-    is_on_phase: bool = True
-    target_pwm: float = 0.0
-    completed: bool = False
+class SequenceCfg:
+    name: str
+    duration_s: int
+    pwm: int
+    on_s: float
+    off_s: float
+    enabled: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "duration_s": int(max(1, self.duration_s)),
+            "pwm": int(max(0, min(100, self.pwm))),
+            "on_s": float(max(0.01, self.on_s)),
+            "off_s": float(max(0.01, self.off_s)),
+            "enabled": bool(self.enabled),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SequenceCfg":
+        return cls(
+            name=str(data.get("name", "Sequence")),
+            duration_s=int(max(1, int(data.get("duration_s", 1)))),
+            pwm=int(max(0, min(100, int(data.get("pwm", 0))))),
+            on_s=float(max(0.01, float(data.get("on_s", 0.01)))),
+            off_s=float(max(0.01, float(data.get("off_s", 0.01)))),
+            enabled=bool(data.get("enabled", True)),
+        )
+
+
+@dataclass
+class ChannelConfig:
+    sequences: List[SequenceCfg] = field(default_factory=list)
+    repeat_mode: SequenceRepeatMode = SequenceRepeatMode.OFF
+    repeat_limit_s: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "sequences": [sequence.to_dict() for sequence in self.sequences],
+            "repeat_mode": self.repeat_mode.value,
+            "repeat_limit_s": int(max(0, self.repeat_limit_s)),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChannelConfig":
+        sequences_data = data.get("sequences") or []
+        sequences = [SequenceCfg.from_dict(raw) for raw in sequences_data]
+        mode_value = str(data.get("repeat_mode", SequenceRepeatMode.OFF.value))
+        try:
+            repeat_mode = SequenceRepeatMode(mode_value)
+        except ValueError:
+            repeat_mode = SequenceRepeatMode.OFF
+        repeat_limit_s = int(max(0, int(data.get("repeat_limit_s", 0))))
+        return cls(sequences=sequences, repeat_mode=repeat_mode, repeat_limit_s=repeat_limit_s)
+
+
+@dataclass
+class StartupGlobalStep:
+    message: str
+    fields: Dict[str, float]
+    repeat: int = 1
+    dt_ms: int = 0
+
+    def to_dict(self) -> dict:
+        payload = {
+            "message": self.message,
+            "fields": {name: float(value) for name, value in self.fields.items()},
+        }
+        if self.repeat != 1:
+            payload["repeat"] = int(max(1, self.repeat))
+        if self.dt_ms:
+            payload["dt_ms"] = int(max(0, self.dt_ms))
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupGlobalStep":
+        message = str(data.get("message", ""))
+        fields_raw = data.get("fields", {}) if isinstance(data, dict) else {}
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        repeat = data.get("repeat", 1) if isinstance(data, dict) else 1
+        dt_ms = data.get("dt_ms", 0) if isinstance(data, dict) else 0
+        try:
+            repeat_value = int(repeat)
+        except (TypeError, ValueError):
+            repeat_value = 1
+        try:
+            delay_value = int(dt_ms)
+        except (TypeError, ValueError):
+            delay_value = 0
+        return cls(message=message, fields=fields, repeat=max(1, repeat_value), dt_ms=max(0, delay_value))
+
+
+@dataclass
+class StartupPerOutputStep:
+    channel: str
+    message: str
+    fields: Dict[str, float]
+    repeat: int = 1
+    dt_ms: int = 0
+
+    def to_dict(self) -> dict:
+        payload = {
+            "channel": self.channel,
+            "message": self.message,
+            "fields": {name: float(value) for name, value in self.fields.items()},
+        }
+        if self.repeat != 1:
+            payload["repeat"] = int(max(1, self.repeat))
+        if self.dt_ms:
+            payload["dt_ms"] = int(max(0, self.dt_ms))
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupPerOutputStep":
+        channel = str(data.get("channel", ""))
+        message = str(data.get("message", ""))
+        fields_raw = data.get("fields", {}) if isinstance(data, dict) else {}
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        repeat = data.get("repeat", 1) if isinstance(data, dict) else 1
+        dt_ms = data.get("dt_ms", 0) if isinstance(data, dict) else 0
+        try:
+            repeat_value = int(repeat)
+        except (TypeError, ValueError):
+            repeat_value = 1
+        try:
+            delay_value = int(dt_ms)
+        except (TypeError, ValueError):
+            delay_value = 0
+        return cls(
+            channel=channel,
+            message=message,
+            fields=fields,
+            repeat=max(1, repeat_value),
+            dt_ms=max(0, delay_value),
+        )
+
+
+@dataclass
+class StartupTeardownStep:
+    message: str
+    fields: Dict[str, float]
+
+    def to_dict(self) -> dict:
+        return {
+            "message": self.message,
+            "fields": {name: float(value) for name, value in self.fields.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupTeardownStep":
+        message = str(data.get("message", ""))
+        fields_raw = data.get("fields", {}) if isinstance(data, dict) else {}
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        return cls(message=message, fields=fields)
+
+
+@dataclass
+class StartupConfig:
+    version: int = 1
+    globals: List[StartupGlobalStep] = field(default_factory=list)
+    per_output: List[StartupPerOutputStep] = field(default_factory=list)
+    teardown: List[StartupTeardownStep] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "version": int(self.version),
+            "globals": [step.to_dict() for step in self.globals],
+            "per_output": [step.to_dict() for step in self.per_output],
+            "teardown": [step.to_dict() for step in self.teardown],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StartupConfig":
+        if not isinstance(data, dict):
+            return cls()
+        version_value = data.get("version", 1)
+        try:
+            version = int(version_value)
+        except (TypeError, ValueError):
+            version = 1
+        globals_section = data.get("globals", []) if isinstance(data, dict) else []
+        per_output_section = data.get("per_output", []) if isinstance(data, dict) else []
+        teardown_section = data.get("teardown", []) if isinstance(data, dict) else []
+        globals_steps = [StartupGlobalStep.from_dict(entry) for entry in globals_section if isinstance(entry, dict)]
+        per_output_steps = [StartupPerOutputStep.from_dict(entry) for entry in per_output_section if isinstance(entry, dict)]
+        teardown_steps = [StartupTeardownStep.from_dict(entry) for entry in teardown_section if isinstance(entry, dict)]
+        return cls(version=version, globals=globals_steps, per_output=per_output_steps, teardown=teardown_steps)
+
+
+@dataclass
+class StartupPreparedStep:
+    key: Tuple[str, Optional[str]]
+    message: str
+    payload: Dict[str, float]
+    repeat: int
+    dt_ms: int
+    channel: Optional[str] = None
+
+
+class StartupWorker(QObject):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(bool, list, str)
+
+    def __init__(
+        self,
+        backend: BackendBase,
+        steps: List[StartupPreparedStep],
+        *,
+        delay_ms: int = 0,
+        force: bool = False,
+        parent: Optional[QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._backend = backend
+        self._steps = steps
+        self._delay_ms = max(0, int(delay_ms))
+        self._force = force
+        self._stop_event = threading.Event()
+
+    def cancel(self) -> None:
+        self._stop_event.set()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        successes: List[Tuple[Tuple[str, Optional[str]], Dict[str, float]]] = []
+        errors: List[str] = []
+        delay = self._delay_ms / 1000.0 if self._delay_ms > 0 else 0.0
+        for index, step in enumerate(self._steps):
+            if self._stop_event.is_set():
+                errors.append("Startup cancelled")
+                break
+            description = step.message
+            if step.channel:
+                description += f" ({step.channel})"
+            try:
+                self._backend.send_message_by_name(
+                    step.message,
+                    step.payload,
+                    repeat=max(1, step.repeat),
+                    dt_ms=max(0, step.dt_ms),
+                    force=self._force,
+                )
+                self.progress.emit(f"Sent {description}: {step.payload}")
+                successes.append((step.key, dict(step.payload)))
+            except BackendError as exc:
+                error_message = f"Failed {description}: {exc}"
+                self.progress.emit(error_message)
+                errors.append(error_message)
+            if delay > 0.0 and index < len(self._steps) - 1:
+                time.sleep(delay)
+        success = not errors
+        summary = "Startup completed" if success else "Startup completed with issues"
+        if errors and success:
+            summary = "Startup completed with warnings"
+        elif errors:
+            summary = errors[-1]
+        self.finished.emit(success, successes, summary)
+
+
+class StartupStepDialog(QDialog):
+    def __init__(
+        self,
+        mode: str,
+        channels: List[str],
+        signals_by_message: Dict[str, List[SignalDefinition]],
+        *,
+        parent: Optional[QWidget] = None,
+        existing: Optional[Any] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configure startup step")
+        self._mode = mode
+        self._channels = channels
+        self._signals_by_message = signals_by_message
+        self.result_step: Optional[Any] = None
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.message_combo = QComboBox()
+        self.message_combo.setEditable(True)
+        self.message_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.message_combo.blockSignals(True)
+        for name in sorted(self._signals_by_message.keys()):
+            self.message_combo.addItem(name)
+        self.message_combo.blockSignals(False)
+        form.addRow("Message", self.message_combo)
+        if mode == "per_output":
+            self.channel_combo = QComboBox()
+            self.channel_combo.addItems(channels)
+            self.channel_combo.setEditable(True)
+            form.addRow("Channel", self.channel_combo)
+        else:
+            self.channel_combo = None
+        self.repeat_spin = QSpinBox()
+        self.repeat_spin.setRange(1, 100)
+        self.repeat_spin.setValue(1)
+        self.delay_spin = QSpinBox()
+        self.delay_spin.setRange(0, 10_000)
+        self.delay_spin.setSuffix(" ms")
+        if mode != "teardown":
+            form.addRow("Repeat", self.repeat_spin)
+            form.addRow("Delay", self.delay_spin)
+        layout.addLayout(form)
+        self.field_table = QTableWidget(0, 2)
+        self.field_table.setHorizontalHeaderLabels(["Signal", "Value"])
+        self.field_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.field_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.field_table.verticalHeader().setVisible(False)
+        self.field_table.setAlternatingRowColors(True)
+        self.field_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.field_table.setStyleSheet("QTableView::item { padding: 0px; }")
+        layout.addWidget(self.field_table)
+        self.message_combo.currentTextChanged.connect(self._on_message_changed)
+        field_buttons = QHBoxLayout()
+        add_field = QToolButton()
+        add_field.setText("Add field")
+        add_field.clicked.connect(self._add_field_row)
+        remove_field = QToolButton()
+        remove_field.setText("Remove field")
+        remove_field.clicked.connect(self._remove_field_row)
+        field_buttons.addWidget(add_field)
+        field_buttons.addWidget(remove_field)
+        field_buttons.addStretch(1)
+        layout.addLayout(field_buttons)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        if existing is not None:
+            self._populate_from_existing(existing)
+        else:
+            self._add_field_row()
+        self._on_message_changed(self.message_combo.currentText())
+
+    def _signal_options(self, message_name: str) -> List[str]:
+        definitions = self._signals_by_message.get(message_name, [])
+        names: List[str] = []
+        for definition in definitions:
+            if is_signal_writable(definition.name, message_name):
+                names.append(definition.name)
+        return names
+
+    def _populate_field_combo(self, combo: QComboBox, selected: str = "") -> None:
+        message_name = self.message_combo.currentText().strip()
+        options = self._signal_options(message_name) if message_name else []
+        current = selected or combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        for name in options:
+            combo.addItem(name)
+        if current and current not in options:
+            combo.addItem(current)
+        if current:
+            combo.setCurrentText(current)
+        elif options:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def _add_field_row(self) -> None:
+        row = self.field_table.rowCount()
+        self.field_table.insertRow(row)
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self._populate_field_combo(combo)
+        self.field_table.setCellWidget(row, 0, combo)
+        value_item = QTableWidgetItem("0")
+        self.field_table.setItem(row, 1, value_item)
+        header = self.field_table.verticalHeader()
+        combo_height = combo.sizeHint().height()
+        header.setMinimumSectionSize(combo_height)
+        header.setDefaultSectionSize(combo_height)
+
+    def _remove_field_row(self) -> None:
+        row = self.field_table.currentRow()
+        if row >= 0:
+            self.field_table.removeRow(row)
+
+    def _on_message_changed(self, _text: str) -> None:
+        if not hasattr(self, "field_table"):
+            return
+        for row in range(self.field_table.rowCount()):
+            widget = self.field_table.cellWidget(row, 0)
+            if isinstance(widget, QComboBox):
+                self._populate_field_combo(widget)
+
+    def _populate_from_existing(self, existing: Any) -> None:
+        if hasattr(existing, "message"):
+            index = self.message_combo.findText(existing.message)
+            if index >= 0:
+                self.message_combo.setCurrentIndex(index)
+            else:
+                self.message_combo.setEditText(existing.message)
+        if self.channel_combo is not None and hasattr(existing, "channel"):
+            index = self.channel_combo.findText(existing.channel)
+            if index >= 0:
+                self.channel_combo.setCurrentIndex(index)
+            elif self.channel_combo.isEditable():
+                self.channel_combo.setEditText(existing.channel)
+        if hasattr(existing, "repeat"):
+            self.repeat_spin.setValue(int(getattr(existing, "repeat", 1)))
+        if hasattr(existing, "dt_ms"):
+            self.delay_spin.setValue(int(getattr(existing, "dt_ms", 0)))
+        if existing.fields:
+            for name, value in existing.fields.items():
+                row = self.field_table.rowCount()
+                self.field_table.insertRow(row)
+                combo = QComboBox()
+                combo.setEditable(True)
+                combo.setInsertPolicy(QComboBox.NoInsert)
+                combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+                self.field_table.setCellWidget(row, 0, combo)
+                self._populate_field_combo(combo, str(name))
+                value_item = QTableWidgetItem(str(value))
+                self.field_table.setItem(row, 1, value_item)
+                header = self.field_table.verticalHeader()
+                combo_height = combo.sizeHint().height()
+                header.setMinimumSectionSize(combo_height)
+                header.setDefaultSectionSize(combo_height)
+        else:
+            self._add_field_row()
+
+    def accept(self) -> None:  # type: ignore[override]
+        message = self.message_combo.currentText().strip()
+        if not message:
+            QMessageBox.warning(self, "Invalid input", "Message name is required.")
+            return
+        fields: Dict[str, float] = {}
+        for row in range(self.field_table.rowCount()):
+            widget = self.field_table.cellWidget(row, 0)
+            value_item = self.field_table.item(row, 1)
+            if not isinstance(widget, QComboBox) or value_item is None:
+                continue
+            signal_name = widget.currentText().strip()
+            if not signal_name:
+                continue
+            try:
+                numeric_value = float(value_item.text())
+            except (TypeError, ValueError):
+                QMessageBox.warning(self, "Invalid input", f"Value for '{signal_name}' is not numeric.")
+                return
+            fields[signal_name] = numeric_value
+        if not fields:
+            QMessageBox.warning(self, "Invalid input", "At least one signal/value pair is required.")
+            return
+        if self._mode == "per_output":
+            if self.channel_combo is None:
+                QMessageBox.warning(self, "Invalid input", "Channel selection is required.")
+                return
+            channel = self.channel_combo.currentText().strip()
+            if not channel:
+                QMessageBox.warning(self, "Invalid input", "Channel name is required.")
+                return
+            self.result_step = StartupPerOutputStep(
+                channel=channel,
+                message=message,
+                fields=fields,
+                repeat=max(1, int(self.repeat_spin.value())),
+                dt_ms=max(0, int(self.delay_spin.value())),
+            )
+        elif self._mode == "teardown":
+            self.result_step = StartupTeardownStep(message=message, fields=fields)
+        else:
+            self.result_step = StartupGlobalStep(
+                message=message,
+                fields=fields,
+                repeat=max(1, int(self.repeat_spin.value())),
+                dt_ms=max(0, int(self.delay_spin.value())),
+            )
+        super().accept()
+
+class SequenceRunner(QObject):
+    progressed = pyqtSignal(int, str, float)
+    finished = pyqtSignal()
+
+    def __init__(
+        self,
+        channel_id: str,
+        set_output_cb: Callable[[str, float], None],
+        parent: Optional[QObject] = None,
+        now_fn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(parent)
+        self.channel_id = channel_id
+        self._set_output_cb = set_output_cb
+        self._now_fn = now_fn
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._advance)
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(500)
+        self._progress_timer.timeout.connect(self._emit_progress)
+        self._sequences: List[SequenceCfg] = []
+        self._enabled_sequences: List[SequenceCfg] = []
+        self._repeat_mode = SequenceRepeatMode.OFF
+        self._repeat_limit_s = 0
+        self._repeat_deadline: Optional[float] = None
+        self._sequence_index = -1
+        self._phase: str = "off"
+        self._phase_end: float = 0.0
+        self._sequence_end: float = 0.0
+        self._running = False
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def sequence_count(self) -> int:
+        return len(self._enabled_sequences)
+
+    def load(
+        self,
+        sequences: List[SequenceCfg],
+        repeat_mode: SequenceRepeatMode,
+        repeat_limit_s: int,
+    ) -> None:
+        self.reset()
+        self._sequences = list(sequences)
+        self._repeat_mode = repeat_mode
+        self._repeat_limit_s = int(max(0, repeat_limit_s))
+        self._enabled_sequences = [
+            seq
+            for seq in self._sequences
+            if seq.enabled
+            and seq.duration_s > 0
+            and seq.on_s > 0
+            and seq.off_s > 0
+        ]
+
+    def start(self) -> bool:
+        if self._running:
+            return False
+        if not self._enabled_sequences:
+            return False
+        start_time = self._now_fn()
+        if self._repeat_mode == SequenceRepeatMode.LIMIT and self._repeat_limit_s > 0:
+            self._repeat_deadline = start_time + float(self._repeat_limit_s)
+        else:
+            self._repeat_deadline = None
+        self._running = True
+        self._progress_timer.start()
+        self._enter_sequence(0, start_time)
+        return True
+
+    def stop(self) -> None:
+        if not self._running:
+            return
+        self._timer.stop()
+        self._progress_timer.stop()
+        self._running = False
+        self._sequence_index = -1
+        self._phase = "off"
+        self._phase_end = 0.0
+        self._sequence_end = 0.0
+        self._repeat_deadline = None
+        self._safe_output(0.0)
+        self._emit_progress()
+
+    def reset(self) -> None:
+        self.stop()
+
+    def emit_progress(self) -> None:
+        self._emit_progress()
+
+    def _enter_sequence(self, index: int, now: float) -> None:
+        if not self._enabled_sequences:
+            self.stop()
+            return
+        if index >= len(self._enabled_sequences):
+            index = 0
+        self._sequence_index = index
+        self._phase = "on"
+        sequence = self._enabled_sequences[self._sequence_index]
+        duration = float(max(0.01, sequence.duration_s))
+        self._sequence_end = now + duration
+        self._phase_end = min(self._sequence_end, now + float(max(0.01, sequence.on_s)))
+        self._apply_phase_output(sequence)
+        self._emit_progress()
+        self._schedule_next()
+
+    def _advance(self) -> None:
+        if not self._running:
+            return
+        now = self._now_fn()
+        if self._repeat_deadline is not None and now >= self._repeat_deadline:
+            self.stop()
+            self.finished.emit()
+            return
+        if now >= self._sequence_end:
+            if not self._advance_sequence(now):
+                self.stop()
+                self.finished.emit()
+            return
+        if now >= self._phase_end:
+            self._toggle_phase(now)
+            return
+        self._schedule_next()
+
+    def _advance_sequence(self, now: float) -> bool:
+        if not self._enabled_sequences:
+            return False
+        next_index = self._sequence_index + 1
+        deadline_reached = self._repeat_deadline is not None and now >= self._repeat_deadline
+        if next_index >= len(self._enabled_sequences):
+            if self._repeat_mode == SequenceRepeatMode.ENDLESS:
+                next_index = 0
+            elif self._repeat_mode == SequenceRepeatMode.LIMIT and not deadline_reached:
+                next_index = 0
+            else:
+                return False
+        if deadline_reached:
+            return False
+        self._enter_sequence(next_index, now)
+        return True
+
+    def _toggle_phase(self, now: float) -> None:
+        if not self._enabled_sequences or self._sequence_index < 0:
+            return
+        sequence = self._enabled_sequences[self._sequence_index]
+        if self._phase == "on":
+            self._phase = "off"
+            off_duration = float(max(0.01, sequence.off_s))
+            self._phase_end = min(self._sequence_end, now + off_duration)
+        else:
+            self._phase = "on"
+            on_duration = float(max(0.01, sequence.on_s))
+            self._phase_end = min(self._sequence_end, now + on_duration)
+        self._apply_phase_output(sequence)
+        self._emit_progress()
+        self._schedule_next()
+
+    def _schedule_next(self) -> None:
+        if not self._running:
+            return
+        now = self._now_fn()
+        targets: List[float] = [self._phase_end, self._sequence_end]
+        if self._repeat_deadline is not None:
+            targets.append(self._repeat_deadline)
+        upcoming = min(targets)
+        delay_ms = max(0, int(max(0.0, upcoming - now) * 1000))
+        self._timer.start(delay_ms)
+
+    def _apply_phase_output(self, sequence: SequenceCfg) -> None:
+        pwm = float(sequence.pwm if self._phase == "on" else 0.0)
+        self._safe_output(pwm)
+
+    def _safe_output(self, pwm: float) -> None:
+        try:
+            self._set_output_cb(self.channel_id, pwm)
+        except Exception:
+            # Suppress backend errors to avoid crashing the UI; caller handles reporting.
+            pass
+
+    def _emit_progress(self) -> None:
+        if not self._running or self._sequence_index < 0 or not self._enabled_sequences:
+            self.progressed.emit(-1, "off", 0.0)
+            return
+        remaining = max(0.0, self._phase_end - self._now_fn())
+        self.progressed.emit(self._sequence_index, self._phase, remaining)
+
 
 
 class BackendError(Exception):
@@ -380,27 +1390,13 @@ def ensure_directories() -> None:
     os.makedirs(PROFILE_DIR, exist_ok=True)
 
 
-def _load_signal_whitelist(path: str) -> List[str]:
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = yaml.safe_load(handle) or {}
-    except (OSError, yaml.YAMLError):
-        return []
-    values = data.get("writable_signals", [])
-    return [str(entry) for entry in values]
-
-
-WRITABLE_SIGNALS = set(_load_signal_whitelist(WHITELIST_PATH))
-
-
 def is_signal_writable(signal_name: str, message_name: str) -> bool:
-    if signal_name in WRITABLE_SIGNALS:
+    keywords = ("ctrl", "control", "init", "write", "cmd")
+    lower_message = message_name.lower()
+    if any(keyword in lower_message for keyword in keywords):
         return True
     lower_name = signal_name.lower()
-    lower_message = message_name.lower()
-    return "write" in lower_message or "cmd" in lower_message or "cmd" in lower_name
+    return any(keyword in lower_name for keyword in keywords)
 
 class _SignalSimulator:
     def __init__(self, config: SignalSimulationConfig) -> None:
@@ -551,6 +1547,17 @@ class BackendBase:
 
     def update_simulation_profile(self, profile: SignalSimulationConfig) -> None:
         raise BackendError("Simulation profiles are not supported by this backend.")
+
+    def send_message_by_name(
+        self,
+        message: str,
+        payload: Dict[str, Any],
+        *,
+        repeat: int = 1,
+        dt_ms: int = 0,
+        force: bool = False,
+    ) -> None:
+        raise NotImplementedError
 
 class DummyBackend(BackendBase):
     name = "Dummy"
@@ -814,6 +1821,36 @@ class DummyBackend(BackendBase):
             if value is not None:
                 self._set_override(signal, value)
 
+    def send_message_by_name(
+        self,
+        message: str,
+        payload: Dict[str, Any],
+        *,
+        repeat: int = 1,
+        dt_ms: int = 0,
+        force: bool = False,
+    ) -> None:
+        _ = repeat, dt_ms, force
+        if self._dbc is None:
+            raise BackendError("No DBC loaded for Dummy backend")
+        try:
+            dbc_message = self._dbc.get_message_by_name(message)
+        except KeyError:
+            raise BackendError(f"Message {message} not found in DBC")
+        valid_names = {signal.name for signal in dbc_message.signals}
+        overrides: Dict[str, float] = {}
+        for name, value in payload.items():
+            if name not in valid_names:
+                raise BackendError(f"Signal {name} not found in message {message}")
+            try:
+                overrides[name] = float(value)
+            except (TypeError, ValueError):
+                raise BackendError(f"Invalid value for signal {name}")
+        if not overrides:
+            return
+        for name, value in overrides.items():
+            self._set_override(name, value)
+
 class RealBackend(QObject, BackendBase):
     name = "Real"
 
@@ -823,7 +1860,7 @@ class RealBackend(QObject, BackendBase):
     def __init__(self) -> None:
         QObject.__init__(self)
         BackendBase.__init__(self)
-        self._settings = ConnectionSettings("", "socketcan", "vcan0", 500000)
+        self._settings = ConnectionSettings("", "socketcan", "can0", 500000)
         self._db = None
         self._bus = None
         self._notifier = None
@@ -832,7 +1869,7 @@ class RealBackend(QObject, BackendBase):
         self._signal_to_message: Dict[str, str] = {}
         self._channels: Dict[str, ChannelProfile] = {}
         self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
-
+        
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
 
@@ -845,18 +1882,28 @@ class RealBackend(QObject, BackendBase):
             raise BackendError(str(exc))
         try:
             self._bus = can.interface.Bus(
-                bustype=self._settings.bustype,
-                channel=self._settings.channel,
-                bitrate=self._settings.bitrate,
+                interface="pcan",
+                channel=self._settings.channel if hasattr(self._settings, "channel") else "PCAN_USBBUS1",
+                state=can.bus.BusState.ACTIVE,
+                fd=True,
+                # Nominal phase (500k)
+                f_clock_mhz=80,
+                nom_brp=10, nom_tseg1=12, nom_tseg2=3, nom_sjw=1,
+                # Data phase (2M)
+                data_brp=4, data_tseg1=7, data_tseg2=2, data_sjw=1,
             )
         except (can.CanError, OSError, ValueError) as exc:
             raise BackendError(str(exc))
+
         if self._db is None or self._bus is None:
             raise BackendError("Failed to initialize Real backend")
         self.apply_database(self._db)
         listener = _StatusListener(self)
+
         self._notifier = can.Notifier(self._bus, [listener], 0.1)
         self.connection_changed.emit(True, "Connected")
+
+
 
     def stop(self) -> None:
         if self._notifier is not None:
@@ -921,17 +1968,109 @@ class RealBackend(QObject, BackendBase):
             if not is_signal_writable(signal_name, message_name):
                 raise BackendError(f"Signal {signal_name} is not writable")
             payload[signal_name] = float(raw_value)
+        # payload enthält aktuell nur die gemappten Felder dieses Channels
         if not payload:
             return
         try:
-            data = message.encode(payload, scaling=True, strict=True)
-            can_message = can.Message(arbitration_id=message.frame_id, data=data, is_extended_id=False)
+            # --- NEU: vollständiges Dict aus DBC-Initials/0 bauen und payload drüberlegen ---
+            complete: Dict[str, float] = {
+                sig.name: (sig.initial if getattr(sig, "initial", None) is not None else 0.0)
+                for sig in message.signals
+            }
+            complete.update(payload)
+
+            data = message.encode(complete, scaling=True, strict=True)
+
+            can_message = can.Message(
+                arbitration_id=message.frame_id,
+                data=data,
+                is_extended_id=bool(getattr(message, "is_extended_frame", False)),
+                is_fd=True,
+                bitrate_switch=True,
+            )
             self._bus.send(can_message)
+
+            # Cache sinnvollerweise mit complete aktualisieren
             with self._lock:
-                for name, value in payload.items():
-                    self._signal_cache[name] = float(value)
+                valid_names = {s.name for s in message.signals}
+                for name, value in complete.items():
+                    if name in valid_names:
+                        self._signal_cache[name] = float(value)
+
         except (ValueError, can.CanError) as exc:
             raise BackendError(str(exc))
+
+    def send_message_by_name(
+        self,
+        message: str,
+        payload: Dict[str, Any],
+        *,
+        repeat: int = 1,
+        dt_ms: int = 0,
+        force: bool = False,
+    ) -> None:
+        _ = force
+        if self._db is None or self._bus is None:
+            raise BackendError("Real backend is not connected")
+        try:
+            dbc_message = self._db.get_message_by_name(message)
+        except KeyError:
+            raise BackendError(f"Message {message} not found in DBC")
+        valid_names = {signal.name for signal in dbc_message.signals}
+        prepared: Dict[str, float] = {}
+        for name, value in payload.items():
+            if name not in valid_names:
+                raise BackendError(f"Signal {name} not found in message {message}")
+            if not is_signal_writable(name, message):
+                raise BackendError(f"Signal {name} is not writable")
+            try:
+                prepared[name] = float(value)
+            except (TypeError, ValueError):
+                raise BackendError(f"Invalid value for signal {name}")
+# ... oberhalb wurden dbc_message und prepared bereits gebaut ...
+        if not prepared:
+            return
+        repeat_count = max(1, int(repeat))
+        interval = max(0, int(dt_ms)) / 1000.0
+        for attempt_index in range(repeat_count):
+            tries = 0
+            while tries < 3:
+                try:
+                    # --- FIX: vollständiges Payload aus prepared + Defaults der DBC-Signale ---
+                    complete: Dict[str, float] = dict(prepared)
+                    for sig in dbc_message.signals:              # statt: for sig in message.signals
+                        if sig.name not in complete:
+                            if getattr(sig, "initial", None) is not None:
+                                complete[sig.name] = sig.initial
+                            else:
+                                complete[sig.name] = 0.0          # sicherer Default
+
+                    # --- FIX: complete encodieren, nicht prepared ---
+                    data = dbc_message.encode(complete, scaling=True, strict=True)
+
+                    message_obj = can.Message(
+                        arbitration_id=dbc_message.frame_id,
+                        data=data,
+                        is_extended_id=bool(getattr(dbc_message, "is_extended_frame", False)),
+                        is_fd=True,
+                        bitrate_switch=True,
+                    )
+                    self._bus.send(message_obj)
+
+                    # --- FIX: Cache mit complete aktualisieren ---
+                    with self._lock:
+                        valid_names = {s.name for s in dbc_message.signals}
+                        for name, value in complete.items():
+                            if name in valid_names:
+                                self._signal_cache[name] = float(value)
+                    break
+                except (ValueError, can.CanError) as exc:
+                    tries += 1
+                    if tries >= 3:
+                        raise BackendError(str(exc))
+                    if interval > 0.0:
+                        time.sleep(interval)
+
 
     def update(self, dt: float) -> None:
         _ = dt
@@ -975,6 +2114,8 @@ class Logger:
         self._started = False
         self._signal_names: List[str] = []
         self._last_error = ""
+        self._writer: Optional[csv.writer] = None
+        self._decimal = "."
 
     def start(self, path: str, signal_names: Iterable[str]) -> bool:
         self.stop()
@@ -982,15 +2123,24 @@ class Logger:
             directory = os.path.dirname(path)
             if directory and not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
-            self._file = open(path, "w", encoding="utf-8")
+            opts = get_csv_opts()
+            self._decimal = opts.get("decimal", ".")
+            self._file = open(path, "w", encoding=opts.get("encoding", "utf-8"), newline="")
+            self._writer = csv.writer(
+                self._file,
+                delimiter=opts.get("sep", ","),
+                quoting=csv.QUOTE_MINIMAL,
+            )
         except OSError as exc:
             self._file = None
+            self._writer = None
             self._last_error = str(exc)
             return False
         self._signal_names = list(signal_names)
         header = ["timestamp"] + self._signal_names
-        self._file.write(",".join(header) + "\n")
-        self._file.flush()
+        if self._writer is not None:
+            self._writer.writerow(header)
+            self._file.flush()
         self._path = path
         self._started = True
         self._last_error = ""
@@ -1000,13 +2150,24 @@ class Logger:
         if self._file is not None:
             self._file.close()
         self._file = None
+        self._writer = None
         self._started = False
 
     def log_row(self, timestamp: str, values: Dict[str, float]) -> None:
-        if not self._started or self._file is None:
+        if not self._started or self._file is None or self._writer is None:
             return
-        ordered = [timestamp] + [f"{values.get(name, 0.0):.6f}" for name in self._signal_names]
-        self._file.write(",".join(ordered) + "\n")
+        ordered: List[str] = [timestamp]
+        for name in self._signal_names:
+            value = values.get(name, 0.0)
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            formatted = f"{numeric:.6f}"
+            if self._decimal != ".":
+                formatted = formatted.replace(".", self._decimal)
+            ordered.append(formatted)
+        self._writer.writerow(ordered)
 
     def is_running(self) -> bool:
         return self._started
@@ -1162,6 +2323,7 @@ class WatchlistWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
         button_layout = QHBoxLayout()
         remove_button = QPushButton("Remove Selected")
@@ -1249,6 +2411,157 @@ class WatchlistWidget(QWidget):
     def plot_signal_names(self) -> List[str]:
         return [name for name, checkbox in self._plot_checkboxes.items() if checkbox.isChecked()]
 
+
+class MultiAxisPlotDock(QDockWidget):
+    closed = pyqtSignal(int)
+
+    def __init__(self, identifier: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.identifier = identifier
+        self.setWindowTitle(f"Plot Window {identifier}")
+        self.setObjectName(f"MultiAxisPlotDock{identifier}")
+        self._paused = False
+        self._signals: Dict[str, dict] = {}
+        self._legend = None
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(4, 4, 4, 4)
+        controls_layout.addStretch(1)
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.clicked.connect(self._toggle_pause)
+        controls_layout.addWidget(self.pause_button)
+        self.save_button = QPushButton("Save PNG")
+        self.save_button.clicked.connect(self._save_png)
+        controls_layout.addWidget(self.save_button)
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.clicked.connect(self.clear_all)
+        controls_layout.addWidget(self.clear_button)
+        layout.addLayout(controls_layout)
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setMinimumHeight(220)
+        self._legend = self.plot_widget.addLegend()
+        self.plot_widget.showGrid(x=True, y=True)
+        self.plot_widget.setMenuEnabled(False)
+        self.plot_item = self.plot_widget.getPlotItem()
+        self.plot_item.showAxis('right')
+        self.right_view = pg.ViewBox()
+        self.plot_item.scene().addItem(self.right_view)
+        self.plot_item.getAxis('right').linkToView(self.right_view)
+        self.right_view.setXLink(self.plot_item.vb)
+        self.plot_item.vb.sigResized.connect(self._update_views)
+        self._update_views()
+        layout.addWidget(self.plot_widget)
+        self.setWidget(container)
+
+    def _toggle_pause(self) -> None:
+        self._paused = not self._paused
+        self.pause_button.setText("Resume" if self._paused else "Pause")
+
+    def _save_png(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save plot", os.path.join(BASE_DIR, f"plot_{self.identifier}.png"), "PNG Files (*.png)")
+        if not path:
+            return
+        pixmap = self.plot_widget.grab()
+        pixmap.save(path, "PNG")
+
+    def _update_views(self) -> None:
+        rect = self.plot_item.vb.sceneBoundingRect()
+        if rect:
+            self.right_view.setGeometry(rect)
+        self.right_view.linkedViewChanged(self.plot_item.vb, self.right_view.XAxis)
+
+    def add_signal(self, name: str, unit: str, side: Optional[str] = None) -> None:
+        side = (side or "left").lower()
+        if side not in {"left", "right"}:
+            side = "left"
+        existing = self._signals.get(name)
+        if existing:
+            if existing["side"] == side:
+                return
+            self.remove_signal(name)
+        pen = pg.intColor(len(self._signals))
+        curve = pg.PlotDataItem(pen=pen)
+        curve.setZValue(1)
+        if side == "left":
+            self.plot_item.addItem(curve)
+        else:
+            self.right_view.addItem(curve)
+        if self._legend:
+            self._legend.addItem(curve, name)
+        self._signals[name] = {
+            "buffer": deque(),
+            "curve": curve,
+            "side": side,
+            "unit": unit or "",
+        }
+
+    def remove_signal(self, name: str) -> None:
+        info = self._signals.pop(name, None)
+        if not info:
+            return
+        curve = info["curve"]
+        if info["side"] == "left":
+            self.plot_item.removeItem(curve)
+        else:
+            self.right_view.removeItem(curve)
+        if self._legend:
+            try:
+                self._legend.removeItem(curve)
+            except Exception:
+                pass
+
+    def clear_all(self) -> None:
+        for info in self._signals.values():
+            buffer: deque = info["buffer"]
+            buffer.clear()
+            info["curve"].setData([], [])
+
+    def update(self, timestamp: float, values: Dict[str, Optional[float]]) -> None:
+        if not self._signals:
+            return
+        cutoff = timestamp - 60.0
+        base_time: Optional[float] = None
+        for name, info in self._signals.items():
+            buffer: deque = info["buffer"]
+            value = values.get(name)
+            if value is not None:
+                buffer.append((timestamp, float(value)))
+            while buffer and buffer[0][0] < cutoff:
+                buffer.popleft()
+            if buffer:
+                if base_time is None or buffer[0][0] < base_time:
+                    base_time = buffer[0][0]
+        if base_time is None:
+            return
+        if self._paused:
+            return
+        for name, info in self._signals.items():
+            buffer: deque = info["buffer"]
+            if not buffer:
+                continue
+            times = [entry[0] - base_time for entry in buffer]
+            samples = [entry[1] for entry in buffer]
+            if len(times) > 5_000:
+                step = max(1, math.ceil(len(times) / 5_000))
+                dec_times = times[::step]
+                dec_samples = samples[::step]
+                if dec_times[-1] != times[-1]:
+                    dec_times.append(times[-1])
+                    dec_samples.append(samples[-1])
+                times, samples = dec_times, dec_samples
+            curve = info["curve"]
+            curve.setData(times, samples)
+        self.plot_item.enableAutoRange('y', True)
+        self.right_view.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+    def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
+        return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
+
+    def closeEvent(self, event) -> None:
+        self.closed.emit(self.identifier)
+        super().closeEvent(event)
 
 class SignalSimulationDialog(QDialog):
     def __init__(self, config: SignalSimulationConfig, parent: Optional[QWidget] = None) -> None:
@@ -1568,17 +2881,62 @@ class DummySimulationWidget(QGroupBox):
             return profile.analog.generator
         return ""
 
-class ChannelCardWidget(QGroupBox):
+class ChannelCardWidget(QWidget):
     command_requested = pyqtSignal(str, dict)
-    sequencer_requested = pyqtSignal(str, bool, float, float, float)
+    sequencer_requested = pyqtSignal(str, str)
+    sequencer_config_changed = pyqtSignal(str, object)
     plot_visibility_changed = pyqtSignal(str, bool)
     simulation_changed = pyqtSignal(str, dict)
+    section_collapse_changed = pyqtSignal(str, str, bool)
+    duplicate_requested = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
 
     def __init__(self, profile: ChannelProfile) -> None:
-        super().__init__(profile.name)
+        super().__init__()
+        self.setObjectName("channelCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(
+            "#channelCard { border: 1px solid palette(mid); border-radius: 4px; margin: 2px; padding: 4px; }"
+        )
         self.profile = profile
         self.state_label = QLabel("Idle")
-        self.enabled_checkbox = QCheckBox("Enabled")
+        self.status_led = QLabel("●")
+        self.status_led.setStyleSheet("color: red; font-size: 12px;")
+        self.name_label = QLabel(profile.name)
+        self.name_label.setStyleSheet("font-weight: 600;")
+        self.enabled_checkbox = QToolButton()
+        self.enabled_checkbox.setCheckable(True)
+        self.enabled_checkbox.setAutoRaise(True)
+        self.enabled_checkbox.setIcon(self.style().standardIcon(QStyle.SP_DialogYesButton))
+        self.enabled_checkbox.setToolTip("Enable channel output")
+        self.run_button = QToolButton()
+        self.run_button.setAutoRaise(True)
+        self.run_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.run_button.setToolTip("Start sequencer")
+        self.run_button.hide()
+        self.stop_button = QToolButton()
+        self.stop_button.setAutoRaise(True)
+        self.stop_button.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self.stop_button.setToolTip("Stop sequencer")
+        self.stop_button.hide()
+        self.toggle_sequencer_button = QToolButton()
+        self.toggle_sequencer_button.setCheckable(True)
+        self.toggle_sequencer_button.setAutoRaise(True)
+        self.toggle_sequencer_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        self.toggle_sequencer_button.setToolTip("Toggle sequencer editor")
+        self.duplicate_button = QToolButton()
+        self.duplicate_button.setAutoRaise(True)
+        self.duplicate_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
+        self.duplicate_button.setToolTip("Duplicate channel")
+        self.plot_checkbox = QToolButton()
+        self.plot_checkbox.setCheckable(True)
+        self.plot_checkbox.setAutoRaise(True)
+        self.plot_checkbox.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+        self.plot_checkbox.setToolTip("Toggle channel plot")
+        self.delete_button = QToolButton()
+        self.delete_button.setAutoRaise(True)
+        self.delete_button.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.delete_button.setToolTip("Remove channel")
         self.pwm_slider = QSlider(Qt.Horizontal)
         self.pwm_slider.setRange(0, 100)
         self.pwm_value = QLabel("0 %")
@@ -1587,110 +2945,336 @@ class ChannelCardWidget(QGroupBox):
         self.setpoint_spin = QDoubleSpinBox()
         self.setpoint_spin.setDecimals(2)
         self.setpoint_spin.setRange(-1_000.0, 1_000.0)
-        self.quick_off = QPushButton("OFF")
-        self.quick_low = QPushButton("20 %")
-        self.quick_mid = QPushButton("50 %")
-        self.quick_max = QPushButton("100 %")
-        self.apply_button = QPushButton("Apply")
-        self.off_button = QPushButton("All OFF")
-        self.sequence_on = QDoubleSpinBox()
-        self.sequence_on.setRange(0.1, 3600.0)
-        self.sequence_on.setValue(5.0)
-        self.sequence_off = QDoubleSpinBox()
-        self.sequence_off.setRange(0.1, 3600.0)
-        self.sequence_off.setValue(5.0)
-        self.sequence_duration = QDoubleSpinBox()
-        self.sequence_duration.setRange(0.1, 600.0)
-        self.sequence_duration.setValue(10.0)
-        self.sequence_start = QPushButton("Start Sequence")
-        self.sequence_stop = QPushButton("Stop")
+        self.quick_off = QToolButton()
+        self.quick_off.setText("0%")
+        self.quick_off.setToolTip("Set output to 0%")
+        self.quick_low = QToolButton()
+        self.quick_low.setText("20%")
+        self.quick_low.setToolTip("Set output to 20%")
+        self.quick_mid = QToolButton()
+        self.quick_mid.setText("50%")
+        self.quick_mid.setToolTip("Set output to 50%")
+        self.quick_max = QToolButton()
+        self.quick_max.setText("100%")
+        self.quick_max.setToolTip("Set output to 100%")
+        self.apply_button = QToolButton()
+        self.apply_button.setText("Apply")
+        self.apply_button.setAutoRaise(True)
+        self.off_button = QToolButton()
+        self.off_button.setText("All OFF")
+        self.off_button.setAutoRaise(True)
+        for button in (self.quick_off, self.quick_low, self.quick_mid, self.quick_max, self.apply_button, self.off_button):
+            button.setAutoRaise(True)
+        # nach UI-Erzeugung (Buttons/Slider) ergänzen:
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(60)          # kleines Debounce fürs Schieberegler-Draggen
+        self._live_timer.timeout.connect(self._emit_command)
+
+        # Apply-Button nicht mehr nutzen
+        self.apply_button.hide()
+        self.sequence_table = QTableWidget(0, 7)
+        self.sequence_table.setHorizontalHeaderLabels(
+            ["Order", "Name", "Duration [s]", "PWM [%]", "On [s]", "Off [s]", "Active"]
+        )
+        self.sequence_table.verticalHeader().setVisible(False)
+        self.sequence_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.sequence_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.sequence_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.sequence_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        for column in range(2, 6):
+            self.sequence_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        self.sequence_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.sequence_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        control_height = max(QSpinBox().sizeHint().height(), QDoubleSpinBox().sizeHint().height())
+        self.sequence_table.verticalHeader().setMinimumSectionSize(control_height)
+        self.sequence_table.verticalHeader().setDefaultSectionSize(control_height)
+        self.sequence_table.setStyleSheet("QTableView::item { padding: 0px; }")
+        self.sequence_table.setAlternatingRowColors(True)  # ← HIER
+        self.sequence_add = QToolButton()
+        self.sequence_add.setText("Add")
+        self.sequence_delete = QToolButton()
+        self.sequence_delete.setText("Del")
+        self.sequence_duplicate = QToolButton()
+        self.sequence_duplicate.setText("Dup")
+        self.sequence_up = QToolButton()
+        self.sequence_up.setText("Up")
+        self.sequence_down = QToolButton()
+        self.sequence_down.setText("Down")
+        self.sequence_start = QToolButton()
+        self.sequence_start.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.sequence_start.setToolTip("Start sequence")
+        self.sequence_stop = QToolButton()
+        self.sequence_stop.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self.sequence_stop.setToolTip("Stop sequence")
+        self.sequence_reset = QToolButton()
+        self.sequence_reset.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.sequence_reset.setToolTip("Reset sequence")
+        for button in (
+            self.sequence_add,
+            self.sequence_delete,
+            self.sequence_duplicate,
+            self.sequence_up,
+            self.sequence_down,
+            self.sequence_start,
+            self.sequence_stop,
+            self.sequence_reset,
+        ):
+            button.setAutoRaise(True)
         self.sequence_stop.setEnabled(False)
+        self.sequence_reset.setEnabled(False)
         self.sequence_status = QLabel("Sequence idle")
+        self.repeat_off_radio = QRadioButton("Off")
+        self.repeat_endless_radio = QRadioButton("Endless")
+        self.repeat_limit_radio = QRadioButton("Limit")
+        self.repeat_off_radio.setChecked(True)
+        self.repeat_time_edit = QTimeEdit()
+        self.repeat_time_edit.setDisplayFormat("HH:mm:ss")
+        self.repeat_time_edit.setTime(QTime(0, 5, 0))
+        self.repeat_time_edit.setEnabled(False)
         self.values_view = QTextBrowser()
         self.values_view.setFixedHeight(90)
-        self.plot_checkbox = QCheckBox("Show plot")
         self.sim_button = QToolButton()
         self.sim_button.setText("⚙ Sim")
         self.sim_button.clicked.connect(self._open_sim_dialog)
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setMinimumHeight(140)
+        self.plot_widget.setMinimumHeight(40)
+        self.plot_widget.setMaximumHeight(80)
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.addLegend()
         self.plot_widget.hide()
         self.command_curve = self.plot_widget.plot(name="Command", pen=pg.mkPen(QColor("orange"), width=2))
         self.feedback_curve = self.plot_widget.plot(name="Feedback", pen=pg.mkPen(QColor("steelblue"), width=2))
-        self._plot_times: deque[float] = deque(maxlen=1_200)
-        self._plot_command: deque[float] = deque(maxlen=1_200)
-        self._plot_feedback: deque[float] = deque(maxlen=1_200)
+        self._plot_times: deque[float] = deque()
+        self._plot_command: deque[float] = deque()
+        self._plot_feedback: deque[float] = deque()
+        self._updating_sequence_table = False
+        self._sequence_running = False
+        self._collapsible_sync = False
         self._build_layout()
         self._connect_signals()
         self._update_visibility()
+        self._update_sequence_buttons()
+        self.run_button.setEnabled(self._has_enabled_sequences())
+        self.stop_button.setEnabled(False)
 
     def _build_layout(self) -> None:
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        for button in (
+            self.enabled_checkbox,
+            self.run_button,
+            self.stop_button,
+            self.toggle_sequencer_button,
+            self.duplicate_button,
+            self.plot_checkbox,
+            self.delete_button,
+        ):
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+        header_layout.addWidget(self.status_led)
+        header_layout.addWidget(self.name_label)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.enabled_checkbox)
+        header_layout.addWidget(self.toggle_sequencer_button)
+        header_layout.addWidget(self.duplicate_button)
+        header_layout.addWidget(self.plot_checkbox)
+        header_layout.addWidget(self.delete_button)
+        self.toggle_sequencer_button.setChecked(False)
+        layout.addLayout(header_layout)
         layout.addWidget(self.state_label)
-        control_layout = QGridLayout()
-        row = 0
-        control_layout.addWidget(self.enabled_checkbox, row, 0, 1, 2)
-        control_layout.addWidget(self.plot_checkbox, row, 2)
-        row += 1
-        control_layout.addWidget(QLabel("PWM"), row, 0)
-        control_layout.addWidget(self.pwm_slider, row, 1)
-        control_layout.addWidget(self.pwm_value, row, 2)
-        row += 1
-        control_layout.addWidget(QLabel("Direction"), row, 0)
-        control_layout.addWidget(self.direction_combo, row, 1)
-        row += 1
-        control_layout.addWidget(QLabel("Setpoint"), row, 0)
-        control_layout.addWidget(self.setpoint_spin, row, 1)
-        row += 1
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addWidget(self.quick_off)
-        buttons_layout.addWidget(self.quick_low)
-        buttons_layout.addWidget(self.quick_mid)
-        buttons_layout.addWidget(self.quick_max)
-        buttons_layout.addStretch(1)
-        control_layout.addLayout(buttons_layout, row, 0, 1, 3)
-        row += 1
-        action_layout = QHBoxLayout()
+        form_layout = QFormLayout()
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(2)
+        pwm_widget = QWidget()
+        pwm_layout = QHBoxLayout(pwm_widget)
+        pwm_layout.setContentsMargins(0, 0, 0, 0)
+        pwm_layout.setSpacing(4)
+        pwm_layout.addWidget(self.pwm_slider, 1)
+        pwm_layout.addWidget(self.pwm_value)
+        form_layout.addRow("PWM", pwm_widget)
+        form_layout.addRow("Direction", self.direction_combo)
+        form_layout.addRow("Setpoint", self.setpoint_spin)
+        quick_widget = QWidget()
+        quick_layout = QHBoxLayout(quick_widget)
+        quick_layout.setContentsMargins(0, 0, 0, 0)
+        quick_layout.setSpacing(2)
+        for button in (self.quick_off, self.quick_low, self.quick_mid, self.quick_max):
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            quick_layout.addWidget(button)
+        quick_layout.addStretch(1)
+        form_layout.addRow("Quick", quick_widget)
+        action_widget = QWidget()
+        action_layout = QHBoxLayout(action_widget)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(4)
+        self.apply_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.off_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
         action_layout.addWidget(self.apply_button)
         action_layout.addWidget(self.off_button)
         action_layout.addStretch(1)
         action_layout.addWidget(self.sim_button)
-        control_layout.addLayout(action_layout, row, 0, 1, 3)
-        layout.addLayout(control_layout)
-        sequencer_group = QGroupBox("Sequencer")
-        seq_layout = QGridLayout()
-        seq_layout.addWidget(QLabel("ON (s)"), 0, 0)
-        seq_layout.addWidget(self.sequence_on, 0, 1)
-        seq_layout.addWidget(QLabel("OFF (s)"), 0, 2)
-        seq_layout.addWidget(self.sequence_off, 0, 3)
-        seq_layout.addWidget(QLabel("Duration (min)"), 1, 0)
-        seq_layout.addWidget(self.sequence_duration, 1, 1)
-        seq_layout.addWidget(self.sequence_start, 1, 2)
-        seq_layout.addWidget(self.sequence_stop, 1, 3)
-        seq_layout.addWidget(self.sequence_status, 2, 0, 1, 4)
-        sequencer_group.setLayout(seq_layout)
-        layout.addWidget(sequencer_group)
-        layout.addWidget(QLabel("Status signals"))
-        layout.addWidget(self.values_view)
+        form_layout.addRow("Actions", action_widget)
+        layout.addLayout(form_layout)
+        self.status_section = CollapsibleSection("Status signals")
+        self.status_section.set_content(self.values_view)
+        self.status_section.set_collapsed(True, animate=False)
+        self.status_section.toggled.connect(self._on_status_section_toggled)
+        layout.addWidget(self.status_section)
+        sequencer_container = QWidget()
+        seq_layout = QVBoxLayout(sequencer_container)
+        seq_layout.setContentsMargins(0, 0, 0, 0)
+        seq_layout.setSpacing(4)
+        self.sequence_table.horizontalHeader().setStretchLastSection(False)
+        seq_layout.addWidget(self.sequence_table)
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(2)
+        for button in (
+            self.sequence_add,
+            self.sequence_delete,
+            self.sequence_duplicate,
+            self.sequence_up,
+            self.sequence_down,
+        ):
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            toolbar_layout.addWidget(button)
+        toolbar_layout.addStretch(1)
+        seq_layout.addLayout(toolbar_layout)
+        repeat_widget = QWidget()
+        repeat_layout = QHBoxLayout(repeat_widget)
+        repeat_layout.setContentsMargins(0, 0, 0, 0)
+        repeat_layout.setSpacing(6)
+        repeat_layout.addWidget(self.repeat_off_radio)
+        repeat_layout.addWidget(self.repeat_endless_radio)
+        repeat_layout.addWidget(self.repeat_limit_radio)
+        repeat_layout.addWidget(self.repeat_time_edit)
+        repeat_layout.addStretch(1)
+        seq_layout.addWidget(repeat_widget)
+        seq_layout.addWidget(self.sequence_status)
+        sequence_controls = QHBoxLayout()
+        sequence_controls.setContentsMargins(0, 0, 0, 0)
+        sequence_controls.setSpacing(4)
+        sequence_controls.addWidget(self.sequence_start)
+        sequence_controls.addWidget(self.sequence_stop)
+        sequence_controls.addWidget(self.sequence_reset)
+        sequence_controls.addStretch(1)
+        seq_layout.addLayout(sequence_controls)
+        self.sequencer_section = CollapsibleSection("Sequencer")
+        self.sequencer_section.set_content(sequencer_container)
+        self.sequencer_section.set_collapsed(True, animate=False)
+        self.sequencer_section.toggled.connect(lambda expanded: self._on_section_toggle("sequencer", expanded))
+        layout.addWidget(self.sequencer_section)
         layout.addWidget(self.plot_widget)
 
+    def _on_status_section_toggled(self, expanded: bool) -> None:
+        self.section_collapse_changed.emit(self.profile.name, "status", not expanded)
+
+    def _on_section_toggle(self, section: str, expanded: bool) -> None:
+        if section == "sequencer":
+            if not self._collapsible_sync and self.toggle_sequencer_button.isChecked() != expanded:
+                self._collapsible_sync = True
+                self.toggle_sequencer_button.setChecked(expanded)
+                self._collapsible_sync = False
+        self.section_collapse_changed.emit(self.profile.name, section, not expanded)
+
     def _connect_signals(self) -> None:
-        self.pwm_slider.valueChanged.connect(lambda value: self.pwm_value.setText(f"{value} %"))
-        self.apply_button.clicked.connect(self._emit_command)
-        self.off_button.clicked.connect(self._emit_off)
-        self.quick_off.clicked.connect(self._emit_off)
-        self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
-        self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
-        self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
-        self.sequence_start.clicked.connect(self._start_sequence)
-        self.sequence_stop.clicked.connect(self._stop_sequence)
+        #self.pwm_slider.valueChanged.connect(lambda value: self.pwm_value.setText(f"{value} %"))
+        #self.apply_button.clicked.connect(self._emit_command)
+        #self.off_button.clicked.connect(self._emit_off)
+        #self.quick_off.clicked.connect(self._emit_off)
+        #self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
+        #self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
+        #self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
+        # neu:
+        self.pwm_slider.valueChanged.connect(self._on_pwm_changed)
+        self.quick_off.clicked.connect(lambda: self._on_quick_pwm(0))
+        self.quick_low.clicked.connect(lambda: self._on_quick_pwm(20))
+        self.quick_mid.clicked.connect(lambda: self._on_quick_pwm(50))
+        self.quick_max.clicked.connect(lambda: self._on_quick_pwm(100))
+        self.enabled_checkbox.toggled.connect(self._on_enabled_toggled)
+        self.sequence_add.clicked.connect(self._on_add_sequence)
+        self.sequence_delete.clicked.connect(self._on_delete_sequence)
+        self.sequence_duplicate.clicked.connect(self._on_duplicate_sequence)
+        self.sequence_up.clicked.connect(lambda: self._move_sequence(-1))
+        self.sequence_down.clicked.connect(lambda: self._move_sequence(1))
+        self.sequence_start.clicked.connect(lambda: self._emit_sequence_action("start"))
+        self.sequence_stop.clicked.connect(lambda: self._emit_sequence_action("stop"))
+        self.sequence_reset.clicked.connect(lambda: self._emit_sequence_action("reset"))
+        self.sequence_table.itemChanged.connect(self._on_sequence_item_changed)
+        self.repeat_off_radio.toggled.connect(self._on_repeat_mode_changed)
+        self.repeat_endless_radio.toggled.connect(self._on_repeat_mode_changed)
+        self.repeat_limit_radio.toggled.connect(self._on_repeat_mode_changed)
+        self.repeat_time_edit.timeChanged.connect(lambda _time: self._emit_sequence_config())
         self.plot_checkbox.toggled.connect(lambda checked: self._on_plot_toggled(checked))
+        self.run_button.clicked.connect(lambda: self._emit_sequence_action("start"))
+        self.stop_button.clicked.connect(lambda: self._emit_sequence_action("stop"))
+        self.toggle_sequencer_button.toggled.connect(self._on_sequencer_button_toggled)
+        self.duplicate_button.clicked.connect(lambda: self.duplicate_requested.emit(self.profile.name))
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self.profile.name))
 
     def _set_pwm_slider(self, value: int) -> None:
         self.pwm_slider.setValue(value)
         self.pwm_value.setText(f"{value} %")
+
+    def _on_sequencer_button_toggled(self, checked: bool) -> None:
+        if self._collapsible_sync:
+            return
+        self._collapsible_sync = True
+        self.sequencer_section.set_collapsed(not checked, animate=True)
+        self._collapsible_sync = False
+        self.section_collapse_changed.emit(self.profile.name, "sequencer", not checked)
+
+    def set_section_collapsed(self, section: str, collapsed: bool) -> None:
+        if section == "status":
+            self.status_section.set_collapsed(collapsed, animate=False)
+        elif section == "sequencer":
+            self._collapsible_sync = True
+            self.sequencer_section.set_collapsed(collapsed, animate=False)
+            self.toggle_sequencer_button.setChecked(not collapsed)
+            self._collapsible_sync = False
+
+    def section_collapsed(self, section: str) -> bool:
+        if section == "status":
+            return self.status_section.is_collapsed()
+        if section == "sequencer":
+            return self.sequencer_section.is_collapsed()
+        return False
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        enable_action = menu.addAction("Enabled")
+        enable_action.setCheckable(True)
+        enable_action.setChecked(self.enabled_checkbox.isChecked())
+        start_action = menu.addAction("Start sequencer")
+        stop_action = menu.addAction("Stop sequencer")
+        duplicate_action = menu.addAction("Duplicate…")
+        plot_action = menu.addAction("Show plot")
+        plot_action.setCheckable(True)
+        plot_action.setChecked(self.plot_checkbox.isChecked())
+        reset_action = menu.addAction("Reset channel…")
+        delete_action = menu.addAction("Delete channel")
+        selected = menu.exec_(event.globalPos())
+        if selected is None:
+            return
+        if selected == enable_action:
+            self.enabled_checkbox.toggle()
+        elif selected == start_action:
+            self._emit_sequence_action("start")
+        elif selected == stop_action:
+            self._emit_sequence_action("stop")
+        elif selected == duplicate_action:
+            self.duplicate_requested.emit(self.profile.name)
+        elif selected == plot_action:
+            self.plot_checkbox.setChecked(not self.plot_checkbox.isChecked())
+        elif selected == reset_action:
+            self._emit_off()
+        elif selected == delete_action:
+            self.delete_requested.emit(self.profile.name)
 
     def _emit_command(self) -> None:
         command = self._collect_command()
@@ -1702,21 +3286,257 @@ class ChannelCardWidget(QGroupBox):
             command["setpoint"] = 0.0
         self.command_requested.emit(self.profile.name, command)
 
-    def _start_sequence(self) -> None:
-        self.sequence_start.setEnabled(False)
-        self.sequence_stop.setEnabled(True)
-        self.sequencer_requested.emit(
-            self.profile.name,
-            True,
-            float(self.sequence_on.value()),
-            float(self.sequence_off.value()),
-            float(self.sequence_duration.value()),
-        )
+    def _emit_sequence_action(self, action: str) -> None:
+        if action == "start" and not self._has_enabled_sequences():
+            return
+        self.sequencer_requested.emit(self.profile.name, action)
 
-    def _stop_sequence(self) -> None:
-        self.sequence_start.setEnabled(True)
-        self.sequence_stop.setEnabled(False)
-        self.sequencer_requested.emit(self.profile.name, False, 0.0, 0.0, 0.0)
+    def _on_add_sequence(self) -> None:
+        self._updating_sequence_table = True
+        self._insert_sequence_row(None, self.sequence_table.rowCount())
+        self._update_sequence_order()
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _on_delete_sequence(self) -> None:
+        row = self.sequence_table.currentRow()
+        if row < 0:
+            row = self.sequence_table.rowCount() - 1
+        if row < 0:
+            return
+        self._updating_sequence_table = True
+        self.sequence_table.removeRow(row)
+        self._update_sequence_order()
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _on_duplicate_sequence(self) -> None:
+        row = self.sequence_table.currentRow()
+        if row < 0:
+            return
+        config = self._sequence_from_row(row)
+        self._updating_sequence_table = True
+        self._insert_sequence_row(config, row + 1)
+        self._update_sequence_order()
+        self.sequence_table.selectRow(row + 1)
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _move_sequence(self, offset: int) -> None:
+        row = self.sequence_table.currentRow()
+        if row < 0:
+            return
+        target = row + offset
+        if target < 0 or target >= self.sequence_table.rowCount():
+            return
+        config = self._sequence_from_row(row)
+        self._updating_sequence_table = True
+        self.sequence_table.removeRow(row)
+        self._insert_sequence_row(config, target)
+        self._update_sequence_order()
+        self.sequence_table.selectRow(target)
+        self._updating_sequence_table = False
+        self._emit_sequence_config()
+
+    def _on_sequence_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_sequence_table:
+            return
+        if item.column() not in {1, 6}:
+            return
+        self._emit_sequence_config()
+
+    def _on_repeat_mode_changed(self) -> None:
+        if self._updating_sequence_table:
+            return
+        self.repeat_time_edit.setEnabled(self.repeat_limit_radio.isChecked())
+        self._emit_sequence_config()
+
+    def _insert_sequence_row(self, cfg: Optional[SequenceCfg], row: int) -> None:
+        self.sequence_table.insertRow(row)
+        order_item = QTableWidgetItem(str(row + 1))
+        order_item.setFlags(Qt.ItemIsEnabled)
+        self.sequence_table.setItem(row, 0, order_item)
+        name = cfg.name if cfg else f"Sequence {row + 1}"
+        name_item = QTableWidgetItem(name)
+        self.sequence_table.setItem(row, 1, name_item)
+        duration_spin = QSpinBox()
+        duration_spin.setRange(1, 86_400)
+        duration_spin.setValue(cfg.duration_s if cfg else 60)
+        duration_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 2, duration_spin)
+        pwm_spin = QSpinBox()
+        pwm_spin.setRange(0, 100)
+        pwm_spin.setValue(cfg.pwm if cfg else 50)
+        pwm_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 3, pwm_spin)
+        on_spin = QDoubleSpinBox()
+        on_spin.setDecimals(2)
+        on_spin.setRange(0.01, 3600.0)
+        on_spin.setSingleStep(0.1)
+        on_spin.setValue(cfg.on_s if cfg else 1.0)
+        on_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 4, on_spin)
+        off_spin = QDoubleSpinBox()
+        off_spin.setDecimals(2)
+        off_spin.setRange(0.01, 3600.0)
+        off_spin.setSingleStep(0.1)
+        off_spin.setValue(cfg.off_s if cfg else 1.0)
+        off_spin.valueChanged.connect(self._emit_sequence_config)
+        self.sequence_table.setCellWidget(row, 5, off_spin)
+        enabled_item = QTableWidgetItem()
+        enabled_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        enabled_item.setCheckState(Qt.Checked if (cfg.enabled if cfg else True) else Qt.Unchecked)
+        self.sequence_table.setItem(row, 6, enabled_item)
+
+    def _update_sequence_order(self) -> None:
+        for index in range(self.sequence_table.rowCount()):
+            item = self.sequence_table.item(index, 0)
+            if item:
+                item.setText(str(index + 1))
+
+    def _sequence_from_row(self, row: int) -> SequenceCfg:
+        name_item = self.sequence_table.item(row, 1)
+        name = name_item.text().strip() if name_item else f"Sequence {row + 1}"
+        duration_spin = self.sequence_table.cellWidget(row, 2)
+        pwm_spin = self.sequence_table.cellWidget(row, 3)
+        on_spin = self.sequence_table.cellWidget(row, 4)
+        off_spin = self.sequence_table.cellWidget(row, 5)
+        enabled_item = self.sequence_table.item(row, 6)
+        duration = int(duration_spin.value()) if isinstance(duration_spin, QSpinBox) else 60
+        pwm = int(pwm_spin.value()) if isinstance(pwm_spin, QSpinBox) else 0
+        on_value = float(on_spin.value()) if isinstance(on_spin, QDoubleSpinBox) else 1.0
+        off_value = float(off_spin.value()) if isinstance(off_spin, QDoubleSpinBox) else 1.0
+        enabled = enabled_item.checkState() == Qt.Checked if enabled_item else True
+        return SequenceCfg(name=name, duration_s=duration, pwm=pwm, on_s=on_value, off_s=off_value, enabled=enabled)
+
+    def _collect_sequences(self) -> List[SequenceCfg]:
+        return [self._sequence_from_row(row) for row in range(self.sequence_table.rowCount())]
+
+    def _has_enabled_sequences(self) -> bool:
+        return any(sequence.enabled for sequence in self._collect_sequences())
+
+    def _emit_sequence_config(self) -> None:
+        if self._updating_sequence_table:
+            return
+        sequences = self._collect_sequences()
+        repeat_mode = self._current_repeat_mode()
+        repeat_limit = self._repeat_limit_seconds()
+        payload = {
+            "sequences": sequences,
+            "repeat_mode": repeat_mode,
+            "repeat_limit_s": repeat_limit,
+        }
+        self.sequencer_config_changed.emit(self.profile.name, payload)
+        self._update_sequence_buttons()
+
+    def _current_repeat_mode(self) -> SequenceRepeatMode:
+        if self.repeat_endless_radio.isChecked():
+            return SequenceRepeatMode.ENDLESS
+        if self.repeat_limit_radio.isChecked():
+            return SequenceRepeatMode.LIMIT
+        return SequenceRepeatMode.OFF
+
+    def _repeat_limit_seconds(self) -> int:
+        if not self.repeat_limit_radio.isChecked():
+            return 0
+        time_value = self.repeat_time_edit.time()
+        return time_value.hour() * 3600 + time_value.minute() * 60 + time_value.second()
+
+    def set_sequencer_config(self, config: ChannelConfig) -> None:
+        self._updating_sequence_table = True
+        self.sequence_table.setRowCount(0)
+        for sequence in config.sequences:
+            self._insert_sequence_row(sequence, self.sequence_table.rowCount())
+        self._update_sequence_order()
+        if config.repeat_mode == SequenceRepeatMode.ENDLESS:
+            self.repeat_endless_radio.setChecked(True)
+        elif config.repeat_mode == SequenceRepeatMode.LIMIT:
+            self.repeat_limit_radio.setChecked(True)
+        else:
+            self.repeat_off_radio.setChecked(True)
+        self.repeat_time_edit.setTime(self._seconds_to_time(config.repeat_limit_s))
+        self.repeat_time_edit.setEnabled(config.repeat_mode == SequenceRepeatMode.LIMIT)
+        self._updating_sequence_table = False
+        self._update_sequence_buttons()
+
+    def _seconds_to_time(self, seconds: int) -> QTime:
+        seconds = max(0, int(seconds))
+        hours = min(23, seconds // 3600)
+        minutes = min(59, (seconds % 3600) // 60)
+        secs = min(59, seconds % 60)
+        return QTime(hours, minutes, secs)
+
+    def set_sequence_running(self, running: bool) -> None:
+        self._sequence_running = running
+        self.sequence_stop.setEnabled(running)
+        self.sequence_reset.setEnabled(running or self.sequence_table.rowCount() > 0)
+        self._set_sequence_controls_enabled(not running)
+        if not running:
+            self.sequence_status.setText("Sequence idle")
+        self._update_sequence_buttons()
+        self.run_button.setEnabled(not running and self._has_enabled_sequences())
+        self.stop_button.setEnabled(running)
+
+    def _set_sequence_controls_enabled(self, enabled: bool) -> None:
+        self.sequence_table.setEnabled(enabled)
+        for control in (
+            self.sequence_add,
+            self.sequence_delete,
+            self.sequence_duplicate,
+            self.sequence_up,
+            self.sequence_down,
+        ):
+            control.setEnabled(enabled)
+        for radio in (self.repeat_off_radio, self.repeat_endless_radio, self.repeat_limit_radio):
+            radio.setEnabled(enabled)
+        self.repeat_time_edit.setEnabled(enabled and self.repeat_limit_radio.isChecked())
+
+    def update_sequence_status(
+        self,
+        seq_index: Optional[int],
+        total_sequences: int,
+        phase: Optional[str],
+        remaining_s: float,
+        running: bool,
+    ) -> None:
+        self._sequence_running = running
+        if running and seq_index is not None and seq_index >= 0 and total_sequences > 0:
+            seq_no = seq_index + 1
+            phase_label = "On" if phase == "on" else "Off"
+            remaining = max(0.0, remaining_s)
+            minutes = int(remaining // 60)
+            seconds = int(remaining % 60)
+            self.sequence_status.setText(
+                f"Seq {seq_no}/{total_sequences} • Phase: {phase_label} • Rest: {minutes:02d}:{seconds:02d}"
+            )
+        else:
+            self.sequence_status.setText("Sequence idle")
+        self.sequence_stop.setEnabled(running)
+        self.sequence_reset.setEnabled((running and self.sequence_table.rowCount() > 0) or (not running and self.sequence_table.rowCount() > 0))
+        self._set_sequence_controls_enabled(not running)
+        self._update_sequence_buttons()
+        self.run_button.setEnabled(not running and self._has_enabled_sequences())
+        self.stop_button.setEnabled(running)
+
+    def _update_sequence_buttons(self) -> None:
+        has_sequences = self.sequence_table.rowCount() > 0
+        has_enabled = any(
+            self.sequence_table.item(row, 6) and self.sequence_table.item(row, 6).checkState() == Qt.Checked
+            for row in range(self.sequence_table.rowCount())
+        )
+        if not self._sequence_running:
+            self.sequence_start.setEnabled(has_sequences and has_enabled)
+        else:
+            self.sequence_start.setEnabled(False)
+        self.sequence_reset.setEnabled(has_sequences)
+        if not self._sequence_running:
+            for control in (
+                self.sequence_delete,
+                self.sequence_duplicate,
+                self.sequence_up,
+                self.sequence_down,
+            ):
+                control.setEnabled(has_sequences)
 
     def _collect_command(self) -> Dict[str, float]:
         command: Dict[str, float] = {}
@@ -1755,14 +3575,10 @@ class ChannelCardWidget(QGroupBox):
     def update_status(self, status: Dict[str, float]) -> None:
         lines = [f"{key}: {value:.4f}" for key, value in sorted(status.items())]
         self.values_view.setPlainText("\n".join(lines))
+        self.status_section.set_badge(str(len(lines)))
 
     def update_state_label(self, text: str) -> None:
         self.state_label.setText(text)
-
-    def update_sequencer_status(self, text: str, running: bool) -> None:
-        self.sequence_status.setText(text)
-        self.sequence_start.setEnabled(not running)
-        self.sequence_stop.setEnabled(running)
 
     def set_dummy_mode(self, enabled: bool) -> None:
         self.sim_button.setVisible(enabled)
@@ -1783,14 +3599,19 @@ class ChannelCardWidget(QGroupBox):
         self._plot_times.append(timestamp)
         self._plot_command.append(float(command_value))
         self._plot_feedback.append(float(feedback_value))
+        cutoff = timestamp - 60.0
+        self._trim_history(cutoff)
         if not self.plot_checkbox.isChecked():
             return
         if not self._plot_times:
             return
         base_time = self._plot_times[0]
         times = [value - base_time for value in self._plot_times]
-        self.command_curve.setData(times, list(self._plot_command))
-        self.feedback_curve.setData(times, list(self._plot_feedback))
+        command = list(self._plot_command)
+        feedback = list(self._plot_feedback)
+        times, command, feedback = self._decimate_samples(times, command, feedback)
+        self.command_curve.setData(times, command)
+        self.feedback_curve.setData(times, feedback)
         self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     def reset_plot(self) -> None:
@@ -1806,6 +3627,30 @@ class ChannelCardWidget(QGroupBox):
             self.reset_plot()
         self.plot_visibility_changed.emit(self.profile.name, checked)
 
+    def _trim_history(self, cutoff: float) -> None:
+        while self._plot_times and self._plot_times[0] < cutoff:
+            self._plot_times.popleft()
+            self._plot_command.popleft()
+            self._plot_feedback.popleft()
+
+    def _decimate_samples(
+        self,
+        times: List[float],
+        command: List[float],
+        feedback: List[float],
+    ) -> Tuple[List[float], List[float], List[float]]:
+        if len(times) <= 5_000:
+            return times, command, feedback
+        step = max(1, math.ceil(len(times) / 5_000))
+        dec_times = times[::step]
+        dec_command = command[::step]
+        dec_feedback = feedback[::step]
+        if dec_times[-1] != times[-1]:
+            dec_times.append(times[-1])
+            dec_command.append(command[-1])
+            dec_feedback.append(feedback[-1])
+        return dec_times, dec_command, dec_feedback
+
     def _open_sim_dialog(self) -> None:
         dialog = ChannelSimulationDialog(self.profile, parent=self)
         if dialog.exec_() == QDialog.Accepted:
@@ -1813,6 +3658,32 @@ class ChannelCardWidget(QGroupBox):
             if updated is not None:
                 self.profile.sim.update(updated)
                 self.simulation_changed.emit(self.profile.name, dict(self.profile.sim))
+
+    @pyqtSlot(int)
+    def _on_pwm_changed(self, value: int) -> None:
+        self.pwm_value.setText(f"{value} %")
+        if self.enabled_checkbox.isChecked():
+            self._live_timer.start()  # sendet nach kurzer Pause automatisch
+
+    def _on_quick_pwm(self, value: int) -> None:
+        # DO hat keinen PWM-Slider → Quick "0%" = aus
+        if self.profile.type == "DO":
+            if value == 0:
+                self._emit_off()
+            return
+        self._set_pwm_slider(value)
+        if self.enabled_checkbox.isChecked():
+            # Quick-Buttons sollen sofort wirken (ohne Debounce)
+            self._emit_command()
+
+    def _on_enabled_toggled(self, checked: bool) -> None:
+        if checked:
+            # direkt aktuellen PWM/Setpoint übernehmen
+            self._emit_command()
+        else:
+            # sauber ausschalten
+            self._emit_off()
+
 
 
 class ChannelSimulationDialog(QDialog):
@@ -1843,6 +3714,46 @@ class ChannelSimulationDialog(QDialog):
     def _accept(self) -> None:
         self.result_parameters = {key: float(spin.value()) for key, spin in self._spins.items()}
         self.accept()
+
+
+class ChannelDuplicateDialog(QDialog):
+    def __init__(
+        self,
+        source: ChannelProfile,
+        suggested_id: str,
+        existing_ids: Iterable[str],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Duplicate Channel")
+        self.target_combo = QComboBox()
+        self.target_combo.setEditable(True)
+        if suggested_id:
+            self.target_combo.addItem(suggested_id)
+            self.target_combo.setCurrentText(suggested_id)
+        for identifier in sorted({str(value) for value in existing_ids}):
+            if identifier != suggested_id:
+                self.target_combo.addItem(identifier)
+        self.name_edit = QLineEdit(suggested_id)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.addRow("Source", QLabel(source.name))
+        form.addRow("Target ID", self.target_combo)
+        form.addRow("Display name", self.name_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @property
+    def target_id(self) -> str:
+        return self.target_combo.currentText().strip()
+
+    @property
+    def display_name(self) -> str:
+        return self.name_edit.text().strip()
+
 
 class ChannelBuilderDialog(QDialog):
     def __init__(self, database, profile: Optional[ChannelProfile] = None, parent: Optional[QWidget] = None) -> None:
@@ -2060,6 +3971,13 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ECU Control")
+        self.setDockOptions(
+            self.dockOptions()
+            | QMainWindow.AllowTabbedDocks
+            | QMainWindow.AllowNestedDocks
+            | QMainWindow.AnimatedDocks
+        )
+        self.setDockNestingEnabled(True)
         ensure_directories()
         self.backends = {
             DummyBackend.name: DummyBackend,
@@ -2076,7 +3994,8 @@ class MainWindow(QMainWindow):
         self._channel_cards: Dict[str, ChannelCardWidget] = {}
         self._channel_status: Dict[str, Dict[str, float]] = {}
         self._channel_commands: Dict[str, Dict[str, float]] = {}
-        self._sequencers: Dict[str, SequencerState] = {}
+        self._sequencer_configs: Dict[str, ChannelConfig] = {}
+        self._sequence_runners: Dict[str, SequenceRunner] = {}
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -2089,6 +4008,40 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = False
         self._show_dummy_advanced = False
         self._multi_plot_enabled = False
+        self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
+        self._plot_assignments: Dict[str, Tuple[int, str]] = {}
+        self._plot_counter = 0
+        self._max_plot_windows = 8
+        self._active_plot_id: Optional[int] = None
+        self._last_plot_dock: Optional[QDockWidget] = None
+        self._suspend_plot_assignment = False
+        self._hardware_apply_required = False
+        self.channels_dock: Optional[QDockWidget] = None
+        self.signals_dock: Optional[QDockWidget] = None
+        self._saved_dock_state: Optional[QByteArray] = None
+        self._channel_grid_cols = 2
+        self._channel_columns: List[QVBoxLayout] = []
+        self._channel_columns_layout: Optional[QHBoxLayout] = None
+        self._channel_collapse_state: Dict[str, Dict[str, bool]] = {}
+        self._signals_log_visible = True
+        self._signals_log_height = 200
+        self._toolbar_visible = True
+        self._csv_preset_key = "excel_de"
+        self._show_startup_tab = False
+        self._startup_tab_index: int = -1
+        self._startup_config = StartupConfig()
+        self._startup_on_connect = False
+        self._startup_on_apply = False
+        self._startup_delay_ms = 0
+        self._startup_only_on_change = False
+        self._startup_last_payloads: Dict[Tuple[str, Optional[str]], Dict[str, float]] = {}
+        self._startup_worker_thread: Optional[QThread] = None
+        self._startup_worker: Optional[StartupWorker] = None
+        self._startup_running = False
+        self._startup_pending_mode: Optional[str] = None
+        self._inline_init_done = False
+        self._startup_status_messages: List[str] = []
+        self._startup_is_valid = False
         self._restore_settings()
         self._build_ui()
         self._timer = QTimer(self)
@@ -2099,117 +4052,382 @@ class MainWindow(QMainWindow):
 
     # UI construction
     def _build_ui(self) -> None:
+        self._build_menu()
         self.status_indicator = QLabel("●")
         self.status_indicator.setStyleSheet("color: red; font-size: 16pt;")
         self.status_message_label = QLabel("Disconnected")
         status_bar = QStatusBar()
         status_bar.addWidget(self.status_indicator)
         status_bar.addWidget(self.status_message_label, 1)
+        self.csv_preset_status_label = QLabel()
+        status_bar.addPermanentWidget(self.csv_preset_status_label)
         self.setStatusBar(status_bar)
+        self.dashboard_bar = QToolBar("Dashboard", self)
+        self.dashboard_bar.setObjectName("Toolbar_Dashboard") 
+        self.dashboard_bar.setMovable(False)
+        self.dashboard_bar.setIconSize(QSize(16, 16))
+        self.addToolBar(Qt.TopToolBarArea, self.dashboard_bar)
+        self.dashboard_bar.visibilityChanged.connect(self._on_toolbar_visibility_changed)
+        self.dashboard_bar.setVisible(self._toolbar_visible)
+        self._build_dashboard_toolbar()
+        self.central_stack = QStackedWidget()
+        self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._central_placeholder = QWidget()
+        self._central_placeholder.setMinimumSize(0, 0)
+        self._central_placeholder.setMaximumSize(0, 0)
+        self._central_placeholder.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.central_stack.addWidget(self._central_placeholder)
         self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
-        self._build_dashboard_tab()
+        self.central_stack.addWidget(self.tab_widget)
+        self.central_stack.setCurrentWidget(self._central_placeholder)
+        self.setCentralWidget(self.central_stack)
         self._build_channels_tab()
         self._build_signals_tab()
+        #self._apply_default_dock_layout()
+        #if not self._restore_dock_layout():
+        #    self._apply_default_dock_layout()
+        self._saved_dock_state = None   # zur Sicherheit
+        self._apply_default_dock_layout()
+        self._build_startup_tab()
         self._build_dummy_tab()
-        self._build_logging_tab()
         self._update_dummy_tab_visibility()
+        self._update_central_stack_visibility()
+        self._update_csv_status_label()
 
-    def _build_dashboard_tab(self) -> None:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        header_layout = QHBoxLayout()
-        header_layout.addWidget(QLabel("Mode:"))
+    def _build_menu(self) -> None:
+        menu_bar = self.menuBar()
+        setup_menu = menu_bar.addMenu("Setup")
+        self.save_setup_action = QAction("Save Setup…", self)
+        self.save_setup_action.triggered.connect(self._export_setup)
+        setup_menu.addAction(self.save_setup_action)
+        self.load_setup_action = QAction("Load Setup…", self)
+        self.load_setup_action.triggered.connect(self._import_setup)
+        setup_menu.addAction(self.load_setup_action)
+        setup_menu.addSeparator()
+        self.save_default_action = QAction("Save as Default…", self)
+        self.save_default_action.triggered.connect(self._save_as_default)
+        setup_menu.addAction(self.save_default_action)
+        self.reset_defaults_action = QAction("Reset to Defaults…", self)
+        self.reset_defaults_action.triggered.connect(self._prompt_reset_defaults)
+        setup_menu.addAction(self.reset_defaults_action)
+        setup_menu.addSeparator()
+        self.apply_hardware_action = QAction("Apply to hardware", self)
+        self.apply_hardware_action.triggered.connect(self._apply_to_hardware)
+        setup_menu.addAction(self.apply_hardware_action)
+        self._update_apply_action_state()
+
+        view_menu = menu_bar.addMenu("View")
+        self.show_log_action = QAction("Show Log", self)
+        self.show_log_action.setCheckable(True)
+        self.show_log_action.setChecked(self._signals_log_visible)
+        self.show_log_action.toggled.connect(self._toggle_log_visibility)
+        self.show_dummy_action = QAction("Dummy Advanced", self)
+        self.show_dummy_action.setCheckable(True)
+        self.show_dummy_action.setChecked(self._show_dummy_advanced)
+        self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
+        view_menu.addAction(self.show_log_action)
+        view_menu.addAction(self.show_dummy_action)
+
+        self.show_startup_action = QAction("Startup", self)
+        self.show_startup_action.setCheckable(True)
+        self.show_startup_action.setChecked(self._show_startup_tab)
+        self.show_startup_action.toggled.connect(self._toggle_startup_tab_visibility)
+        view_menu.addAction(self.show_startup_action)
+
+        view_menu.addSeparator()
+        self.reset_layout_action = QAction("Reset Layout", self)
+        self.reset_layout_action.triggered.connect(self._reset_layout)
+        view_menu.addAction(self.reset_layout_action)
+
+    def _build_dashboard_toolbar(self) -> None:
+        self.dashboard_bar.clear()
+        mode_widget = QWidget()
+        mode_layout = QHBoxLayout(mode_widget)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(4)
+        mode_layout.addWidget(QLabel("Mode"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(self.backends.keys())
         self.mode_combo.setCurrentText(self.backend_name)
         self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
-        header_layout.addWidget(self.mode_combo)
-        header_layout.addStretch(1)
-        layout.addLayout(header_layout)
-        form = QFormLayout()
+        mode_layout.addWidget(self.mode_combo)
+        mode_action = QWidgetAction(self.dashboard_bar)
+        mode_action.setDefaultWidget(mode_widget)
+        self.dashboard_bar.addAction(mode_action)
+
+        dbc_widget = QWidget()
+        dbc_layout = QHBoxLayout(dbc_widget)
+        dbc_layout.setContentsMargins(0, 0, 0, 0)
+        dbc_layout.setSpacing(4)
+        dbc_layout.addWidget(QLabel("DBC"))
         self.dbc_edit = QLineEdit(self._qt_settings.value("dbc_path", os.path.join(BASE_DIR, "ecu-test.dbc")))
-        browse_button = QPushButton("Browse…")
+        self.dbc_edit.setMinimumWidth(160)
+        browse_button = QToolButton()
+        browse_button.setAutoRaise(True)
+        browse_button.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        browse_button.setToolTip("Browse DBC file")
         browse_button.clicked.connect(self._browse_dbc)
-        dbc_layout = QHBoxLayout()
         dbc_layout.addWidget(self.dbc_edit)
         dbc_layout.addWidget(browse_button)
-        dbc_widget = QWidget()
-        dbc_widget.setLayout(dbc_layout)
-        form.addRow("DBC path", dbc_widget)
+        dbc_action = QWidgetAction(self.dashboard_bar)
+        dbc_action.setDefaultWidget(dbc_widget)
+        self.dashboard_bar.addAction(dbc_action)
+
+        bus_widget = QWidget()
+        bus_layout = QHBoxLayout(bus_widget)
+        bus_layout.setContentsMargins(0, 0, 0, 0)
+        bus_layout.setSpacing(4)
         self.bustype_combo = QComboBox()
         self.bustype_combo.addItems(["socketcan", "vector", "pcan"])
         self.bustype_combo.setCurrentText(self._qt_settings.value("bustype", "socketcan"))
-        form.addRow("Bus type", self.bustype_combo)
-        self.channel_edit = QLineEdit(self._qt_settings.value("channel", "vcan0"))
-        form.addRow("Channel", self.channel_edit)
+        self.channel_edit = QLineEdit(self._qt_settings.value("channel", "can0"))
+        self.channel_edit.setMaximumWidth(90)
         self.bitrate_spin = QSpinBox()
         self.bitrate_spin.setRange(10_000, 1_000_000)
         self.bitrate_spin.setSingleStep(10_000)
         self.bitrate_spin.setValue(int(self._qt_settings.value("bitrate", 500_000)))
-        form.addRow("Bitrate", self.bitrate_spin)
-        layout.addLayout(form)
-        button_layout = QHBoxLayout()
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self._connect_backend)
-        self.disconnect_button = QPushButton("Disconnect")
-        self.disconnect_button.clicked.connect(self._disconnect_backend)
-        button_layout.addWidget(self.connect_button)
-        button_layout.addWidget(self.disconnect_button)
-        button_layout.addStretch(1)
-        layout.addLayout(button_layout)
-        action_layout = QHBoxLayout()
-        self.all_off_button = QPushButton("All outputs OFF")
-        self.all_off_button.clicked.connect(self._all_outputs_off)
-        self.emergency_button = QPushButton("Emergency Stop")
-        self.emergency_button.clicked.connect(self._emergency_stop)
-        action_layout.addWidget(self.all_off_button)
-        action_layout.addWidget(self.emergency_button)
-        action_layout.addStretch(1)
-        layout.addLayout(action_layout)
-        self.show_dummy_checkbox = QCheckBox("Show Dummy Advanced tab")
-        self.show_dummy_checkbox.setChecked(self._show_dummy_advanced)
-        self.show_dummy_checkbox.stateChanged.connect(self._on_show_dummy_tab_changed)
-        layout.addWidget(self.show_dummy_checkbox)
-        layout.addStretch(1)
-        self.tab_widget.addTab(widget, "Dashboard")
+        self.bitrate_spin.setMaximumWidth(90)
+        bus_layout.setContentsMargins(0, 0, 0, 0)
+        bus_layout.setSpacing(6)
 
+        def add_pair(layout, text, widget):
+            w = QWidget()
+            row = QHBoxLayout(w)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            lab = QLabel(text + ":")
+            lab.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            row.addWidget(lab)
+            row.addWidget(widget)
+            layout.addWidget(w)
+
+        add_pair(bus_layout, "Bus",     self.bustype_combo)
+        add_pair(bus_layout, "Ch",      self.channel_edit)
+        # direkt nach dem Erzeugen von self.channel_edit:
+        self.channel_edit.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.channel_edit.setMaximumWidth(70)  # oder passend z.B. 60–90 px
+
+        add_pair(bus_layout, "Bitrate", self.bitrate_spin)
+        bus_action = QWidgetAction(self.dashboard_bar)
+        bus_action.setDefaultWidget(bus_widget)
+        self.dashboard_bar.addAction(bus_action)
+
+        self.connect_action = QAction(self.style().standardIcon(QStyle.SP_MediaPlay), "Connect", self)
+        self.connect_action.triggered.connect(self._connect_backend)
+        self.dashboard_bar.addAction(self.connect_action)
+        self.disconnect_action = QAction(self.style().standardIcon(QStyle.SP_MediaStop), "Disconnect", self)
+        self.disconnect_action.triggered.connect(self._disconnect_backend)
+        self.dashboard_bar.addAction(self.disconnect_action)
+        self.dashboard_bar.addSeparator()
+        self.all_off_action = QAction("All outputs OFF", self)
+        self.all_off_action.triggered.connect(self._all_outputs_off)
+        self.dashboard_bar.addAction(self.all_off_action)
+        self.emergency_action = QAction("Emergency Stop", self)
+        self.emergency_action.triggered.connect(self._emergency_stop)
+        self.dashboard_bar.addAction(self.emergency_action)
+        self.dashboard_bar.addSeparator()
+        self.show_dummy_action = QAction("Dummy Advanced", self)
+        self.show_dummy_action.setCheckable(True)
+        self.show_dummy_action.setChecked(self._show_dummy_advanced)
+        self.show_dummy_action.toggled.connect(self._on_show_dummy_tab_changed)
+        #self.dashboard_bar.addAction(self.show_dummy_action)
+        #self.dashboard_bar.addAction(self.show_log_action)
+
+    def _build_startup_tab(self) -> None:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        toggle_layout.setSpacing(4)
+        self.startup_on_connect_check = QCheckBox("On connect")
+        self.startup_on_connect_check.setChecked(self._startup_on_connect)
+        self.startup_on_connect_check.toggled.connect(self._on_startup_on_connect_toggled)
+        toggle_layout.addWidget(self.startup_on_connect_check)
+        self.startup_on_apply_check = QCheckBox("On apply")
+        self.startup_on_apply_check.setChecked(self._startup_on_apply)
+        self.startup_on_apply_check.toggled.connect(self._on_startup_on_apply_toggled)
+        toggle_layout.addWidget(self.startup_on_apply_check)
+        self.startup_only_change_check = QCheckBox("Only if changed")
+        self.startup_only_change_check.setChecked(self._startup_only_on_change)
+        self.startup_only_change_check.toggled.connect(self._on_startup_only_change_toggled)
+        toggle_layout.addWidget(self.startup_only_change_check)
+        toggle_layout.addStretch(1)
+        layout.addLayout(toggle_layout)
+        control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(4)
+        control_layout.addWidget(QLabel("Delay"))
+        self.startup_delay_spin = QSpinBox()
+        self.startup_delay_spin.setRange(0, 10_000)
+        self.startup_delay_spin.setSuffix(" ms")
+        self.startup_delay_spin.setValue(int(self._startup_delay_ms))
+        self.startup_delay_spin.valueChanged.connect(self._on_startup_delay_changed)
+        control_layout.addWidget(self.startup_delay_spin)
+        self.startup_run_button = QPushButton("Run Startup")
+        self.startup_run_button.clicked.connect(self._trigger_manual_startup)
+        control_layout.addWidget(self.startup_run_button)
+        self.startup_dry_run_button = QPushButton("Dry Run")
+        self.startup_dry_run_button.clicked.connect(self._show_startup_dry_run)
+        control_layout.addWidget(self.startup_dry_run_button)
+        self.startup_status_badge = QLabel("Startup")
+        control_layout.addWidget(self.startup_status_badge)
+        control_layout.addStretch(1)
+        layout.addLayout(control_layout)
+        self.startup_tree = QTreeWidget()
+        self.startup_tree.setColumnCount(2)
+        self.startup_tree.setHeaderLabels(["Step", "Details"])
+        self.startup_tree.setRootIsDecorated(True)
+        self.startup_tree.setIndentation(14)
+        self.startup_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.startup_tree.itemDoubleClicked.connect(lambda *_: self._edit_startup_step())
+        self.startup_tree.itemSelectionChanged.connect(self._update_startup_controls)
+        self.startup_tree.setMinimumHeight(140)
+        layout.addWidget(self.startup_tree)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(4)
+        self.startup_add_global_button = QToolButton()
+        self.startup_add_global_button.setText("Add Global")
+        self.startup_add_global_button.setAutoRaise(True)
+        self.startup_add_global_button.clicked.connect(lambda: self._add_startup_step("global"))
+        buttons_layout.addWidget(self.startup_add_global_button)
+        self.startup_add_output_button = QToolButton()
+        self.startup_add_output_button.setText("Add Output")
+        self.startup_add_output_button.setAutoRaise(True)
+        self.startup_add_output_button.clicked.connect(lambda: self._add_startup_step("per_output"))
+        buttons_layout.addWidget(self.startup_add_output_button)
+        self.startup_add_teardown_button = QToolButton()
+        self.startup_add_teardown_button.setText("Add Teardown")
+        self.startup_add_teardown_button.setAutoRaise(True)
+        self.startup_add_teardown_button.clicked.connect(lambda: self._add_startup_step("teardown"))
+        buttons_layout.addWidget(self.startup_add_teardown_button)
+        self.startup_duplicate_button = QToolButton()
+        self.startup_duplicate_button.setText("Duplicate")
+        self.startup_duplicate_button.setAutoRaise(True)
+        self.startup_duplicate_button.clicked.connect(self._duplicate_startup_step)
+        buttons_layout.addWidget(self.startup_duplicate_button)
+        self.startup_edit_button = QToolButton()
+        self.startup_edit_button.setText("Edit")
+        self.startup_edit_button.setAutoRaise(True)
+        self.startup_edit_button.clicked.connect(self._edit_startup_step)
+        buttons_layout.addWidget(self.startup_edit_button)
+        self.startup_remove_button = QToolButton()
+        self.startup_remove_button.setText("Remove")
+        self.startup_remove_button.setAutoRaise(True)
+        self.startup_remove_button.clicked.connect(self._remove_startup_step)
+        buttons_layout.addWidget(self.startup_remove_button)
+        buttons_layout.addStretch(1)
+        layout.addLayout(buttons_layout)
+        self._refresh_startup_tree()
+        self._update_startup_status_badge()
+        self._update_startup_controls()
+        self.startup_tab = widget
+        index = self.tab_widget.addTab(widget, "Startup")
+        self._startup_tab_index = index
+        if not self._show_startup_tab:
+            try:
+                self.tab_widget.setTabVisible(index, False)
+            except AttributeError:
+                widget.setVisible(False)
+        else:
+            self.tab_widget.setCurrentIndex(index)
     def _build_channels_tab(self) -> None:
         widget = QWidget()
         outer_layout = QVBoxLayout(widget)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+        outer_layout.setSpacing(4)
         control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(4)
         self.channel_selector = QComboBox()
         control_layout.addWidget(QLabel("Channels:"))
         control_layout.addWidget(self.channel_selector)
-        add_button = QPushButton("Add Channel")
+        add_button = QToolButton()
+        add_button.setText("Add")
+        add_button.setAutoRaise(True)
         add_button.clicked.connect(self._add_channel)
-        edit_button = QPushButton("Edit Channel")
+        edit_button = QToolButton()
+        edit_button.setText("Edit")
+        edit_button.setAutoRaise(True)
         edit_button.clicked.connect(self._edit_channel)
-        remove_button = QPushButton("Remove Channel")
+        remove_button = QToolButton()
+        remove_button.setText("Remove")
+        remove_button.setAutoRaise(True)
         remove_button.clicked.connect(self._remove_channel)
-        control_layout.addWidget(add_button)
-        control_layout.addWidget(edit_button)
-        control_layout.addWidget(remove_button)
+        duplicate_button = QToolButton()
+        duplicate_button.setText("Duplicate")
+        duplicate_button.setAutoRaise(True)
+        duplicate_button.clicked.connect(self._duplicate_channel)
+        for button in (add_button, edit_button, remove_button, duplicate_button):
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            control_layout.addWidget(button)
         control_layout.addStretch(1)
         outer_layout.addLayout(control_layout)
         self.channel_scroll = QScrollArea()
         self.channel_scroll.setWidgetResizable(True)
+        self.channel_scroll.setFrameShape(QFrame.NoFrame)
         self.channel_container = QWidget()
-        self.channel_layout = QVBoxLayout(self.channel_container)
-        self.channel_layout.addStretch(1)
+        columns_layout = QHBoxLayout(self.channel_container)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.setSpacing(8)
+        self._channel_columns_layout = columns_layout
+        self._create_channel_columns(max(1, int(self._channel_grid_cols)))
         self.channel_scroll.setWidget(self.channel_container)
         outer_layout.addWidget(self.channel_scroll)
-        self.tab_widget.addTab(widget, "Channels")
+        self.channels_widget = widget
+        dock = QDockWidget("Channels", self)
+        dock.setObjectName("Dock_Channels")
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        dock.setWidget(widget)
+        self.channels_dock = dock
+
+    def _create_channel_columns(self, count: int) -> None:
+        if self._channel_columns_layout is None:
+            return
+        while self._channel_columns_layout.count():
+            item = self._channel_columns_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._channel_columns = []
+        column_total = max(1, int(count))
+        for _ in range(column_total):
+            col_widget = QWidget()
+            col_layout = QVBoxLayout(col_widget)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(8)
+            col_layout.addStretch(1)
+            self._channel_columns.append(col_layout)
+            self._channel_columns_layout.addWidget(col_widget, 1)
 
     def _build_signals_tab(self) -> None:
         widget = QWidget()
-        layout = QHBoxLayout(widget)
+        outer_layout = QVBoxLayout(widget)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+        outer_layout.setSpacing(4)
+        self.signals_splitter = QSplitter(Qt.Vertical)
+        top_container = QWidget()
+        top_layout = QVBoxLayout(top_container)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(4)
+        self.signals_top_splitter = QSplitter(Qt.Horizontal)
+        self.signals_top_splitter.setChildrenCollapsible(False)
         self.signal_browser = SignalBrowserWidget()
+        self.signals_top_splitter.addWidget(self.signal_browser)
         self.watchlist_widget = WatchlistWidget()
         self.watchlist_widget.plot_toggled.connect(self._on_watchlist_plot_toggled)
-        right_layout = QVBoxLayout()
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
         right_layout.addWidget(self.watchlist_widget)
         controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(4)
         self.multi_plot_enable = QCheckBox("Enable multi-plot")
         self.multi_plot_enable.setChecked(self._multi_plot_enabled)
         self.multi_plot_enable.stateChanged.connect(self._on_multi_plot_enable_changed)
@@ -2220,6 +4438,12 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.multi_plot_enable)
         controls_layout.addWidget(self.multi_plot_pause)
         controls_layout.addWidget(self.multi_plot_save)
+        self.new_plot_window_button = QPushButton("New Plot Window")
+        self.new_plot_window_button.clicked.connect(lambda: self._create_plot_window())
+        controls_layout.addWidget(self.new_plot_window_button)
+        self.close_plot_windows_button = QPushButton("Close All Plots")
+        self.close_plot_windows_button.clicked.connect(lambda: self._close_all_plot_windows())
+        controls_layout.addWidget(self.close_plot_windows_button)
         controls_layout.addStretch(1)
         right_layout.addLayout(controls_layout)
         self.multi_plot_widget = pg.PlotWidget()
@@ -2229,13 +4453,920 @@ class MainWindow(QMainWindow):
         if not self._multi_plot_enabled:
             self.multi_plot_widget.hide()
         right_layout.addWidget(self.multi_plot_widget, 1)
-        layout.addWidget(self.signal_browser, 2)
-        layout.addLayout(right_layout, 3)
+        self.signals_top_splitter.addWidget(right_widget)
+        self.signals_top_splitter.setStretchFactor(0, 2)
+        self.signals_top_splitter.setStretchFactor(1, 3)
+        top_layout.addWidget(self.signals_top_splitter)
         self.signal_browser.add_requested.connect(self._on_add_to_watchlist)
         self.signal_browser.plot_requested.connect(self._on_plot_requested)
         self.signal_browser.simulate_requested.connect(self._on_signal_simulate)
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
-        self.tab_widget.addTab(widget, "Signals")
+        self.signals_splitter.addWidget(top_container)
+        self.logging_container = QWidget()
+        self.logging_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        logging_layout = QFormLayout(self.logging_container)
+        logging_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        logging_layout.setContentsMargins(0, 0, 0, 0)
+        logging_layout.setSpacing(4)
+        logging_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.logging_mode_combo = QComboBox()
+        self.logging_mode_combo.addItems(["Watchlist", "Manual"])
+        logging_layout.addRow("Source", self.logging_mode_combo)
+        self.manual_log_edit = QLineEdit()
+        self.manual_log_edit.setPlaceholderText("Comma-separated signal names")
+        logging_layout.addRow("Manual signals", self.manual_log_edit)
+        self.logging_rate_spin = QDoubleSpinBox()
+        self.logging_rate_spin.setDecimals(1)
+        self.logging_rate_spin.setRange(1.0, 50.0)
+        self.logging_rate_spin.setValue(float(self._qt_settings.value("log_rate", 10.0)))
+        logging_layout.addRow("Rate (Hz)", self.logging_rate_spin)
+        csv_widget = QWidget()
+        csv_layout = QHBoxLayout(csv_widget)
+        csv_layout.setContentsMargins(0, 0, 0, 0)
+        csv_layout.setSpacing(4)
+        csv_layout.addWidget(QLabel("Preset"))
+        self.csv_preset_combo = QComboBox()
+        self.csv_preset_combo.addItem("Excel (DE)", "excel_de")
+        self.csv_preset_combo.addItem("Generic (EN)", "generic_en")
+        index = max(0, self.csv_preset_combo.findData(self._csv_preset_key))
+        self.csv_preset_combo.blockSignals(True)
+        self.csv_preset_combo.setCurrentIndex(index)
+        self.csv_preset_combo.blockSignals(False)
+        self.csv_preset_combo.currentIndexChanged.connect(self._on_csv_preset_changed)
+        csv_layout.addWidget(self.csv_preset_combo)
+        csv_layout.addStretch(1)
+        logging_layout.addRow("Export", csv_widget)
+        path_layout = QHBoxLayout()
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(4)
+        self.logging_path_edit = QLineEdit(self._qt_settings.value("log_path", os.path.join(BASE_DIR, "signals.csv")))
+        browse = QToolButton()
+        browse.setAutoRaise(True)
+        browse.setText("…")
+        browse.clicked.connect(self._browse_log_path)
+        path_layout.addWidget(self.logging_path_edit)
+        path_layout.addWidget(browse)
+        path_widget = QWidget()
+        path_widget.setLayout(path_layout)
+        logging_layout.addRow("CSV path", path_widget)
+        self.logging_button = QPushButton("Start Logging")
+        self.logging_button.clicked.connect(self._toggle_logging)
+        logging_layout.addRow(self.logging_button)
+        self.startup_log_view = QTextBrowser()
+        self.startup_log_view.setReadOnly(True)
+        self.startup_log_view.setMaximumHeight(140)
+        logging_layout.addRow("Startup log", self.startup_log_view)
+        self.signals_splitter.addWidget(self.logging_container)
+        self.signals_splitter.setStretchFactor(0, 3)
+        self.signals_splitter.setStretchFactor(1, 1)
+        self.signals_splitter.splitterMoved.connect(self._on_signals_splitter_moved)
+        outer_layout.addWidget(self.signals_splitter)
+        self.signals_widget = widget
+        dock = QDockWidget("Signals", self)
+        dock.setObjectName("Dock_Signals")
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        dock.setWidget(widget)
+        self.signals_dock = dock
+        self._apply_log_visibility()
+
+    def _apply_default_dock_layout(self) -> None:
+        if not self.channels_dock or not self.signals_dock:
+            return
+        for dock in (self.channels_dock, self.signals_dock):
+            dock.setFloating(False)
+            dock.show()
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
+           # … und Signals daneben horizontal splitten (statt tabify)
+        self.splitDockWidget(self.signals_dock, self.channels_dock, Qt.Horizontal)
+        try:
+            self.resizeDocks([self.signals_dock, self.channels_dock], [1000, 1000], Qt.Horizontal)
+        except Exception:
+            pass
+        #self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
+        #self.tabifyDockWidget(self.channels_dock, self.signals_dock)
+        #self.channels_dock.raise_()
+
+    def _update_central_stack_visibility(self) -> None:
+        if (
+            not hasattr(self, "central_stack")
+            or not hasattr(self, "tab_widget")
+            or not hasattr(self, "_central_placeholder")
+        ):
+            return
+        visible = False
+        for index in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(index)
+            if widget is None:
+                continue
+            tab_visible = True
+            try:
+                tab_visible = self.tab_widget.isTabVisible(index)
+            except AttributeError:
+                tab_visible = not widget.isHidden()
+            if tab_visible and not widget.isHidden():
+                visible = True
+                break
+        target = self.tab_widget if visible else self._central_placeholder
+        if visible:
+            self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        else:
+            self.central_stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        if self.central_stack.currentWidget() is not target:
+            self.central_stack.setCurrentWidget(target)
+        self.central_stack.updateGeometry()
+
+    def _restore_dock_layout(self) -> bool:
+        if self._saved_dock_state is None:
+            return False
+        try:
+            restored = bool(self.restoreState(self._saved_dock_state))
+        except TypeError:
+            return False
+        return restored
+
+    def _reset_layout(self) -> None:
+        if not self.channels_dock or not self.signals_dock:
+            return
+        self._qt_settings.remove("ui/dock_state")
+        self._saved_dock_state = None
+        self._apply_default_dock_layout()
+        self._update_central_stack_visibility()
+
+    # Startup configuration
+    def _refresh_startup_tree(self) -> None:
+        if not hasattr(self, "startup_tree"):
+            return
+        self.startup_tree.blockSignals(True)
+        self.startup_tree.clear()
+        sections: List[Tuple[str, str, List[Any]]] = [
+            ("global", "Global messages", list(self._startup_config.globals)),
+            ("per_output", "Per output", list(self._startup_config.per_output)),
+            ("teardown", "Teardown", list(self._startup_config.teardown)),
+        ]
+        for section_key, title, entries in sections:
+            parent = QTreeWidgetItem([title, ""])
+            parent.setData(0, Qt.UserRole, (section_key, None))
+            parent.setFirstColumnSpanned(True)
+            has_children = False
+            for index, step in enumerate(entries):
+                step_title = getattr(step, "message", "")
+                if section_key == "per_output" and getattr(step, "channel", ""):
+                    step_title = f"{step.channel} → {step.message}"
+                details = self._format_startup_details(step)
+                item = QTreeWidgetItem([step_title, details])
+                item.setData(0, Qt.UserRole, (section_key, index))
+                parent.addChild(item)
+                has_children = True
+                for name, value in sorted(step.fields.items()):
+                    field_item = QTreeWidgetItem([name, f"{value}"])
+                    item.addChild(field_item)
+            if has_children:
+                parent.setExpanded(True)
+            self.startup_tree.addTopLevelItem(parent)
+        self.startup_tree.expandToDepth(0)
+        self.startup_tree.blockSignals(False)
+        self._update_startup_controls()
+
+    def _format_startup_details(self, step: Any) -> str:
+        repeat = getattr(step, "repeat", 1)
+        dt_ms = getattr(step, "dt_ms", 0)
+        parts: List[str] = []
+        if repeat > 1:
+            parts.append(f"repeat {repeat}×")
+        if dt_ms > 0:
+            parts.append(f"dt {dt_ms} ms")
+        return ", ".join(parts)
+
+    def _update_startup_controls(self) -> None:
+        if not hasattr(self, "startup_run_button"):
+            return
+        selection = self._selected_startup_step()
+        allow_edit = selection is not None
+        self.startup_edit_button.setEnabled(allow_edit)
+        self.startup_remove_button.setEnabled(allow_edit)
+        self.startup_duplicate_button.setEnabled(allow_edit)
+        has_steps = bool(
+            self._startup_config.globals or self._startup_config.per_output or self._startup_config.teardown
+        )
+        self.startup_run_button.setEnabled(
+            not self._startup_running and self._startup_is_valid and self.backend is not None and has_steps
+        )
+        self.startup_dry_run_button.setEnabled(self._dbc is not None and has_steps)
+
+    def _selected_startup_step(self) -> Optional[Tuple[str, int]]:
+        if not hasattr(self, "startup_tree"):
+            return None
+        item = self.startup_tree.currentItem()
+        if item is None:
+            return None
+        data = item.data(0, Qt.UserRole)
+        if not isinstance(data, tuple) or len(data) != 2:
+            return None
+        section, index = data
+        if index is None:
+            return None
+        try:
+            return str(section), int(index)
+        except (TypeError, ValueError):
+            return None
+
+    def _add_startup_step(self, section: str) -> None:
+        if section not in {"global", "per_output", "teardown"}:
+            return
+        dialog = StartupStepDialog(
+            section,
+            sorted(self._channel_profiles.keys()),
+            self._signals_by_message if hasattr(self, "_signals_by_message") else {},
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted or dialog.result_step is None:
+            return
+        step = dialog.result_step
+        if isinstance(step, StartupGlobalStep):
+            self._startup_config.globals.append(step)
+        elif isinstance(step, StartupPerOutputStep):
+            self._startup_config.per_output.append(step)
+        elif isinstance(step, StartupTeardownStep):
+            self._startup_config.teardown.append(step)
+        self._on_startup_config_changed()
+
+    def _edit_startup_step(self) -> None:
+        selection = self._selected_startup_step()
+        if not selection:
+            return
+        section, index = selection
+        existing = None
+        if section == "global" and 0 <= index < len(self._startup_config.globals):
+            existing = self._startup_config.globals[index]
+        elif section == "per_output" and 0 <= index < len(self._startup_config.per_output):
+            existing = self._startup_config.per_output[index]
+        elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
+            existing = self._startup_config.teardown[index]
+        if existing is None:
+            return
+        dialog = StartupStepDialog(
+            section,
+            sorted(self._channel_profiles.keys()),
+            self._signals_by_message if hasattr(self, "_signals_by_message") else {},
+            parent=self,
+            existing=existing,
+        )
+        if dialog.exec_() != QDialog.Accepted or dialog.result_step is None:
+            return
+        if isinstance(dialog.result_step, StartupGlobalStep) and section == "global":
+            self._startup_config.globals[index] = dialog.result_step
+        elif isinstance(dialog.result_step, StartupPerOutputStep) and section == "per_output":
+            self._startup_config.per_output[index] = dialog.result_step
+        elif isinstance(dialog.result_step, StartupTeardownStep) and section == "teardown":
+            self._startup_config.teardown[index] = dialog.result_step
+        self._on_startup_config_changed()
+
+    def _remove_startup_step(self) -> None:
+        selection = self._selected_startup_step()
+        if not selection:
+            return
+        section, index = selection
+        if section == "global" and 0 <= index < len(self._startup_config.globals):
+            del self._startup_config.globals[index]
+        elif section == "per_output" and 0 <= index < len(self._startup_config.per_output):
+            del self._startup_config.per_output[index]
+        elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
+            del self._startup_config.teardown[index]
+        else:
+            return
+        self._on_startup_config_changed()
+
+    def _duplicate_startup_step(self) -> None:
+        selection = self._selected_startup_step()
+        if not selection:
+            return
+        section, index = selection
+        if section == "global" and 0 <= index < len(self._startup_config.globals):
+            duplicate = copy.deepcopy(self._startup_config.globals[index])
+            self._startup_config.globals.insert(index + 1, duplicate)
+        elif section == "per_output" and 0 <= index < len(self._startup_config.per_output):
+            duplicate = copy.deepcopy(self._startup_config.per_output[index])
+            self._startup_config.per_output.insert(index + 1, duplicate)
+        elif section == "teardown" and 0 <= index < len(self._startup_config.teardown):
+            duplicate = copy.deepcopy(self._startup_config.teardown[index])
+            self._startup_config.teardown.insert(index + 1, duplicate)
+        else:
+            return
+        self._on_startup_config_changed()
+
+    def _run_startup_inline_once(self) -> None:
+        """
+        Führt die in der GUI/Config definierten Init-Steps genau einmal synchron aus.
+        Keine festen Messagenamen – es wird 1:1 verwendet, was der User im Startup-Tab konfiguriert hat.
+        """
+        if self._inline_init_done or not self.backend:
+            return
+        if not self._startup_is_valid:
+            # Nichts configured → als erledigt markieren, damit wir nicht dauernd prüfen
+            self._inline_init_done = True
+            return
+
+        steps = self._prepare_startup_steps(mode="normal", force=False)
+        if not steps:
+            self._inline_init_done = True
+            return
+
+        errors = []
+        for step in steps:
+            try:
+                self.backend.send_message_by_name(
+                    step.message,
+                    step.payload,
+                    repeat=max(1, int(step.repeat)),
+                    dt_ms=max(0, int(step.dt_ms)),
+                    force=True,  # hier bewusst: Startup soll sicher ankommen
+                )
+                # „Last payloads“ für On-Change-Logik aktualisieren:
+                self._startup_last_payloads[step.key] = dict(step.payload)
+            except BackendError as exc:
+                errors.append(f"{step.message}: {exc}")
+
+        self._inline_init_done = True
+        if errors:
+            self._append_startup_log("Inline Startup had issues:\n  " + "\n  ".join(errors))
+
+
+    def _on_startup_config_changed(self) -> None:
+        self._startup_last_payloads.clear()
+        self._refresh_startup_tree()
+        self._validate_startup_config()
+        self._set_hardware_pending(True, "Startup configuration changed. Apply to hardware when ready.")
+
+    def _on_startup_on_connect_toggled(self, enabled: bool) -> None:
+        self._startup_on_connect = enabled
+        self._save_settings()
+
+    def _on_startup_on_apply_toggled(self, enabled: bool) -> None:
+        self._startup_on_apply = enabled
+        self._save_settings()
+
+    def _on_startup_only_change_toggled(self, enabled: bool) -> None:
+        self._startup_only_on_change = enabled
+        self._save_settings()
+
+    def _on_startup_delay_changed(self, value: int) -> None:
+        self._startup_delay_ms = max(0, int(value))
+        self._save_settings()
+
+    def _trigger_manual_startup(self) -> None:
+        self._run_startup(mode="normal", force=True)
+
+    def _update_startup_status_badge(self) -> None:
+        if not hasattr(self, "startup_status_badge"):
+            return
+        if not self._startup_status_messages and self._startup_is_valid:
+            self.startup_status_badge.setText("Startup OK")
+            self.startup_status_badge.setStyleSheet("color: green; font-weight: 600;")
+            self.startup_status_badge.setToolTip("Startup configuration is valid.")
+        elif not self._startup_is_valid:
+            text = "Startup ⚠"
+            self.startup_status_badge.setText(text)
+            self.startup_status_badge.setStyleSheet("color: red; font-weight: 600;")
+            tooltip = "\n".join(self._startup_status_messages) if self._startup_status_messages else "Startup configuration is invalid."
+            self.startup_status_badge.setToolTip(tooltip)
+        else:
+            self.startup_status_badge.setText("Startup ⚠")
+            self.startup_status_badge.setStyleSheet("color: orange; font-weight: 600;")
+            tooltip = "\n".join(self._startup_status_messages) if self._startup_status_messages else "Startup warnings present."
+            self.startup_status_badge.setToolTip(tooltip)
+        self._update_startup_controls()
+
+    def _validate_startup_config(self) -> None:
+        errors: List[str] = []
+        warnings: List[str] = []
+        if self._dbc is None:
+            warnings.append("DBC not loaded")
+        else:
+            message_cache: Dict[str, Any] = {}
+            def ensure_message(name: str) -> Optional[Any]:
+                if name in message_cache:
+                    return message_cache[name]
+                try:
+                    message_cache[name] = self._dbc.get_message_by_name(name)
+                except KeyError:
+                    errors.append(f"Message '{name}' not found in DBC")
+                    message_cache[name] = None
+                return message_cache[name]
+
+            def validate_step(step: Any, label: str) -> None:
+                if not getattr(step, "message", ""):
+                    errors.append(f"{label}: message name missing")
+                    return
+                dbc_message = ensure_message(step.message)
+                if dbc_message is None:
+                    return
+                available = {signal.name for signal in getattr(dbc_message, "signals", [])}
+                if not step.fields:
+                    warnings.append(f"{label}: no fields specified")
+                for signal_name in step.fields:
+                    if signal_name not in available:
+                        errors.append(f"{label}: signal '{signal_name}' missing")
+                    elif not is_signal_writable(signal_name, step.message):
+                        errors.append(f"{label}: signal '{signal_name}' not writable")
+                repeat_value = getattr(step, "repeat", 1)
+                delay_value = getattr(step, "dt_ms", 0)
+                if repeat_value < 1:
+                    errors.append(f"{label}: repeat must be >= 1")
+                if delay_value < 0:
+                    errors.append(f"{label}: delay must be >= 0")
+
+            for idx, step in enumerate(self._startup_config.globals):
+                validate_step(step, f"Global {idx + 1}")
+            for idx, step in enumerate(self._startup_config.per_output):
+                if step.channel not in self._channel_profiles:
+                    errors.append(f"Per output {idx + 1}: channel '{step.channel}' missing")
+                validate_step(step, f"Per output {idx + 1}")
+            for idx, step in enumerate(self._startup_config.teardown):
+                if not getattr(step, "message", ""):
+                    errors.append(f"Teardown {idx + 1}: message name missing")
+                else:
+                    dbc_message = ensure_message(step.message)
+                    if dbc_message is None:
+                        continue
+                    available = {signal.name for signal in getattr(dbc_message, "signals", [])}
+                    for signal_name in step.fields:
+                        if signal_name not in available:
+                            errors.append(f"Teardown {idx + 1}: signal '{signal_name}' missing")
+                        elif not is_signal_writable(signal_name, step.message):
+                            errors.append(f"Teardown {idx + 1}: signal '{signal_name}' not writable")
+        self._startup_status_messages = errors + warnings
+        self._startup_is_valid = not errors and self._dbc is not None
+        self._update_startup_status_badge()
+
+    def _prepare_startup_steps(self, mode: str, force: bool) -> List[StartupPreparedStep]:
+        steps: List[StartupPreparedStep] = []
+        if mode == "teardown":
+            for step in self._startup_config.teardown:
+                payload = {name: float(value) for name, value in step.fields.items()}
+                if not payload and not force:
+                    continue
+                key = (f"teardown:{step.message}", None)
+                steps.append(StartupPreparedStep(key, step.message, payload, 1, 0))
+            return steps
+
+        def should_include(step_key: Tuple[str, Optional[str]], payload: Dict[str, float]) -> bool:
+            if force or not self._startup_only_on_change:
+                return True
+            return self._startup_last_payloads.get(step_key) != payload
+
+        for step in self._startup_config.globals:
+            payload = {name: float(value) for name, value in step.fields.items()}
+            if not payload and not force:
+                continue
+            key = (step.message, None)
+            if should_include(key, payload):
+                steps.append(
+                    StartupPreparedStep(
+                        key=key,
+                        message=step.message,
+                        payload=payload,
+                        repeat=max(1, int(step.repeat)),
+                        dt_ms=max(0, int(step.dt_ms)),
+                    )
+                )
+        order_map = {
+            "Supply": 0,
+            "Power": 0,
+            "HBridge": 1,
+            "HighSide": 2,
+            "LowSide": 2,
+            "AO_0_10V": 3,
+            "AO_4_20mA": 3,
+        }
+
+        def sort_key(step: StartupPerOutputStep) -> Tuple[int, str]:
+            profile = self._channel_profiles.get(step.channel)
+            channel_type = profile.type if profile else ""
+            return (order_map.get(channel_type, 50), step.channel)
+
+        for step in sorted(self._startup_config.per_output, key=sort_key):
+            if step.channel not in self._channel_profiles:
+                continue
+            payload = {name: float(value) for name, value in step.fields.items()}
+            if not payload and not force:
+                continue
+            key = (step.message, step.channel)
+            if should_include(key, payload):
+                steps.append(
+                    StartupPreparedStep(
+                        key=key,
+                        message=step.message,
+                        payload=payload,
+                        repeat=max(1, int(step.repeat)),
+                        dt_ms=max(0, int(step.dt_ms)),
+                        channel=step.channel,
+                    )
+                )
+        return steps
+
+    def _run_startup(self, *, mode: str = "normal", force: bool = False) -> None:
+        if not self.backend:
+            self._show_error("No backend is configured.")
+            return
+        if self._startup_running:
+            self._show_error("Startup sequence already running.")
+            return
+        if mode != "teardown" and not self._startup_is_valid:
+            self._show_error("Startup configuration is invalid.")
+            return
+        steps = self._prepare_startup_steps(mode, force)
+        if not steps:
+            if mode != "teardown":
+                self.status_message_label.setText("Startup skipped; no changes required.")
+            return
+        delay_ms = 0 if mode == "teardown" else max(0, int(self._startup_delay_ms))
+        worker_force = force or not self._startup_only_on_change
+        worker = StartupWorker(self.backend, steps, delay_ms=delay_ms, force=worker_force)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_startup_progress)
+        worker.finished.connect(self._on_startup_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._cleanup_startup_worker)
+        self._startup_worker = worker
+        self._startup_worker_thread = thread
+        self._startup_running = True
+        self._startup_pending_mode = mode
+        self._append_startup_log(f"Startup initiated ({mode})")
+        self._update_startup_controls()
+        thread.start()
+
+    def _on_startup_progress(self, message: str) -> None:
+        self._append_startup_log(message)
+
+    def _on_startup_finished(self, success: bool, successes: list, summary: str) -> None:
+        self._startup_running = False
+        mode = self._startup_pending_mode or "normal"
+        if mode != "teardown":
+            for key, payload in successes:
+                self._startup_last_payloads[key] = dict(payload)
+        self._append_startup_log(summary)
+        if not success:
+            self.status_message_label.setText(summary)
+        self._startup_pending_mode = None
+        self._update_startup_controls()
+        if mode == "teardown":
+            self._all_outputs_off()
+
+    def _cleanup_startup_worker(self) -> None:
+        self._startup_worker_thread = None
+        self._startup_worker = None
+
+    def _append_startup_log(self, message: str) -> None:
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = f"{timestamp} • {message}"
+        if hasattr(self, "startup_log_view") and self.startup_log_view is not None:
+            self.startup_log_view.append(entry)
+        self.status_message_label.setText(message)
+
+    def _show_startup_dry_run(self) -> None:
+        preview = self._generate_startup_preview()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Startup dry run")
+        layout = QVBoxLayout(dialog)
+        view = QTextBrowser()
+        view.setReadOnly(True)
+        view.setMinimumSize(420, 240)
+        view.setPlainText("\n".join(preview))
+        layout.addWidget(view)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec_()
+
+    def _generate_startup_preview(self) -> List[str]:
+        if self._dbc is None:
+            return ["DBC not loaded"]
+        lines: List[str] = []
+        steps = self._prepare_startup_steps("normal", force=True)
+        if not steps:
+            return ["No startup steps defined"]
+        for step in steps:
+            try:
+                message = self._dbc.get_message_by_name(step.message)
+            except KeyError:
+                lines.append(f"{step.message}: message not found")
+                continue
+            try:
+                encoded = message.encode(step.payload, scaling=True, strict=True)
+            except (ValueError, KeyError) as exc:
+                lines.append(f"{step.message}: failed to encode ({exc})")
+                continue
+            data_hex = " ".join(f"{byte:02X}" for byte in encoded)
+            info = f"{step.message} (0x{message.frame_id:03X})"
+            if step.channel:
+                info += f" [{step.channel}]"
+            info += f" → {data_hex}"
+            lines.append(info)
+        return lines
+
+    def _suggest_startup_defaults(self) -> None:
+        if self._dbc is None:
+            return
+        if self._startup_config.globals or self._startup_config.per_output or self._startup_config.teardown:
+            return
+        suggestions_added = False
+        messages = list(getattr(self._dbc, "messages", []))
+        message_by_name = {message.name: message for message in messages}
+
+        def add_global(message_name: str, fields: Dict[str, float]) -> bool:
+            if any(step.message == message_name for step in self._startup_config.globals):
+                return False
+            message = message_by_name.get(message_name)
+            if message is None:
+                return False
+            payload: Dict[str, float] = {}
+            available = {signal.name for signal in message.signals}
+            for field_name, value in fields.items():
+                if field_name in available and is_signal_writable(field_name, message_name):
+                    payload[field_name] = float(value)
+            if not payload:
+                return False
+            self._startup_config.globals.append(StartupGlobalStep(message=message_name, fields=payload))
+            return True
+
+        main_switch_added = add_global(
+            "QM_Main_switch_control",
+            {
+                "enable_sensor_supply": 1.0,
+                "enable_actuator_supply": 1.0,
+                "enable_ub3": 1.0,
+                "enable_ub2": 1.0,
+                "enable_ub1": 1.0,
+            },
+        )
+        def default_init_value(signal_name: str) -> float:
+            lowered = signal_name.lower()
+            if "frequency" in lowered:
+                return 1000.0
+            if "pwm_max" in lowered:
+                return 100.0
+            return 0.0
+
+        def add_per_output_step(channel_name: str, message_name: str) -> bool:
+            if any(
+                step.channel == channel_name and step.message == message_name
+                for step in self._startup_config.per_output
+            ):
+                return False
+            message = message_by_name.get(message_name)
+            if message is None:
+                return False
+            payload: Dict[str, float] = {}
+            for signal in message.signals:
+                if not is_signal_writable(signal.name, message_name):
+                    continue
+                payload[signal.name] = default_init_value(signal.name)
+            if not payload:
+                return False
+            self._startup_config.per_output.append(
+                StartupPerOutputStep(channel=channel_name, message=message_name, fields=payload)
+            )
+            return True
+
+        suggestions_added = main_switch_added
+        high_side_messages = [
+            ("HS1", "QM_High_side_output_init_01"),
+            ("HS2", "QM_High_side_output_init_02"),
+            ("HS3", "QM_High_side_output_init_03"),
+        ]
+        for channel_hint, message_name in high_side_messages:
+            target_channel = channel_hint if channel_hint in self._channel_profiles else message_name
+            if add_per_output_step(target_channel, message_name):
+                suggestions_added = True
+
+        for message in messages:
+            name_lower = message.name.lower()
+            if any(step.message == message.name for step in self._startup_config.globals):
+                continue
+            if "main_switch" in name_lower or "supply" in name_lower:
+                fields: Dict[str, float] = {}
+                for signal in message.signals:
+                    if is_signal_writable(signal.name, message.name):
+                        fields[signal.name] = 0.0
+                if fields:
+                    self._startup_config.globals.append(StartupGlobalStep(message=message.name, fields=fields))
+                    suggestions_added = True
+                    break
+        for channel, profile in self._channel_profiles.items():
+            if not profile.write.message:
+                continue
+            if any(step.channel == channel for step in self._startup_config.per_output):
+                continue
+            message_name = profile.write.message
+            fields: Dict[str, float] = {}
+            for semantic, signal_name in profile.write.fields.items():
+                if not is_signal_writable(signal_name, message_name):
+                    continue
+                if semantic in {"enable", "select", "state"}:
+                    fields[signal_name] = 0.0
+                elif semantic in {"pwm", "setpoint"}:
+                    fields[signal_name] = 0.0
+                elif semantic == "direction":
+                    fields[signal_name] = 0.0
+            if fields:
+                self._startup_config.per_output.append(
+                    StartupPerOutputStep(channel=channel, message=message_name, fields=fields)
+                )
+                suggestions_added = True
+        if suggestions_added:
+            self._refresh_startup_tree()
+
+
+    def _apply_log_visibility(self) -> None:
+        if not hasattr(self, "logging_container"):
+            return
+        if self._signals_log_visible:
+            self.logging_container.show()
+            if self._signals_log_height <= 0:
+                self._signals_log_height = 180
+            total = sum(self.signals_splitter.sizes())
+            if total <= 0:
+                total = max(200, self.signals_splitter.size().height())
+            top = max(100, total - self._signals_log_height)
+            self.signals_splitter.setSizes([top, self._signals_log_height])
+        else:
+            sizes = self.signals_splitter.sizes()
+            if len(sizes) > 1:
+                self._signals_log_height = sizes[1]
+            self.logging_container.hide()
+            self.signals_splitter.setSizes([self.signals_splitter.size().height(), 0])
+        if hasattr(self, "show_log_action"):
+            self.show_log_action.blockSignals(True)
+            self.show_log_action.setChecked(self._signals_log_visible)
+            self.show_log_action.blockSignals(False)
+
+    def _toggle_log_visibility(self, visible: bool) -> None:
+        self._signals_log_visible = visible
+        self._apply_log_visibility()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+    def _toggle_startup_tab_visibility(self, visible: bool) -> None:
+        self._show_startup_tab = visible
+        if hasattr(self, "show_startup_action"):
+            self.show_startup_action.blockSignals(True)
+            self.show_startup_action.setChecked(visible)
+            self.show_startup_action.blockSignals(False)
+        if hasattr(self, "tab_widget") and self._startup_tab_index >= 0:
+            try:
+                self.tab_widget.setTabVisible(self._startup_tab_index, visible)
+            except AttributeError:
+                if not visible:
+                    if self.tab_widget.currentIndex() == self._startup_tab_index:
+                        self.tab_widget.setCurrentIndex(0)
+                self.tab_widget.widget(self._startup_tab_index).setVisible(visible)
+            else:
+                if visible:
+                    self.tab_widget.setCurrentIndex(self._startup_tab_index)
+        self._update_central_stack_visibility()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+    def _on_signals_splitter_moved(self, _pos: int, _index: int) -> None:
+        sizes = self.signals_splitter.sizes()
+        if len(sizes) > 1:
+            self._signals_log_height = sizes[1]
+            currently_visible = sizes[1] > 0
+            if self._signals_log_visible != currently_visible:
+                self._signals_log_visible = currently_visible
+                if hasattr(self, "show_log_action"):
+                    self.show_log_action.blockSignals(True)
+                    self.show_log_action.setChecked(currently_visible)
+                    self.show_log_action.blockSignals(False)
+    def _create_plot_window(self) -> Optional[int]:
+        if len(self._plot_windows) >= self._max_plot_windows:
+            QMessageBox.warning(
+                self,
+                "Plot limit reached",
+                f"Cannot open more than {self._max_plot_windows} plot windows.",
+            )
+            return None
+        self._plot_counter += 1
+        identifier = self._plot_counter
+        dock = MultiAxisPlotDock(identifier, self)
+        dock.setFeatures(
+            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable
+        )
+        dock.closed.connect(self._on_plot_window_closed)
+        previous: Optional[QDockWidget] = None
+        if self._plot_windows:
+            if self._active_plot_id and self._active_plot_id in self._plot_windows:
+                previous = self._plot_windows[self._active_plot_id]
+            else:
+                previous = next(reversed(self._plot_windows.values()))
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        if previous is not None:
+            self.tabifyDockWidget(previous, dock)
+        dock.show()
+        dock.raise_()
+        self._plot_windows[identifier] = dock
+        self._active_plot_id = identifier
+        self._last_plot_dock = dock
+        return identifier
+
+    def _close_all_plot_windows(self) -> None:
+        for dock in list(self._plot_windows.values()):
+            dock.close()
+        if not self._plot_windows:
+            self._active_plot_id = None
+
+    def _on_plot_window_closed(self, identifier: int) -> None:
+        dock = self._plot_windows.pop(identifier, None)
+        if dock:
+            dock.deleteLater()
+            if self._last_plot_dock is dock:
+                self._last_plot_dock = next(reversed(self._plot_windows.values())) if self._plot_windows else None
+        to_clear = [name for name, (win_id, _side) in self._plot_assignments.items() if win_id == identifier]
+        for name in to_clear:
+            self._plot_assignments.pop(name, None)
+        if self._active_plot_id == identifier:
+            self._active_plot_id = next(iter(self._plot_windows), None)
+
+    def _assign_signal_via_dialog(self, name: str) -> None:
+        if not self._plot_windows:
+            created = self._create_plot_window()
+            if created is None:
+                if not self._plot_windows and not self.multi_plot_enable.isChecked():
+                    self.multi_plot_enable.setChecked(True)
+                return
+        if not self._plot_windows:
+            if not self.multi_plot_enable.isChecked():
+                self.multi_plot_enable.setChecked(True)
+            return
+        window_ids = sorted(self._plot_windows.keys())
+        default_window = self._active_plot_id if self._active_plot_id in self._plot_windows else window_ids[0]
+        suggested_side = self._suggest_axis_side(default_window, name)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Assign Plot – {name}")
+        dialog_layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        dialog_layout.addLayout(form)
+        window_combo = QComboBox()
+        for wid in window_ids:
+            dock = self._plot_windows[wid]
+            window_combo.addItem(dock.windowTitle(), wid)
+        window_combo.setCurrentIndex(window_ids.index(default_window))
+        form.addRow("Window", window_combo)
+        axis_combo = QComboBox()
+        axis_combo.addItems(["Left", "Right"])
+        axis_combo.setCurrentIndex(0 if suggested_side == "left" else 1)
+        form.addRow("Axis", axis_combo)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            self.watchlist_widget.set_plot_enabled(name, False)
+            return
+        window_id = window_combo.currentData()
+        axis_side = "left" if axis_combo.currentIndex() == 0 else "right"
+        self._assign_signal_to_plot(name, int(window_id), axis_side)
+
+    def _assign_signal_to_plot(self, name: str, window_id: int, side: str) -> None:
+        dock = self._plot_windows.get(window_id)
+        if not dock:
+            return
+        previous = self._plot_assignments.get(name)
+        if previous and previous == (window_id, side):
+            return
+        if previous:
+            prev_window, _prev_side = previous
+            prev_dock = self._plot_windows.get(prev_window)
+            if prev_dock:
+                prev_dock.remove_signal(name)
+        dock.add_signal(name, self._watch_units.get(name, ""), side)
+        self._plot_assignments[name] = (window_id, side)
+        self._active_plot_id = window_id
+
+    def _suggest_axis_side(self, window_id: int, name: str) -> str:
+        unit = (self._watch_units.get(name) or "").strip()
+        left_has = False
+        right_has = False
+        for other, (win_id, side) in self._plot_assignments.items():
+            if win_id != window_id:
+                continue
+            other_unit = (self._watch_units.get(other) or "").strip()
+            if unit and other_unit == unit:
+                return side
+            if side == "left":
+                left_has = True
+            else:
+                right_has = True
+        if left_has and right_has:
+            return "right"
+        return "left"
 
     def _build_dummy_tab(self) -> None:
         self.dummy_tab = QWidget()
@@ -2244,34 +5375,6 @@ class MainWindow(QMainWindow):
         self.simulation_widget.profile_changed.connect(self._apply_simulation_profile)
         layout.addWidget(self.simulation_widget)
         self.tab_widget.addTab(self.dummy_tab, "Dummy Advanced")
-
-    def _build_logging_tab(self) -> None:
-        widget = QWidget()
-        layout = QFormLayout(widget)
-        self.logging_mode_combo = QComboBox()
-        self.logging_mode_combo.addItems(["Watchlist", "Manual"])
-        layout.addRow("Source", self.logging_mode_combo)
-        self.manual_log_edit = QLineEdit()
-        self.manual_log_edit.setPlaceholderText("Comma-separated signal names")
-        layout.addRow("Manual signals", self.manual_log_edit)
-        self.logging_rate_spin = QDoubleSpinBox()
-        self.logging_rate_spin.setDecimals(1)
-        self.logging_rate_spin.setRange(1.0, 50.0)
-        self.logging_rate_spin.setValue(float(self._qt_settings.value("log_rate", 10.0)))
-        layout.addRow("Rate (Hz)", self.logging_rate_spin)
-        self.logging_path_edit = QLineEdit(self._qt_settings.value("log_path", os.path.join(BASE_DIR, "signals.csv")))
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse_log_path)
-        path_layout = QHBoxLayout()
-        path_layout.addWidget(self.logging_path_edit)
-        path_layout.addWidget(browse)
-        path_widget = QWidget()
-        path_widget.setLayout(path_layout)
-        layout.addRow("CSV path", path_widget)
-        self.logging_button = QPushButton("Start Logging")
-        self.logging_button.clicked.connect(self._toggle_logging)
-        layout.addRow(self.logging_button)
-        self.tab_widget.addTab(widget, "Logging")
 
     # Backend management
     def _load_initial_backend(self) -> None:
@@ -2297,9 +5400,16 @@ class MainWindow(QMainWindow):
             self.backend.apply_database(self._dbc)
             self.backend.set_channel_profiles(self._channel_profiles)
             self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._load_dummy_profiles()
         self._update_status_indicator(False)
         self._update_channel_card_modes()
         self.signal_browser.set_allow_simulation(isinstance(self.backend, DummyBackend))
+        self._update_apply_action_state()
+
+    def _update_apply_action_state(self) -> None:
+        if hasattr(self, "apply_hardware_action"):
+            enabled = bool(self.backend) or self._hardware_apply_required
+            self.apply_hardware_action.setEnabled(enabled)
 
     def _apply_backend_configuration(self) -> None:
         if isinstance(self.backend, RealBackend):
@@ -2347,6 +5457,8 @@ class MainWindow(QMainWindow):
                 return
         self._update_status_indicator(True)
         self.status_message_label.setText("Connected")
+        if self._startup_on_connect:
+            self._run_startup(mode="normal", force=not self._startup_only_on_change)
 
     def _disconnect_backend(self) -> None:
         if self.backend:
@@ -2363,6 +5475,7 @@ class MainWindow(QMainWindow):
     def _on_connection_changed(self, connected: bool, message: str) -> None:
         self._update_status_indicator(connected)
         self.status_message_label.setText(message)
+        self._update_startup_controls()
 
     def _on_status_updated(self) -> None:
         pass
@@ -2370,24 +5483,49 @@ class MainWindow(QMainWindow):
     # Channels management
     def _refresh_channel_cards(self) -> None:
         for card in self._channel_cards.values():
-            card.setParent(None)
+            card.deleteLater()
         self._channel_cards.clear()
-        while self.channel_layout.count():
-            item = self.channel_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        for name, profile in self._channel_profiles.items():
+        names = list(self._channel_profiles.items())
+        max_cols = max(1, int(self._channel_grid_cols))
+        self._create_channel_columns(max_cols)
+        for index, (name, profile) in enumerate(names):
             card = ChannelCardWidget(profile)
             card.command_requested.connect(self._on_channel_command)
             card.sequencer_requested.connect(self._on_sequencer_request)
+            card.sequencer_config_changed.connect(self._on_sequencer_config_changed)
             card.plot_visibility_changed.connect(self._on_channel_plot_visibility)
             card.simulation_changed.connect(self._on_channel_simulation)
-            self.channel_layout.addWidget(card)
+            card.section_collapse_changed.connect(self._on_card_section_collapse)
+            card.duplicate_requested.connect(self._on_card_duplicate)
+            card.delete_requested.connect(self._on_card_delete)
+            if not self._channel_columns:
+                continue
+            column = index % len(self._channel_columns)
+            target_layout = self._channel_columns[column]
+            target_layout.insertWidget(max(0, target_layout.count() - 1), card)
             self._channel_cards[name] = card
-            self._sequencers.setdefault(name, SequencerState())
+            config = self._sequencer_configs.setdefault(name, ChannelConfig())
+            card.set_sequencer_config(config)
+            runner = self._sequence_runners.get(name)
+            if runner is None:
+                runner = SequenceRunner(name, self._apply_sequence_output, parent=self)
+                runner.progressed.connect(
+                    lambda index, phase, remaining, channel=name: self._on_sequence_progress(
+                        channel, index, phase, remaining
+                    )
+                )
+                runner.finished.connect(lambda channel=name: self._on_sequence_finished(channel))
+                self._sequence_runners[name] = runner
+            if not runner.is_running:
+                runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            card.set_sequence_running(runner.is_running)
+            if runner.is_running:
+                runner.emit_progress()
             card.set_plot_checked(self._channel_plot_settings.get(name, False))
+            collapse_state = self._channel_collapse_state.get(name, {})
+            card.set_section_collapsed("status", collapse_state.get("status", True))
+            card.set_section_collapsed("sequencer", collapse_state.get("sequencer", True))
         self._update_channel_card_modes()
-        self.channel_layout.addStretch(1)
         self.channel_selector.clear()
         self.channel_selector.addItems(sorted(self._channel_profiles))
 
@@ -2401,6 +5539,8 @@ class MainWindow(QMainWindow):
     def _on_channel_command(self, channel: str, command: Dict[str, float]) -> None:
         if not self.backend:
             return
+        # GUI-konfigurierte Init-Sequenz genau einmal vor dem ersten Schalten
+        self._run_startup_inline_once()
         self._channel_commands[channel] = {key: float(value) for key, value in command.items()}
         try:
             self.backend.apply_channel_command(channel, command)
@@ -2424,6 +5564,23 @@ class MainWindow(QMainWindow):
         if isinstance(self.backend, DummyBackend):
             self.backend.set_channel_profiles(self._channel_profiles)
         self._save_settings()
+
+    def _on_card_section_collapse(self, name: str, section: str, collapsed: bool) -> None:
+        state = self._channel_collapse_state.setdefault(name, {})
+        state[section] = collapsed
+        self._save_settings()
+
+    def _on_card_duplicate(self, name: str) -> None:
+        index = self.channel_selector.findText(name)
+        if index >= 0:
+            self.channel_selector.setCurrentIndex(index)
+        self._duplicate_channel()
+
+    def _on_card_delete(self, name: str) -> None:
+        index = self.channel_selector.findText(name)
+        if index >= 0:
+            self.channel_selector.setCurrentIndex(index)
+        self._remove_channel()
 
     def _add_channel(self) -> None:
         dialog = ChannelBuilderDialog(self._dbc, parent=self)
@@ -2456,33 +5613,229 @@ class MainWindow(QMainWindow):
             save_channel_profiles(list(self._channel_profiles.values()))
             if self.backend:
                 self.backend.set_channel_profiles(self._channel_profiles)
+            self._sequencer_configs.pop(name, None)
+            runner = self._sequence_runners.pop(name, None)
+            if runner:
+                runner.stop()
+            self._channel_commands.pop(name, None)
+            self._channel_status.pop(name, None)
+            self._channel_plot_settings.pop(name, None)
             self._refresh_channel_cards()
+            self._save_settings()
 
-    def _on_sequencer_request(self, channel: str, start: bool, on_seconds: float, off_seconds: float, duration_min: float) -> None:
-        state = self._sequencers.setdefault(channel, SequencerState())
-        if start:
-            state.on_seconds = max(on_seconds, 0.1)
-            state.off_seconds = max(off_seconds, 0.1)
-            state.total_seconds = max(duration_min, 0.1) * 60.0
-            state.elapsed_total = 0.0
-            state.elapsed_phase = 0.0
-            state.running = True
-            state.is_on_phase = True
-            card = self._channel_cards.get(channel)
-            if card:
-                state.target_pwm = float(card.pwm_slider.value())
-            state.completed = False
-        else:
-            state.running = False
-            state.completed = True
-        self._update_card_sequencer(channel)
+    def _duplicate_channel(self) -> None:
+        source_name = self.channel_selector.currentText()
+        source_profile = self._channel_profiles.get(source_name)
+        if not source_profile:
+            return
+        suggested_id = self._suggest_duplicate_target(source_profile.name)
+        dialog = ChannelDuplicateDialog(
+            source_profile,
+            suggested_id,
+            self._channel_profiles.keys(),
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        target_id = dialog.target_id
+        if not target_id:
+            self._show_error("Target channel ID cannot be empty.")
+            return
+        display_name = dialog.display_name or target_id
+        if display_name in self._channel_profiles:
+            self._show_error(f"Channel {display_name} already exists.")
+            return
+        new_profile = copy.deepcopy(source_profile)
+        _, source_digits, _ = self._split_channel_name(source_profile.name)
+        _, target_digits, _ = self._split_channel_name(target_id)
+        if source_digits and target_digits:
+            self._remap_channel_profile(new_profile, source_digits, target_digits)
+        new_profile.name = display_name
+        conflict = self._detect_channel_conflict(new_profile, exclude=source_name)
+        if conflict:
+            self._show_error(conflict)
+            return
+        self._channel_profiles[display_name] = new_profile
+        self._channel_profiles = dict(sorted(self._channel_profiles.items()))
+        save_channel_profiles(list(self._channel_profiles.values()))
+        self._sequencer_configs[display_name] = copy.deepcopy(
+            self._sequencer_configs.get(source_name, ChannelConfig())
+        )
+        self._sequence_runners.pop(display_name, None)
+        self._channel_commands.setdefault(display_name, {})
+        self._channel_status.setdefault(display_name, {})
+        self._channel_plot_settings.setdefault(display_name, False)
+        if self.backend:
+            try:
+                self.backend.set_channel_profiles(self._channel_profiles)
+            except BackendError as exc:
+                self._channel_profiles.pop(display_name, None)
+                save_channel_profiles(list(self._channel_profiles.values()))
+                self._sequencer_configs.pop(display_name, None)
+                self._channel_commands.pop(display_name, None)
+                self._channel_status.pop(display_name, None)
+                self._channel_plot_settings.pop(display_name, None)
+                self._show_error(str(exc))
+                return
+        self._refresh_channel_cards()
+        self._save_settings()
 
-    def _update_card_sequencer(self, channel: str) -> None:
+    def _split_channel_name(self, name: str) -> Tuple[str, Optional[str], str]:
+        match = re.search(r"(\d+)", name)
+        if not match:
+            return name, None, ""
+        prefix = name[: match.start()]
+        digits = match.group(1)
+        suffix = name[match.end() :]
+        return prefix, digits, suffix
+
+    def _suggest_duplicate_target(self, base_name: str) -> str:
+        prefix, digits, suffix = self._split_channel_name(base_name)
+        existing = set(self._channel_profiles.keys())
+        if digits:
+            width = len(digits)
+            number = int(digits)
+            while True:
+                number += 1
+                candidate = f"{prefix}{number:0{width}d}{suffix}"
+                if candidate not in existing:
+                    return candidate
+        candidate = f"{base_name}_copy"
+        index = 1
+        while candidate in existing:
+            index += 1
+            candidate = f"{base_name}_copy{index}"
+        return candidate
+
+    def _remap_channel_profile(self, profile: ChannelProfile, source_digits: str, target_digits: str) -> None:
+        if not source_digits:
+            return
+        target_digits = target_digits or source_digits
+        padded_target = target_digits.zfill(len(source_digits))
+        source_plain = source_digits.lstrip("0") or source_digits
+        target_plain = target_digits.lstrip("0") or target_digits
+
+        def replace_text(text: str) -> str:
+            if not text:
+                return text
+            updated = text.replace(source_digits, padded_target)
+            pattern = re.compile(rf"(?<!\\d){re.escape(source_plain)}(?!\\d)")
+            return pattern.sub(target_plain, updated)
+
+        profile.write.message = replace_text(profile.write.message)
+        profile.write.fields = {semantic: replace_text(value) for semantic, value in profile.write.fields.items()}
+        profile.status.message = replace_text(profile.status.message)
+        profile.status.fields = {semantic: replace_text(value) for semantic, value in profile.status.fields.items()}
+
+    def _detect_channel_conflict(self, profile: ChannelProfile, exclude: Optional[str] = None) -> Optional[str]:
+        for name, existing in self._channel_profiles.items():
+            if name == exclude:
+                continue
+            if profile.write.message and profile.write.message == existing.write.message:
+                overlap = set(profile.write.fields.values()) & set(existing.write.fields.values())
+                if overlap:
+                    return f"Write mapping conflicts with {name}: {', '.join(sorted(overlap))}"
+            if profile.status.message and profile.status.message == existing.status.message:
+                overlap = set(profile.status.fields.values()) & set(existing.status.fields.values())
+                if overlap:
+                    return f"Status mapping conflicts with {name}: {', '.join(sorted(overlap))}"
+        return None
+
+    def _stop_all_sequences(self) -> None:
+        for runner in self._sequence_runners.values():
+            runner.stop()
+        for card in self._channel_cards.values():
+            card.set_sequence_running(False)
+
+    def _on_sequencer_request(self, channel: str, action: str) -> None:
+        runner = self._sequence_runners.get(channel)
         card = self._channel_cards.get(channel)
-        state = self._sequencers.get(channel)
-        if card and state:
-            status = "Sequence running" if state.running else "Sequence idle"
-            card.update_sequencer_status(status, state.running)
+        if not runner or not card:
+            return
+        config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+        if action == "start":
+            if runner.is_running:
+                return
+            enabled_sequences = [
+                sequence
+                for sequence in config.sequences
+                if sequence.enabled and sequence.duration_s > 0 and sequence.on_s > 0 and sequence.off_s > 0
+            ]
+            if not enabled_sequences:
+                self._show_error("No enabled sequences available for this channel.")
+                return
+            runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            if not runner.start():
+                self._show_error("Failed to start the sequence. Please verify configuration values.")
+                return
+            card.set_sequence_running(True)
+            runner.emit_progress()
+        elif action == "stop":
+            runner.stop()
+            card.set_sequence_running(False)
+        elif action == "reset":
+            runner.reset()
+            card.set_sequence_running(False)
+        self._save_settings()
+
+    def _apply_sequence_output(self, channel: str, pwm: float) -> None:
+        pwm_value = max(0.0, min(100.0, float(pwm)))
+        # _apply_sequence_output(...)
+        command = {"enabled": 1.0, "select": 1.0, "pwm": pwm_value}
+
+        self._on_channel_command(channel, command)
+
+    def _on_sequencer_config_changed(self, channel: str, payload: object) -> None:
+        runner = self._sequence_runners.get(channel)
+        card = self._channel_cards.get(channel)
+        if runner and runner.is_running:
+            if card:
+                card.set_sequencer_config(self._sequencer_configs.get(channel, ChannelConfig()))
+                card.set_sequence_running(True)
+            self._show_error("Stop the running sequence before editing its configuration.")
+            return
+        data = payload if isinstance(payload, dict) else {}
+        sequences_raw = data.get("sequences", []) if isinstance(data, dict) else []
+        sequences: List[SequenceCfg] = []
+        for entry in sequences_raw:
+            if isinstance(entry, SequenceCfg):
+                sequences.append(entry)
+            elif isinstance(entry, dict):
+                sequences.append(SequenceCfg.from_dict(entry))
+        repeat_mode_value = data.get("repeat_mode") if isinstance(data, dict) else None
+        if isinstance(repeat_mode_value, SequenceRepeatMode):
+            repeat_mode = repeat_mode_value
+        else:
+            try:
+                repeat_mode = SequenceRepeatMode(str(repeat_mode_value))
+            except (TypeError, ValueError):
+                repeat_mode = SequenceRepeatMode.OFF
+        repeat_limit_s = int(max(0, int(data.get("repeat_limit_s", 0)))) if isinstance(data, dict) else 0
+        config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+        config.sequences = sequences
+        config.repeat_mode = repeat_mode
+        config.repeat_limit_s = repeat_limit_s
+        if runner:
+            runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            runner.emit_progress()
+        self._save_settings()
+
+    def _on_sequence_progress(self, channel: str, seq_index: int, phase: str, remaining_s: float) -> None:
+        card = self._channel_cards.get(channel)
+        runner = self._sequence_runners.get(channel)
+        if not card or not runner:
+            return
+        total = runner.sequence_count
+        if seq_index < 0:
+            card.update_sequence_status(None, total, None, 0.0, False)
+        else:
+            card.update_sequence_status(seq_index, total, phase, remaining_s, runner.is_running)
+
+    def _on_sequence_finished(self, channel: str) -> None:
+        card = self._channel_cards.get(channel)
+        if card:
+            card.set_sequence_running(False)
+        self._save_settings()
 
     # Signal browser / watchlist
     def _on_add_to_watchlist(self, names: List[str]) -> None:
@@ -2497,20 +5850,45 @@ class MainWindow(QMainWindow):
     def _on_remove_from_watchlist(self, names: List[str]) -> None:
         self.watchlist_widget.remove_signals(names)
         self._pending_watchlist = [name for name in self._pending_watchlist if name not in names]
+        for name in names:
+            assignment = self._plot_assignments.pop(name, None)
+            if assignment:
+                window_id, _side = assignment
+                dock = self._plot_windows.get(window_id)
+                if dock:
+                    dock.remove_signal(name)
         self._save_settings()
 
     def _apply_watchlist_plot_settings(self) -> None:
         if not self._pending_plot_signals:
             return
-        for name in self.watchlist_widget.signal_names:
-            self.watchlist_widget.set_plot_enabled(name, name in self._pending_plot_signals)
+        self._suspend_plot_assignment = True
+        try:
+            for name in self.watchlist_widget.signal_names:
+                self.watchlist_widget.set_plot_enabled(name, name in self._pending_plot_signals)
+        finally:
+            self._suspend_plot_assignment = False
         self._pending_plot_signals = []
 
     def _on_watchlist_plot_toggled(self, name: str, enabled: bool) -> None:
-        if enabled and not self.multi_plot_enable.isChecked():
-            # Allow selection but keep widget hidden until enabled by user.
-            pass
-        if not enabled:
+        if self._suspend_plot_assignment:
+            if not enabled:
+                self._multi_plot_buffers.pop(name, None)
+                curve = self._multi_plot_curves.pop(name, None)
+                if curve and getattr(self, "multi_plot_widget", None):
+                    self.multi_plot_widget.removeItem(curve)
+            return
+        if enabled:
+            self._assign_signal_via_dialog(name)
+            if not self._plot_windows and not self.multi_plot_enable.isChecked():
+                self.multi_plot_enable.setChecked(True)
+        else:
+            assignment = self._plot_assignments.pop(name, None)
+            if assignment:
+                window_id, _side = assignment
+                dock = self._plot_windows.get(window_id)
+                if dock:
+                    dock.remove_signal(name)
             self._multi_plot_buffers.pop(name, None)
             curve = self._multi_plot_curves.pop(name, None)
             if curve and getattr(self, "multi_plot_widget", None):
@@ -2547,7 +5925,7 @@ class MainWindow(QMainWindow):
         self._on_add_to_watchlist(names)
         for name in names:
             self.watchlist_widget.set_plot_enabled(name, True)
-        if not self.multi_plot_enable.isChecked():
+        if not self._plot_windows and not self.multi_plot_enable.isChecked():
             self.multi_plot_enable.setChecked(True)
 
     def _on_signal_simulate(self, name: str) -> None:
@@ -2567,6 +5945,7 @@ class MainWindow(QMainWindow):
                 self._show_error(str(exc))
                 return
             self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._save_dummy_profiles()
 
     # Dummy simulation profiles
     def _apply_simulation_profile(self, profile: SignalSimulationConfig) -> None:
@@ -2575,6 +5954,542 @@ class MainWindow(QMainWindow):
                 self.backend.update_simulation_profile(profile)
             except BackendError as exc:
                 self._show_error(str(exc))
+                return
+            self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._save_dummy_profiles()
+
+    # Setup persistence
+    def _collect_setup_payload(self) -> dict:
+        backend_type = "dummy" if self.backend_name == DummyBackend.name else "real"
+        device_id = self.channel_edit.text().strip() if backend_type == "real" else None
+        dock_assignments = {name: assignment for name, assignment in self._plot_assignments.items()}
+        inline_signals = [
+            name
+            for name in self.watchlist_widget.plot_signal_names
+            if name not in dock_assignments
+        ]
+        windows: List[dict] = []
+        if inline_signals:
+            windows.append({"id": 0, "axes": {"left": inline_signals, "right": []}})
+        for identifier, dock in sorted(self._plot_windows.items()):
+            assigned = dock.assigned_signals()
+            left = sorted([name for name, (_unit, side) in assigned.items() if side == "left"])
+            right = sorted([name for name, (_unit, side) in assigned.items() if side == "right"])
+            windows.append({"id": int(identifier), "axes": {"left": left, "right": right}})
+        dummy_profiles: Dict[str, dict] = {}
+        if isinstance(self.backend, DummyBackend):
+            for name, config in self.backend.simulation_profiles().items():
+                dummy_profiles[name] = config.to_dict()
+        else:
+            dummy_profiles = self._read_stored_dummy_profiles()
+        payload = {
+            "version": 1,
+            "backend": {"type": backend_type, "device_id": device_id or None},
+            "signals": {
+                "watchlist": list(self.watchlist_widget.signal_names),
+                "plot_signals": list(self.watchlist_widget.plot_signal_names),
+                "multi_plot": {
+                    "enabled": bool(self._multi_plot_enabled),
+                    "paused": bool(self._multi_plot_paused),
+                    "windows": windows,
+                },
+            },
+            "channels": {
+                "profiles": [profile.to_yaml() for profile in self._channel_profiles.values()],
+                "plot_visibility": dict(self._channel_plot_settings),
+            },
+            "sequencer": {
+                "per_channel": {
+                    name: {
+                        "list": [sequence.to_dict() for sequence in config.sequences],
+                        "repeat_mode": config.repeat_mode.name,
+                        "repeat_limit_s": int(config.repeat_limit_s),
+                    }
+                    for name, config in self._sequencer_configs.items()
+                }
+            },
+            "dummy": {"simulations": dummy_profiles},
+            "startup": {
+                **self._startup_config.to_dict(),
+                "on_connect": bool(self._startup_on_connect),
+                "on_apply": bool(self._startup_on_apply),
+                "delay_ms": int(self._startup_delay_ms),
+                "only_on_change": bool(self._startup_only_on_change),
+            },
+        }
+        return payload
+
+    def _export_setup(self) -> None:
+        ensure_directories()
+        default_path = os.path.join(PROFILE_DIR, "setup.json")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save setup",
+            default_path,
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        payload = self._collect_setup_payload()
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except OSError as exc:
+            self._show_error(f"Failed to save setup: {exc}")
+            return
+        self.status_message_label.setText(f"Setup saved to {os.path.basename(path)}")
+
+    def _import_setup(self) -> None:
+        ensure_directories()
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load setup",
+            PROFILE_DIR,
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        payload = self._load_setup_payload(path)
+        if payload is None:
+            return
+        self._apply_setup_payload(payload)
+        self._set_hardware_pending(True, f"Loaded {os.path.basename(path)}. Apply to hardware when ready.")
+
+    def _load_setup_payload(self, path: str) -> Optional[dict]:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            self._show_error(f"Failed to load setup: {exc}")
+            return None
+        if not isinstance(data, dict):
+            self._show_error("Invalid setup file format.")
+            return None
+        return data
+
+    def _apply_setup_payload(self, payload: dict, scopes: Optional[Set[str]] = None) -> None:
+        version_value = payload.get("version") if isinstance(payload, dict) else None
+        try:
+            version = int(version_value) if version_value is not None else 0
+        except (TypeError, ValueError):
+            version = 0
+        if version != 1:
+            self._show_error("Unsupported setup version.")
+            return
+        target_scopes = scopes or {"backend", "signals", "channels", "sequencer", "dummy", "startup"}
+        if "backend" in target_scopes:
+            self._apply_backend_section(payload.get("backend", {}))
+        if "channels" in target_scopes:
+            self._apply_channels_setup(payload.get("channels", {}))
+        if "sequencer" in target_scopes:
+            self._apply_sequencer_setup(payload.get("sequencer", {}))
+        if "signals" in target_scopes:
+            self._apply_signals_setup(payload.get("signals", {}))
+        if "dummy" in target_scopes:
+            self._apply_dummy_setup(payload.get("dummy", {}))
+        if "startup" in target_scopes:
+            self._apply_startup_setup(payload.get("startup", {}))
+        self._set_hardware_pending(True, "Setup loaded. Apply to hardware when ready.")
+        self._save_settings()
+
+    def _apply_backend_section(self, data: dict) -> None:
+        backend_value = str((data or {}).get("type", "dummy")).lower()
+        desired_backend = DummyBackend.name if backend_value != "real" else RealBackend.name
+        if desired_backend in self.backends and desired_backend != self.backend_name:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentText(desired_backend)
+            self.mode_combo.blockSignals(False)
+            self._switch_backend(desired_backend)
+        device_id = data.get("device_id") if isinstance(data, dict) else None
+        if desired_backend == RealBackend.name and isinstance(device_id, str) and device_id:
+            current = self.channel_edit.text().strip()
+            if current and current != device_id:
+                box = QMessageBox(self)
+                box.setWindowTitle("Device mismatch")
+                box.setText(
+                    "The loaded setup targets device "
+                    f"'{device_id}', but the current channel is '{current}'.\n"
+                    "Do you want to use the stored device identifier?"
+                )
+                box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                choice = box.exec_()
+                if choice == QMessageBox.Yes:
+                    self.channel_edit.setText(device_id)
+            else:
+                self.channel_edit.setText(device_id)
+
+    def _apply_signals_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        watchlist = [str(name) for name in data.get("watchlist", [])]
+        plot_signals = {str(name) for name in data.get("plot_signals", [])}
+        existing = list(self.watchlist_widget.signal_names)
+        if existing:
+            self.watchlist_widget.remove_signals(existing)
+        if watchlist:
+            self.watchlist_widget.add_signals(watchlist)
+        self._pending_watchlist = list(watchlist)
+        self._pending_plot_signals = list(plot_signals)
+        self._suspend_plot_assignment = True
+        try:
+            for name in self.watchlist_widget.signal_names:
+                self.watchlist_widget.set_plot_enabled(name, name in plot_signals)
+        finally:
+            self._suspend_plot_assignment = False
+        multi_plot = data.get("multi_plot", {}) if isinstance(data, dict) else {}
+        enabled = bool(multi_plot.get("enabled", False))
+        paused = bool(multi_plot.get("paused", False))
+        if hasattr(self, "multi_plot_enable"):
+            self.multi_plot_enable.blockSignals(True)
+            self.multi_plot_enable.setChecked(enabled)
+            self.multi_plot_enable.blockSignals(False)
+        self._multi_plot_enabled = enabled
+        if getattr(self, "multi_plot_widget", None):
+            self.multi_plot_widget.clear()
+        self._multi_plot_curves.clear()
+        self._multi_plot_buffers.clear()
+        if hasattr(self, "multi_plot_widget"):
+            if enabled:
+                self.multi_plot_widget.show()
+            else:
+                self.multi_plot_widget.hide()
+        self._multi_plot_paused = paused
+        if hasattr(self, "multi_plot_pause"):
+            self.multi_plot_pause.setText("Resume Plot" if paused else "Pause Plot")
+        self._close_all_plot_windows()
+        self._plot_assignments.clear()
+        windows = multi_plot.get("windows", []) if isinstance(multi_plot, dict) else []
+        for entry in windows:
+            if not isinstance(entry, dict):
+                continue
+            identifier = int(entry.get("id", 0))
+            if identifier <= 0:
+                continue
+            new_id = self._create_plot_window()
+            if new_id is None:
+                continue
+            axes = entry.get("axes", {}) if isinstance(entry.get("axes", {}), dict) else {}
+            left_signals = [str(name) for name in axes.get("left", [])]
+            right_signals = [str(name) for name in axes.get("right", [])]
+            for name in left_signals:
+                if name in plot_signals and name in self.watchlist_widget.signal_names:
+                    self._assign_signal_to_plot(name, new_id, "left")
+            for name in right_signals:
+                if name in plot_signals and name in self.watchlist_widget.signal_names:
+                    self._assign_signal_to_plot(name, new_id, "right")
+
+    def _apply_channels_setup(self, data: dict) -> None:
+        profiles_section = data.get("profiles", []) if isinstance(data, dict) else []
+        new_profiles: Dict[str, ChannelProfile] = {}
+        for entry in profiles_section:
+            if isinstance(entry, ChannelProfile):
+                profile = entry
+            elif isinstance(entry, dict):
+                try:
+                    profile = ChannelProfile.from_yaml(entry)
+                except Exception:
+                    continue
+            else:
+                continue
+            new_profiles[profile.name] = profile
+        if not new_profiles and self._dbc:
+            new_profiles = load_channel_profiles(self._dbc)
+        if new_profiles:
+            self._channel_profiles = dict(sorted(new_profiles.items()))
+            save_channel_profiles(list(self._channel_profiles.values()))
+            if self.backend:
+                try:
+                    self.backend.set_channel_profiles(self._channel_profiles)
+                except BackendError as exc:
+                    self._show_error(str(exc))
+        plot_visibility = data.get("plot_visibility", {}) if isinstance(data, dict) else {}
+        if isinstance(plot_visibility, dict):
+            self._channel_plot_settings = {str(key): bool(value) for key, value in plot_visibility.items()}
+        else:
+            self._channel_plot_settings = {}
+        self._refresh_channel_cards()
+        self._validate_channel_profiles()
+
+    def _apply_sequencer_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        per_channel = data.get("per_channel", {}) if isinstance(data, dict) else {}
+        self._stop_all_sequences()
+        for name in list(self._sequencer_configs.keys()):
+            if name not in self._channel_profiles:
+                self._sequencer_configs.pop(name, None)
+        for channel, config_data in per_channel.items():
+            if channel not in self._channel_profiles:
+                continue
+            sequences_raw = config_data.get("list", []) if isinstance(config_data, dict) else []
+            sequences: List[SequenceCfg] = []
+            for entry in sequences_raw:
+                if isinstance(entry, SequenceCfg):
+                    sequences.append(entry)
+                elif isinstance(entry, dict):
+                    try:
+                        sequences.append(SequenceCfg.from_dict(entry))
+                    except Exception:
+                        continue
+            repeat_value = config_data.get("repeat_mode") if isinstance(config_data, dict) else "OFF"
+            repeat_mode: SequenceRepeatMode
+            if isinstance(repeat_value, SequenceRepeatMode):
+                repeat_mode = repeat_value
+            else:
+                repeat_label = str(repeat_value).upper()
+                try:
+                    repeat_mode = SequenceRepeatMode[repeat_label]
+                except KeyError:
+                    try:
+                        repeat_mode = SequenceRepeatMode(str(repeat_value).lower())
+                    except ValueError:
+                        repeat_mode = SequenceRepeatMode.OFF
+            repeat_limit = 0
+            if isinstance(config_data, dict):
+                try:
+                    repeat_limit = int(config_data.get("repeat_limit_s", 0))
+                except (TypeError, ValueError):
+                    repeat_limit = 0
+            channel_config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+            channel_config.sequences = sequences
+            channel_config.repeat_mode = repeat_mode
+            channel_config.repeat_limit_s = max(0, int(repeat_limit))
+            runner = self._sequence_runners.get(channel)
+            if runner:
+                runner.load(channel_config.sequences, channel_config.repeat_mode, channel_config.repeat_limit_s)
+            card = self._channel_cards.get(channel)
+            if card:
+                card.set_sequencer_config(channel_config)
+                card.set_sequence_running(False)
+
+    def _apply_dummy_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        simulations = data.get("simulations", {}) if isinstance(data, dict) else {}
+        if not simulations:
+            if isinstance(self.backend, DummyBackend):
+                self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            return
+        if isinstance(self.backend, DummyBackend):
+            for name, cfg in simulations.items():
+                if not isinstance(cfg, dict):
+                    continue
+                try:
+                    profile = SignalSimulationConfig.from_dict(cfg)
+                except Exception:
+                    continue
+                try:
+                    self.backend.update_simulation_profile(profile)
+                except BackendError:
+                    continue
+            self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+            self._save_dummy_profiles()
+        else:
+            ensure_directories()
+            try:
+                with open(DUMMY_SIMULATION_PATH, "w", encoding="utf-8") as handle:
+                    json.dump({str(k): v for k, v in simulations.items()}, handle, indent=2)
+            except OSError as exc:
+                self._show_error(f"Failed to store dummy simulations: {exc}")
+
+    def _apply_startup_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        self._startup_config = StartupConfig.from_dict(data)
+        self._startup_last_payloads.clear()
+        if "on_connect" in data:
+            self._startup_on_connect = bool(data.get("on_connect", self._startup_on_connect))
+        if "on_apply" in data:
+            self._startup_on_apply = bool(data.get("on_apply", self._startup_on_apply))
+        if "delay_ms" in data:
+            try:
+                self._startup_delay_ms = max(0, int(data.get("delay_ms", self._startup_delay_ms)))
+            except (TypeError, ValueError):
+                self._startup_delay_ms = 0
+        if "only_on_change" in data:
+            self._startup_only_on_change = bool(data.get("only_on_change", self._startup_only_on_change))
+        if hasattr(self, "startup_on_connect_check"):
+            self.startup_on_connect_check.blockSignals(True)
+            self.startup_on_connect_check.setChecked(self._startup_on_connect)
+            self.startup_on_connect_check.blockSignals(False)
+        if hasattr(self, "startup_on_apply_check"):
+            self.startup_on_apply_check.blockSignals(True)
+            self.startup_on_apply_check.setChecked(self._startup_on_apply)
+            self.startup_on_apply_check.blockSignals(False)
+        if hasattr(self, "startup_only_change_check"):
+            self.startup_only_change_check.blockSignals(True)
+            self.startup_only_change_check.setChecked(self._startup_only_on_change)
+            self.startup_only_change_check.blockSignals(False)
+        if hasattr(self, "startup_delay_spin"):
+            self.startup_delay_spin.blockSignals(True)
+            self.startup_delay_spin.setValue(int(self._startup_delay_ms))
+            self.startup_delay_spin.blockSignals(False)
+        self._refresh_startup_tree()
+        self._validate_startup_config()
+
+    def _save_as_default(self) -> None:
+        ensure_directories()
+        payload = self._collect_setup_payload()
+        try:
+            with open(DEFAULT_SETUP_PATH, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except OSError as exc:
+            self._show_error(f"Failed to save default setup: {exc}")
+            return
+        self.status_message_label.setText("Default setup saved.")
+
+    def _prompt_reset_defaults(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Reset to Defaults")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        scope_combo = QComboBox()
+        scope_combo.addItems(["All", "Signals", "Channels", "Sequencer", "Dummy"])
+        form.addRow("Scope", scope_combo)
+        layout.addLayout(form)
+        notice = QLabel("Outputs remain off until you apply the setup to hardware.")
+        notice.setWordWrap(True)
+        if isinstance(self.backend, RealBackend):
+            notice.setStyleSheet("color: orange;")
+        layout.addWidget(notice)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        choice = scope_combo.currentText().lower()
+        self._reset_to_defaults(choice)
+
+    def _reset_to_defaults(self, scope: str) -> None:
+        payload = self._load_default_setup_payload()
+        if not payload:
+            payload = copy.deepcopy(FACTORY_DEFAULT_SETUP)
+        scope_map = {
+            "all": {"backend", "signals", "channels", "sequencer", "dummy", "startup"},
+            "signals": {"signals"},
+            "channels": {"channels"},
+            "sequencer": {"sequencer"},
+            "dummy": {"dummy"},
+        }
+        scopes = scope_map.get(scope, scope_map["all"])
+        if "channels" in scopes or "sequencer" in scopes:
+            self._stop_all_sequences()
+        self._apply_setup_payload(payload, scopes)
+        self._set_hardware_pending(True, "Defaults restored. Apply to hardware when ready.")
+
+    def _load_default_setup_payload(self) -> Optional[dict]:
+        ensure_directories()
+        if os.path.exists(DEFAULT_SETUP_PATH):
+            try:
+                with open(DEFAULT_SETUP_PATH, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                if isinstance(data, dict):
+                    return data
+            except (OSError, json.JSONDecodeError) as exc:
+                self._show_error(f"Failed to load default setup: {exc}")
+        return copy.deepcopy(FACTORY_DEFAULT_SETUP)
+
+    def _save_dummy_profiles(self) -> None:
+        if not isinstance(self.backend, DummyBackend):
+            return
+        ensure_directories()
+        try:
+            payload = {name: config.to_dict() for name, config in self.backend.simulation_profiles().items()}
+            with open(DUMMY_SIMULATION_PATH, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except OSError as exc:
+            self._show_error(f"Failed to save dummy profiles: {exc}")
+
+    def _read_stored_dummy_profiles(self) -> Dict[str, dict]:
+        ensure_directories()
+        if not os.path.exists(DUMMY_SIMULATION_PATH):
+            return {}
+        try:
+            with open(DUMMY_SIMULATION_PATH, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+
+    def _load_dummy_profiles(self) -> None:
+        if not isinstance(self.backend, DummyBackend):
+            return
+        stored = self._read_stored_dummy_profiles()
+        if not stored:
+            return
+        for name, cfg in stored.items():
+            try:
+                profile = SignalSimulationConfig.from_dict(cfg)
+            except Exception:
+                continue
+            try:
+                self.backend.update_simulation_profile(profile)
+            except BackendError:
+                continue
+        self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+
+    def _load_startup_defaults(self) -> None:
+        ensure_directories()
+        config_data: Optional[dict] = None
+        if os.path.exists(DEFAULT_SETUP_PATH):
+            try:
+                with open(DEFAULT_SETUP_PATH, "r", encoding="utf-8") as handle:
+                    stored = json.load(handle)
+                if isinstance(stored, dict):
+                    section = stored.get("startup")
+                    if isinstance(section, dict):
+                        config_data = section
+            except (OSError, json.JSONDecodeError):
+                config_data = None
+        if config_data is None:
+            fallback = FACTORY_DEFAULT_SETUP.get("startup", {})
+            if isinstance(fallback, dict):
+                config_data = fallback
+            else:
+                config_data = {"version": 1, "globals": [], "per_output": [], "teardown": []}
+        self._startup_config = StartupConfig.from_dict(config_data)
+        self._startup_last_payloads.clear()
+
+    def _validate_channel_profiles(self) -> None:
+        if not self._dbc:
+            return
+        issues: List[str] = []
+        for profile in self._channel_profiles.values():
+            write_missing: List[str] = []
+            status_missing: List[str] = []
+            if profile.write.message:
+                try:
+                    write_message = self._dbc.get_message_by_name(profile.write.message)
+                except KeyError:
+                    issues.append(f"{profile.name}: write message '{profile.write.message}' not found")
+                else:
+                    available = {signal.name for signal in write_message.signals}
+                    write_missing = [signal for signal in profile.write.fields.values() if signal not in available]
+            if profile.status.message:
+                try:
+                    status_message = self._dbc.get_message_by_name(profile.status.message)
+                except KeyError:
+                    issues.append(f"{profile.name}: status message '{profile.status.message}' not found")
+                else:
+                    available_status = {signal.name for signal in status_message.signals}
+                    status_missing = [signal for signal in profile.status.fields.values() if signal not in available_status]
+            if write_missing:
+                issues.append(f"{profile.name}: write fields missing {', '.join(sorted(write_missing))}")
+            if status_missing:
+                issues.append(f"{profile.name}: status fields missing {', '.join(sorted(status_missing))}")
+        if issues:
+            message = "Some channel mappings could not be validated:\n" + "\n".join(issues[:10])
+            if len(issues) > 10:
+                message += f"\n… {len(issues) - 10} more entries."
+            QMessageBox.warning(
+                self,
+                "Channel mapping issues",
+                message,
+            )
+
 
     # Logging
     def _browse_log_path(self) -> None:
@@ -2623,30 +6538,14 @@ class MainWindow(QMainWindow):
         except BackendError as exc:
             self._show_error(str(exc))
             return
-        self._update_sequencers(dt)
+        self._update_sequencers()
         self._refresh_values(dt)
         self._handle_logging(dt)
 
-    def _update_sequencers(self, dt: float) -> None:
-        for channel, state in self._sequencers.items():
-            if not state.running:
-                continue
-            state.elapsed_total += dt
-            state.elapsed_phase += dt
-            if state.elapsed_total >= state.total_seconds:
-                state.running = False
-                self._on_channel_command(channel, {"enabled": 0.0, "pwm": 0.0, "select": 0.0})
-                self._update_card_sequencer(channel)
-                continue
-            phase_duration = state.on_seconds if state.is_on_phase else state.off_seconds
-            if state.elapsed_phase >= phase_duration:
-                state.elapsed_phase = 0.0
-                state.is_on_phase = not state.is_on_phase
-            if state.is_on_phase:
-                self._on_channel_command(channel, {"enabled": 1.0, "select": 1.0, "pwm": state.target_pwm})
-            else:
-                self._on_channel_command(channel, {"enabled": 0.0, "select": 0.0, "pwm": 0.0})
-            self._update_card_sequencer(channel)
+    def _update_sequencers(self) -> None:
+        for runner in self._sequence_runners.values():
+            if runner.is_running:
+                runner.emit_progress()
 
     def _refresh_values(self, _dt: float) -> None:
         if not self.backend:
@@ -2669,10 +6568,12 @@ class MainWindow(QMainWindow):
                 command_value = self._extract_command_value(profile, self._channel_commands.get(channel, {}))
                 feedback_value = self._extract_feedback_value(profile, status)
                 card.record_sample(timestamp, command_value, feedback_value)
-        watch_values = {name: values.get(name, 0.0) for name in self.watchlist_widget.signal_names}
+        watch_values = {name: values.get(name) for name in self.watchlist_widget.signal_names}
         self.watchlist_widget.update_values(watch_values)
         self._pending_watchlist = self.watchlist_widget.signal_names
         self._update_multi_plot(timestamp, watch_values)
+        for dock in self._plot_windows.values():
+            dock.update(timestamp, watch_values)
 
     def _handle_logging(self, dt: float) -> None:
         if not self.logger.is_running():
@@ -2687,7 +6588,7 @@ class MainWindow(QMainWindow):
         if not self.backend:
             return
         values = self.backend.read_signal_values(signals)
-        timestamp = datetime.datetime.now().isoformat()
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
         self.logger.log_row(timestamp, values)
 
     def _extract_command_value(self, profile: ChannelProfile, command: Dict[str, float]) -> Optional[float]:
@@ -2718,8 +6619,11 @@ class MainWindow(QMainWindow):
             value = values.get(name)
             if value is None:
                 continue
-            buffer = self._multi_plot_buffers.setdefault(name, deque(maxlen=1_200))
+            buffer = self._multi_plot_buffers.setdefault(name, deque())
             buffer.append((timestamp, float(value)))
+            cutoff = timestamp - 60.0
+            while buffer and buffer[0][0] < cutoff:
+                buffer.popleft()
             if name not in self._multi_plot_curves:
                 pen = pg.intColor(len(self._multi_plot_curves))
                 curve = self.multi_plot_widget.plot(name=name, pen=pen)
@@ -2736,15 +6640,65 @@ class MainWindow(QMainWindow):
                 continue
             times = [entry[0] - base_time for entry in buffer]
             samples = [entry[1] for entry in buffer]
+            if len(times) > 5_000:
+                step = max(1, math.ceil(len(times) / 5_000))
+                dec_times = times[::step]
+                dec_samples = samples[::step]
+                if dec_times[-1] != times[-1]:
+                    dec_times.append(times[-1])
+                    dec_samples.append(samples[-1])
+                times, samples = dec_times, dec_samples
             curve = self._multi_plot_curves.get(name)
             if curve:
                 curve.setData(times, samples)
         self.multi_plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     # Helpers
+    def _set_hardware_pending(self, pending: bool, message: Optional[str] = None) -> None:
+        self._hardware_apply_required = pending
+        self._update_apply_action_state()
+        if pending:
+            if message:
+                self.status_message_label.setText(message)
+            else:
+                self.status_message_label.setText("Setup pending hardware apply")
+        elif message:
+            self.status_message_label.setText(message)
+
+    def _apply_to_hardware(self) -> None:
+        if not self.backend:
+            self._show_error("No backend is configured.")
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Apply to hardware")
+        box.setText("Apply the current setup to the active backend?")
+        checkbox = QCheckBox("Force 0% outputs on load")
+        box.setCheckBox(checkbox)
+        box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if box.exec_() != QMessageBox.Ok:
+            return
+        try:
+            self.backend.set_channel_profiles(self._channel_profiles)
+        except BackendError as exc:
+            self._show_error(str(exc))
+            return
+        if isinstance(self.backend, DummyBackend):
+            self._save_dummy_profiles()
+        if checkbox.isChecked():
+            self._all_outputs_off()
+        if self._startup_on_apply:
+            self._run_startup(mode="normal", force=not self._startup_only_on_change)
+            self._set_hardware_pending(False, "Startup sequence triggered.")
+        else:
+            self._set_hardware_pending(False, "Setup applied to hardware.")
+
     def _update_status_indicator(self, connected: bool) -> None:
         color = "green" if connected else "red"
         self.status_indicator.setStyleSheet(f"color: {color}; font-size: 16pt;")
+
+    def _update_csv_status_label(self) -> None:
+        if hasattr(self, "csv_preset_status_label"):
+            self.csv_preset_status_label.setText(f"CSV: {get_csv_preset_label(self._csv_preset_key)}")
 
     def _show_error(self, message: str) -> None:
         self.status_message_label.setText(message)
@@ -2754,17 +6708,46 @@ class MainWindow(QMainWindow):
         for name, profile in self._channel_profiles.items():
             if profile.write.fields:
                 self._on_channel_command(name, {"enabled": 0.0, "select": 0.0, "pwm": 0.0, "state": 0.0})
-        for state in self._sequencers.values():
-            state.running = False
-        for name in self._channel_profiles:
-            self._update_card_sequencer(name)
+        for runner in self._sequence_runners.values():
+            runner.stop()
+        for card in self._channel_cards.values():
+            card.set_sequence_running(False)
 
     def _emergency_stop(self) -> None:
-        self._all_outputs_off()
+        self._send_emergency_disables()
+        if self._startup_config.teardown:
+            self._run_startup(mode="teardown", force=True)
+        else:
+            self._all_outputs_off()
         if self.logger.is_running():
             self.logger.stop()
             self.logging_button.setText("Start Logging")
         self.status_message_label.setText("Emergency stop activated")
+
+    def _send_emergency_disables(self) -> None:
+        if not self.backend:
+            return
+        payloads: Dict[str, Dict[str, float]] = {}
+
+        def is_enable_field(name: str) -> bool:
+            lowered = name.lower()
+            return "enable" in lowered or lowered.endswith("_en")
+
+        for step in list(self._startup_config.globals) + list(self._startup_config.per_output):
+            message_fields = payloads.setdefault(step.message, {})
+            for name in step.fields:
+                if is_enable_field(name):
+                    message_fields[name] = 0.0
+
+        for message, fields in payloads.items():
+            if not fields:
+                continue
+            try:
+                self.backend.send_message_by_name(message, fields, force=True)
+                self._append_startup_log(f"Emergency disable {message}: {fields}")
+            except BackendError as exc:
+                self._append_startup_log(f"Emergency disable failed for {message}: {exc}")
+                self.status_message_label.setText(str(exc))
 
     def _browse_dbc(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select DBC", self.dbc_edit.text(), "DBC Files (*.dbc)")
@@ -2797,6 +6780,8 @@ class MainWindow(QMainWindow):
             self.backend.set_channel_profiles(self._channel_profiles)
             if isinstance(self.backend, DummyBackend):
                 self.simulation_widget.set_profiles(self.backend.simulation_profiles())
+        self._suggest_startup_defaults()
+        self._validate_startup_config()
         self._save_settings()
 
     def _update_dummy_tab_visibility(self) -> None:
@@ -2808,15 +6793,57 @@ class MainWindow(QMainWindow):
             else:
                 self.tab_widget.setTabEnabled(index, visible)
                 self.dummy_tab.setVisible(visible)
+        if hasattr(self, "show_dummy_action"):
+            self.show_dummy_action.blockSignals(True)
+            self.show_dummy_action.setChecked(self._show_dummy_advanced)
+            self.show_dummy_action.blockSignals(False)
+        self._update_central_stack_visibility()
 
-    def _on_show_dummy_tab_changed(self, state: int) -> None:
-        self._show_dummy_advanced = state == Qt.Checked
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    def _on_show_dummy_tab_changed(self, state) -> None:
+        self._show_dummy_advanced = self._to_bool(state, False)
+        if hasattr(self, "show_dummy_action"):
+            self.show_dummy_action.blockSignals(True)
+            self.show_dummy_action.setChecked(self._show_dummy_advanced)
+            self.show_dummy_action.blockSignals(False)
         self._update_dummy_tab_visibility()
-        self._save_settings()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+
+    def _on_csv_preset_changed(self) -> None:
+        if not hasattr(self, "csv_preset_combo"):
+            return
+        key = self.csv_preset_combo.currentData()
+        if not isinstance(key, str):
+            return
+        if key not in PRESETS:
+            key = "excel_de"
+        if key == self._csv_preset_key:
+            return
+        self._csv_preset_key = key
+        self._qt_settings.setValue("csv/preset", self._csv_preset_key)
+        self._update_csv_status_label()
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
+
+    def _on_toolbar_visibility_changed(self, visible: bool) -> None:
+        self._toolbar_visible = visible
+        if hasattr(self, "logging_rate_spin"):
+            self._save_settings()
 
     # Settings persistence
     def _restore_settings(self) -> None:
-        self.backend_name = self._qt_settings.value("mode", DummyBackend.name)
+        self.backend_name = str(self._qt_settings.value("mode", DummyBackend.name))
         watchlist = self._qt_settings.value("watchlist", [])
         if isinstance(watchlist, list):
             self._pending_watchlist = [str(name) for name in watchlist]
@@ -2826,9 +6853,67 @@ class MainWindow(QMainWindow):
         plots = self._qt_settings.value("channel_plots", {})
         if isinstance(plots, dict):
             self._channel_plot_settings = {str(key): bool(value) for key, value in plots.items()}
-        self._multi_plot_paused = bool(self._qt_settings.value("multi_plot_paused", False))
-        self._show_dummy_advanced = bool(self._qt_settings.value("show_dummy_tab", False))
-        self._multi_plot_enabled = bool(self._qt_settings.value("multi_plot_enabled", False))
+        self._multi_plot_paused = self._to_bool(self._qt_settings.value("multi_plot_paused", False), False)
+        self._show_dummy_advanced = self._to_bool(self._qt_settings.value("show_dummy_tab", False), False)
+        self._multi_plot_enabled = self._to_bool(self._qt_settings.value("multi_plot_enabled", False), False)
+        self._channel_grid_cols = int(self._qt_settings.value("channel_grid_cols", self._channel_grid_cols) or 2)
+        collapse_data = self._qt_settings.value("channel_collapse", {})
+        if isinstance(collapse_data, dict):
+            parsed: Dict[str, Dict[str, bool]] = {}
+            for channel, state in collapse_data.items():
+                if isinstance(state, dict):
+                    parsed[str(channel)] = {str(key): self._to_bool(value, True) for key, value in state.items()}
+            self._channel_collapse_state = parsed
+        self._signals_log_visible = self._to_bool(
+            self._qt_settings.value("signals_log_visible", self._signals_log_visible), True
+        )
+        self._signals_log_height = int(self._qt_settings.value("signals_log_height", self._signals_log_height) or 200)
+        self._toolbar_visible = self._to_bool(self._qt_settings.value("toolbar_visible", self._toolbar_visible), True)
+        self._show_startup_tab = self._to_bool(
+            self._qt_settings.value("ui/show_startup", self._show_startup_tab), False
+        )
+        dock_state = self._qt_settings.value("ui/dock_state")
+        if isinstance(dock_state, QByteArray):
+            self._saved_dock_state = QByteArray(dock_state)
+        elif isinstance(dock_state, (bytes, bytearray)):
+            self._saved_dock_state = QByteArray(dock_state)
+        elif isinstance(dock_state, str):
+            try:
+                self._saved_dock_state = QByteArray.fromHex(dock_state.encode("ascii"))
+            except ValueError:
+                self._saved_dock_state = None
+        preset_value = self._qt_settings.value("csv/preset", self._csv_preset_key)
+        if isinstance(preset_value, str):
+            preset_key = preset_value
+        elif preset_value is None:
+            preset_key = self._csv_preset_key
+        else:
+            preset_key = str(preset_value)
+        if preset_key not in PRESETS:
+            preset_key = "excel_de"
+        self._csv_preset_key = preset_key
+        self._startup_on_connect = self._to_bool(
+            self._qt_settings.value("startup/on_connect", self._startup_on_connect), True
+        )
+        self._startup_on_apply = self._to_bool(
+            self._qt_settings.value("startup/on_apply", self._startup_on_apply), True
+        )
+        try:
+            self._startup_delay_ms = int(self._qt_settings.value("startup/delay_ms", self._startup_delay_ms) or 0)
+        except (TypeError, ValueError):
+            self._startup_delay_ms = 0
+        self._startup_only_on_change = self._to_bool(
+            self._qt_settings.value("startup/only_on_change", self._startup_only_on_change), False
+        )
+        sequences_data = self._qt_settings.value("channel_sequences", {})
+        if isinstance(sequences_data, dict):
+            for key, value in sequences_data.items():
+                if isinstance(value, dict):
+                    try:
+                        self._sequencer_configs[str(key)] = ChannelConfig.from_dict(value)
+                    except Exception:
+                        continue
+        self._load_startup_defaults()
 
     def _save_settings(self) -> None:
         self._qt_settings.setValue("mode", self.backend_name)
@@ -2842,10 +6927,27 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("log_path", self.logging_path_edit.text())
         self._qt_settings.setValue("channel_plots", self._channel_plot_settings)
         self._qt_settings.setValue("multi_plot_paused", self._multi_plot_paused)
-        if hasattr(self, "show_dummy_checkbox"):
-            self._qt_settings.setValue("show_dummy_tab", self.show_dummy_checkbox.isChecked())
+        self._qt_settings.setValue("show_dummy_tab", self._show_dummy_advanced)
         if hasattr(self, "multi_plot_enable"):
             self._qt_settings.setValue("multi_plot_enabled", self.multi_plot_enable.isChecked())
+        if hasattr(self, "signals_splitter"):
+            sizes = self.signals_splitter.sizes()
+            if len(sizes) > 1:
+                self._signals_log_height = sizes[1]
+        self._qt_settings.setValue("channel_grid_cols", int(self._channel_grid_cols))
+        self._qt_settings.setValue("channel_collapse", self._channel_collapse_state)
+        self._qt_settings.setValue("signals_log_visible", self._signals_log_visible)
+        self._qt_settings.setValue("csv/preset", self._csv_preset_key)
+        self._qt_settings.setValue("signals_log_height", int(self._signals_log_height))
+        self._qt_settings.setValue("toolbar_visible", self._toolbar_visible)
+        self._qt_settings.setValue("ui/show_startup", self._show_startup_tab)
+        self._qt_settings.setValue("ui/dock_state", self.saveState())
+        sequence_payload = {name: config.to_dict() for name, config in self._sequencer_configs.items()}
+        self._qt_settings.setValue("channel_sequences", sequence_payload)
+        self._qt_settings.setValue("startup/on_connect", self._startup_on_connect)
+        self._qt_settings.setValue("startup/on_apply", self._startup_on_apply)
+        self._qt_settings.setValue("startup/delay_ms", int(self._startup_delay_ms))
+        self._qt_settings.setValue("startup/only_on_change", self._startup_only_on_change)
 
     def closeEvent(self, event) -> None:
         self._save_settings()
@@ -2854,6 +6956,8 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")          # optional, sorgt für konsistente Metrics
+    app.setStyleSheet(APP_QSS)      # QSS aktivieren
     window = MainWindow()
     if geometry := window._qt_settings.value("geometry"):
         if isinstance(geometry, bytes):

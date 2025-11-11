@@ -1,6 +1,6 @@
 # ECU Control GUI
 
-This project provides a PyQt5-based ECU control environment that exposes identical workflows for a dummy simulation backend and a python-can powered real backend. All CAN signals originate from a user-selected DBC file, ensuring that browsing, watching, logging, and channel control reflect the live database without hardcoded names.
+This project provides a PyQt5-based ECU control environment that mirrors identical workflows for a dummy simulation backend and a python-can powered real backend. All CAN interactions originate from a user-selected DBC file so browsing, watching, logging, and channel control always reflect the live database without hardcoded signal names.
 
 ## Installation
 1. Create a Python 3.10+ virtual environment.
@@ -8,80 +8,46 @@ This project provides a PyQt5-based ECU control environment that exposes identic
    ```bash
    pip install -r requirements.txt
    ```
-3. Start the GUI:
+3. Launch the GUI:
    ```bash
    python main.py
    ```
-The application opens in Dummy mode so it can be exercised without hardware.
+The application starts in Dummy mode so you can explore the UI without hardware.
 
-## Interface Overview
-The main window is organised into tabs so you can reach common tasks without scrolling:
+## Interface Highlights
 
-| Tab | Purpose |
-| --- | --- |
-| **Dashboard** | Select Dummy or Real mode, choose the DBC, configure bus parameters (bustype/channel/bitrate), and issue connection or emergency-stop actions. A coloured status indicator (green/yellow/red) shows the current connection state. |
-| **Channels** | Displays channel cards generated from `profiles/channels.yaml`. Each card adapts to its channel type (HighSide, HBridge, analog output, digital I/O, etc.), exposes quick actions, and integrates a sequencer (ON seconds, OFF seconds, duration). |
-| **Signals** | Combines the DBC-driven browser and the watchlist. Double-click or select and press “Add to Watchlist” to monitor any signal. The watchlist table shows value, unit, and last update timestamp. |
-| **Dummy Advanced** | Available in Dummy mode only (toggle via Dashboard). Presents the full signal simulation tree so you can tweak analog (hold, sine, ramp, noise) and digital (pattern/manual) generators that back the dummy telemetry. |
-| **Logging** | Configure CSV capture: select whether to log the watchlist or a manual list of signals, set the rate (1–50 Hz), choose the output path, and start/stop logging. CSV files contain ISO timestamps and the selected signals as columns. |
+### Dashboard toolbar
+- Pick the backend (Dummy or Real), choose the DBC file, and configure CAN bus settings (bustype/channel/bitrate).
+- Connect, disconnect, trigger an “all outputs off”, or perform an emergency stop. The emergency stop now disables every enable signal discovered in the startup configuration before powering outputs down.
+- Toggle the Dummy-only Advanced tab or quickly show/hide the logging pane from the same toolbar.
 
-## Channel Profiles
-Outputs and inputs are no longer hardcoded. Channel behaviour is defined in YAML profiles located at `profiles/channels.yaml`:
+### Channels tab
+- Channel cards are generated from `profiles/channels.yaml`. Each card is compact, offers icon-only header controls, an embedded sequencer editor, and an optional miniature plot with a 60 s history.
+- Context menus expose duplicate and reset actions, while per-card collapse states persist between sessions.
 
-```yaml
-- name: HS1
-  type: HighSide
-  write:
-    message: QM_High_side_output_write
-    fields:
-      hs_out01_select: select
-      hs_out01_mode: mode
-      hs_out01_value_pwm: pwm
-  status:
-    message: QM_High_side_output_status
-    fields:
-      hs_out01_current: current
-      hs_out01_pwm: pwm_feedback
-  sim:
-    tau: 0.5
-    current_gain: 8.0
-    noise: 0.1
-```
+### Signals tab
+- A vertical splitter combines the watchlist, plotting controls, and logging tools. The lower pane hosts the logging form with an integrated “Export” preset selector for Excel (DE) and Generic (EN) CSV formats.
+- Watchlist entries feed both the inline multi-plot and any number of dockable dual-axis plot windows (up to eight). Newly opened plot docks are tabified automatically on the right edge of the main window.
+- CSV exports honour locale presets and emit timestamps in `YYYY-MM-DD HH:MM:SS,mmm` format.
 
-The **Channels** tab offers an editor dialog (“Add Channel” / “Edit Channel”) that lets you pick the channel type, associate write/status messages, and map semantics to DBC signals. Profiles are persisted back to the YAML file and reloaded on startup. When the YAML file is absent, default profiles are generated to mirror the previous fixed HS and AI channels so existing workflows keep working.
+### Startup tab
+- Accessible via **View → Startup** (hidden by default). Configure global and per-channel startup messages, delay/pacing options, and teardown steps. Built-in defaults include `QM_Main_switch_control` and the `QM_High_side_output_init_0x` families so high-side drivers receive deterministic initialisation pulses.
+- Manual run and dry-run buttons provide on-demand execution and CAN frame previews.
 
-## Dummy Backend
-* Loads the active DBC (strict=False) and creates a simulator for every signal. *
-- Commands use the channel profiles to override write signals, while status values follow first-order or generator-based models parameterised by the profile’s `sim` section.
-- The Dummy Simulation tab exposes every generated signal so you can adjust ramps, sinewaves, noise levels, or digital patterns with immediate effect on the watchlist and logger.
+### Dummy Advanced tab
+- Available only when the Dummy backend is active. Exposes generator controls (hold, ramp, sine, noise, patterns) for every DBC signal with immediate effect on watchlists, plots, and logs.
 
-## Real Backend
-* Uses python-can with parameters from the Dashboard tab. *
-- Loads the same DBC file and validates writable signals via the `write`/`cmd` heuristic plus the whitelist in `config/signals.yaml`.
-- Sends channel commands through the message configured in each profile (for example `QM_High_side_output_write`).
-- Listens for the configured status message (for example `QM_High_side_output_status`) via a CAN notifier and populates the shared signal cache so the watchlist and logging paths match the Dummy backend.
-- Connection errors or decoding issues surface through dialogs and the status bar instead of terminating the application.
-
-## Signal Browser & Watchlist
-All signals from the active DBC are shown in the browser. Search filters both message names and signal metadata. Double-clicking a signal adds it to the watchlist. The context menu offers **→ Plot** (adds the signal to the multi-plot) and, in Dummy mode, **→ Simulate…** for a compact signal generator dialog. Watchlist entries refresh at 10 Hz, show unit and last-update timestamps, and expose a per-row “Plot” checkbox that feeds the multi-plot panel. Selected watchlist signals can be logged directly from the Logging tab.
-
-## Plots & Simulation in Channel Cards
-Each channel card now includes quick action buttons (OFF/20/50/100 %) and a **Show plot** toggle. When enabled, the card renders a 60-second ring buffer of the command and feedback values using pyqtgraph. The **⚙ Sim** button (visible in Dummy mode) opens a channel-specific dialog so you can adjust parameters such as time constants, noise levels, and gain; updates persist to `profiles/channels.yaml` and immediately influence the dummy physics.
-
-The Signals tab also features a shared multi-plot area. Check the global **Enable multi-plot** box to reveal it, toggle individual watchlist rows into the plot, and pause or resume rendering without interrupting data capture. Use **Save PNG** to export the current curves with ISO-formatted timestamps. Plot selections, pause state, and channel-level plot toggles are stored in `QSettings` so your layout is restored on the next launch.
-
-## Sequencer
-Every channel card embeds its own sequencer. Provide ON seconds, OFF seconds, and total duration (minutes) and press **Start Sequence**. The backend receives deterministic commands at the UI tick rate while manual controls are locked. **Stop** halts immediately, and switching backends automatically stops all sequencers. Logging continues uninterrupted during sequencer operation.
+## Startup Automation
+- Startup data is stored in `profiles/default_setup.json` (or generated from factory defaults) and round-tripped through a tree editor. Steps are grouped into global, per-output, and teardown sections.
+- Each startup message supports repeat/delay parameters plus a dry-run preview that encodes payloads using the active DBC. Manual “Run startup” always executes on a worker thread so the UI remains responsive.
+- Discovery heuristics propose `QM_Main_switch_control` along with `QM_High_side_output_init_01/02/03` based on the loaded DBC and available channel profiles.
 
 ## CSV Logging
-Choose between logging the watchlist or a custom list of signal names. Logging writes ISO 8601 timestamps and the requested signals at the chosen frequency. File creation errors are reported through a dialog and the status bar. Stopping logging flushes and closes the file safely.
+- The logging pane lets you choose between the watchlist or a custom comma-separated list of signals, select the capture rate (1–50 Hz), and browse for a destination path.
+- Locale-aware presets drive both export and import: **Excel (DE)** writes semicolon-separated CSV files with comma decimals and a UTF-8 BOM, while **Generic (EN)** keeps comma decimals and UTF-8 without BOM. Timestamp columns are formatted for Excel compatibility.
 
 ## Persistence
-`QSettings` stores the selected mode, DBC path, bus parameters, watchlist contents, plot selections (per-channel and multi-plot), logging rate/path, Dummy Advanced visibility, and window geometry so the UI restores your previous session. Channel profiles are stored separately in `profiles/channels.yaml` to simplify sharing and version control.
+`QSettings` persists backend selections, DBC path, bus parameters, watchlist contents, per-channel plot toggles, multi-plot options, logging state, Dummy Advanced visibility, startup preferences (including visibility), splitter sizes, and the chosen CSV preset. Channel profiles continue to live in `profiles/channels.yaml` for easy version control.
 
 ## Writable Signals
-The helper `is_signal_writable()` uses two checks before the Real backend transmits a value:
-1. If the signal appears in `config/signals.yaml` under `writable_signals`, it is allowed.
-2. Otherwise the message or signal name must contain `write` or `cmd`.
-
-Update `config/signals.yaml` when introducing additional writable signals to the hardware backend.
+The helper `is_signal_writable()` no longer relies on a static whitelist. A signal is considered writable when either its parent message or the signal name itself contains `ctrl`, `control`, `init`, `write`, or `cmd`. This heuristic keeps the Real backend restricted to control-oriented messages while remaining flexible when new commands appear in the DBC.

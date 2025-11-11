@@ -32,9 +32,3 @@
     tau: 0.5
     current_gain: 8.0
     noise: 0.1
-- name: AI1
-  type: AI_V
-  status:
-    message: QM_Analog_Input_status
-    fields:
-      an_pin_01_voltage: value
