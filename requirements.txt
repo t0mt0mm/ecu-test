@@ -3,3 +3,7 @@ cantools>=38.0.2
 python-can>=4.2.0
 PyYAML>=6.0
 pyqtgraph>=0.13
+pandas
+j1939
+asyncqt
+uptime

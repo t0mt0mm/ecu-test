@@ -160,83 +160,30 @@ FACTORY_DEFAULT_SETUP = {
     "dummy": {"simulations": {}},
     "startup": {
         "version": 1,
-        "globals": [
-            {
-                "message": "QM_Main_switch_control",
-                "fields": {
-                    "enable_sensor_supply": 1.0,
-                    "enable_actuator_supply": 1.0,
-                    "enable_ub3": 1.0,
-                    "enable_ub2": 1.0,
-                    "enable_ub1": 1.0,
-                },
-            }
-        ],
+        "globals": [],
         "per_output": [
             {
                 "channel": "HS1",
                 "message": "QM_High_side_output_init_01",
                 "fields": {
-                    "hs_out01_frequency": 20000.0,
+                    "hs_out01_frequency": 1000.0,
                     "hs_out01_pwm_min": 0.0,
                     "hs_out01_pwm_max": 100.0,
                     "hs_out01_Kp": 0.0,
                     "hs_out01_Ki": 0.0,
                     "hs_out01_Kd": 0.0,
-                    "hs_out02_frequency": 20000.0,
+                    "hs_out02_frequency": 1000.0,
                     "hs_out02_pwm_min": 0.0,
                     "hs_out02_pwm_max": 100.0,
                     "hs_out02_Kp": 0.0,
                     "hs_out02_Ki": 0.0,
                     "hs_out02_Kd": 0.0,
-                    "hs_out03_frequency": 20000.0,
+                    "hs_out03_frequency": 1000.0,
                     "hs_out03_pwm_min": 0.0,
                     "hs_out03_pwm_max": 100.0,
                     "hs_out03_Kp": 0.0,
                     "hs_out03_Ki": 0.0,
                     "hs_out03_Kd": 0.0,
-                },
-            },
-            {
-                "channel": "HS2",
-                "message": "QM_High_side_output_init_02",
-                "fields": {
-                    "hs_out04_frequency": 20000.0,
-                    "hs_out04_pwm_min": 0.0,
-                    "hs_out04_pwm_max": 100.0,
-                    "hs_out04_Kp": 0.0,
-                    "hs_out04_Ki": 0.0,
-                    "hs_out04_Kd": 0.0,
-                    "hs_out05_frequency": 20000.0,
-                    "hs_out05_pwm_min": 0.0,
-                    "hs_out05_pwm_max": 100.0,
-                    "hs_out05_Kp": 0.0,
-                    "hs_out05_Ki": 0.0,
-                    "hs_out05_Kd": 0.0,
-                    "hs_out06_frequency": 20000.0,
-                    "hs_out06_pwm_min": 0.0,
-                    "hs_out06_pwm_max": 100.0,
-                    "hs_out06_Kp": 0.0,
-                    "hs_out06_Ki": 0.0,
-                    "hs_out06_Kd": 0.0,
-                },
-            },
-            {
-                "channel": "HS3",
-                "message": "QM_High_side_output_init_03",
-                "fields": {
-                    "hs_out07_frequency": 20000.0,
-                    "hs_out07_pwm_min": 0.0,
-                    "hs_out07_pwm_max": 100.0,
-                    "hs_out07_Kp": 0.0,
-                    "hs_out07_Ki": 0.0,
-                    "hs_out07_Kd": 0.0,
-                    "hs_out08_frequency": 20000.0,
-                    "hs_out08_pwm_min": 0.0,
-                    "hs_out08_pwm_max": 100.0,
-                    "hs_out08_Kp": 0.0,
-                    "hs_out08_Ki": 0.0,
-                    "hs_out08_Kd": 0.0,
                 },
             },
         ],
@@ -1913,7 +1860,7 @@ class RealBackend(QObject, BackendBase):
     def __init__(self) -> None:
         QObject.__init__(self)
         BackendBase.__init__(self)
-        self._settings = ConnectionSettings("", "socketcan", "vcan0", 500000)
+        self._settings = ConnectionSettings("", "socketcan", "can0", 500000)
         self._db = None
         self._bus = None
         self._notifier = None
@@ -1922,7 +1869,7 @@ class RealBackend(QObject, BackendBase):
         self._signal_to_message: Dict[str, str] = {}
         self._channels: Dict[str, ChannelProfile] = {}
         self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
-
+        
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
 
@@ -1935,18 +1882,28 @@ class RealBackend(QObject, BackendBase):
             raise BackendError(str(exc))
         try:
             self._bus = can.interface.Bus(
-                bustype=self._settings.bustype,
-                channel=self._settings.channel,
-                bitrate=self._settings.bitrate,
+                interface="pcan",
+                channel=self._settings.channel if hasattr(self._settings, "channel") else "PCAN_USBBUS1",
+                state=can.bus.BusState.ACTIVE,
+                fd=True,
+                # Nominal phase (500k)
+                f_clock_mhz=80,
+                nom_brp=10, nom_tseg1=12, nom_tseg2=3, nom_sjw=1,
+                # Data phase (2M)
+                data_brp=4, data_tseg1=7, data_tseg2=2, data_sjw=1,
             )
         except (can.CanError, OSError, ValueError) as exc:
             raise BackendError(str(exc))
+
         if self._db is None or self._bus is None:
             raise BackendError("Failed to initialize Real backend")
         self.apply_database(self._db)
         listener = _StatusListener(self)
+
         self._notifier = can.Notifier(self._bus, [listener], 0.1)
         self.connection_changed.emit(True, "Connected")
+
+
 
     def stop(self) -> None:
         if self._notifier is not None:
@@ -2011,15 +1968,35 @@ class RealBackend(QObject, BackendBase):
             if not is_signal_writable(signal_name, message_name):
                 raise BackendError(f"Signal {signal_name} is not writable")
             payload[signal_name] = float(raw_value)
+        # payload enthält aktuell nur die gemappten Felder dieses Channels
         if not payload:
             return
         try:
-            data = message.encode(payload, scaling=True, strict=True)
-            can_message = can.Message(arbitration_id=message.frame_id, data=data, is_extended_id=False)
+            # --- NEU: vollständiges Dict aus DBC-Initials/0 bauen und payload drüberlegen ---
+            complete: Dict[str, float] = {
+                sig.name: (sig.initial if getattr(sig, "initial", None) is not None else 0.0)
+                for sig in message.signals
+            }
+            complete.update(payload)
+
+            data = message.encode(complete, scaling=True, strict=True)
+
+            can_message = can.Message(
+                arbitration_id=message.frame_id,
+                data=data,
+                is_extended_id=bool(getattr(message, "is_extended_frame", False)),
+                is_fd=True,
+                bitrate_switch=True,
+            )
             self._bus.send(can_message)
+
+            # Cache sinnvollerweise mit complete aktualisieren
             with self._lock:
-                for name, value in payload.items():
-                    self._signal_cache[name] = float(value)
+                valid_names = {s.name for s in message.signals}
+                for name, value in complete.items():
+                    if name in valid_names:
+                        self._signal_cache[name] = float(value)
+
         except (ValueError, can.CanError) as exc:
             raise BackendError(str(exc))
 
@@ -2050,6 +2027,7 @@ class RealBackend(QObject, BackendBase):
                 prepared[name] = float(value)
             except (TypeError, ValueError):
                 raise BackendError(f"Invalid value for signal {name}")
+# ... oberhalb wurden dbc_message und prepared bereits gebaut ...
         if not prepared:
             return
         repeat_count = max(1, int(repeat))
@@ -2058,24 +2036,41 @@ class RealBackend(QObject, BackendBase):
             tries = 0
             while tries < 3:
                 try:
-                    data = dbc_message.encode(prepared, scaling=True, strict=True)
+                    # --- FIX: vollständiges Payload aus prepared + Defaults der DBC-Signale ---
+                    complete: Dict[str, float] = dict(prepared)
+                    for sig in dbc_message.signals:              # statt: for sig in message.signals
+                        if sig.name not in complete:
+                            if getattr(sig, "initial", None) is not None:
+                                complete[sig.name] = sig.initial
+                            else:
+                                complete[sig.name] = 0.0          # sicherer Default
+
+                    # --- FIX: complete encodieren, nicht prepared ---
+                    data = dbc_message.encode(complete, scaling=True, strict=True)
+
                     message_obj = can.Message(
                         arbitration_id=dbc_message.frame_id,
                         data=data,
-                        is_extended_id=False,
+                        is_extended_id=bool(getattr(dbc_message, "is_extended_frame", False)),
+                        is_fd=True,
+                        bitrate_switch=True,
                     )
                     self._bus.send(message_obj)
+
+                    # --- FIX: Cache mit complete aktualisieren ---
                     with self._lock:
-                        for name, value in prepared.items():
-                            self._signal_cache[name] = float(value)
+                        valid_names = {s.name for s in dbc_message.signals}
+                        for name, value in complete.items():
+                            if name in valid_names:
+                                self._signal_cache[name] = float(value)
                     break
                 except (ValueError, can.CanError) as exc:
                     tries += 1
                     if tries >= 3:
                         raise BackendError(str(exc))
-                    time.sleep(0.05)
-            if interval > 0.0 and attempt_index < repeat_count - 1:
-                time.sleep(interval)
+                    if interval > 0.0:
+                        time.sleep(interval)
+
 
     def update(self, dt: float) -> None:
         _ = dt
@@ -2970,6 +2965,14 @@ class ChannelCardWidget(QWidget):
         self.off_button.setAutoRaise(True)
         for button in (self.quick_off, self.quick_low, self.quick_mid, self.quick_max, self.apply_button, self.off_button):
             button.setAutoRaise(True)
+        # nach UI-Erzeugung (Buttons/Slider) ergänzen:
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(60)          # kleines Debounce fürs Schieberegler-Draggen
+        self._live_timer.timeout.connect(self._emit_command)
+
+        # Apply-Button nicht mehr nutzen
+        self.apply_button.hide()
         self.sequence_table = QTableWidget(0, 7)
         self.sequence_table.setHorizontalHeaderLabels(
             ["Order", "Name", "Duration [s]", "PWM [%]", "On [s]", "Off [s]", "Active"]
@@ -3180,13 +3183,20 @@ class ChannelCardWidget(QWidget):
         self.section_collapse_changed.emit(self.profile.name, section, not expanded)
 
     def _connect_signals(self) -> None:
-        self.pwm_slider.valueChanged.connect(lambda value: self.pwm_value.setText(f"{value} %"))
-        self.apply_button.clicked.connect(self._emit_command)
-        self.off_button.clicked.connect(self._emit_off)
-        self.quick_off.clicked.connect(self._emit_off)
-        self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
-        self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
-        self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
+        #self.pwm_slider.valueChanged.connect(lambda value: self.pwm_value.setText(f"{value} %"))
+        #self.apply_button.clicked.connect(self._emit_command)
+        #self.off_button.clicked.connect(self._emit_off)
+        #self.quick_off.clicked.connect(self._emit_off)
+        #self.quick_low.clicked.connect(lambda: self._set_pwm_slider(20))
+        #self.quick_mid.clicked.connect(lambda: self._set_pwm_slider(50))
+        #self.quick_max.clicked.connect(lambda: self._set_pwm_slider(100))
+        # neu:
+        self.pwm_slider.valueChanged.connect(self._on_pwm_changed)
+        self.quick_off.clicked.connect(lambda: self._on_quick_pwm(0))
+        self.quick_low.clicked.connect(lambda: self._on_quick_pwm(20))
+        self.quick_mid.clicked.connect(lambda: self._on_quick_pwm(50))
+        self.quick_max.clicked.connect(lambda: self._on_quick_pwm(100))
+        self.enabled_checkbox.toggled.connect(self._on_enabled_toggled)
         self.sequence_add.clicked.connect(self._on_add_sequence)
         self.sequence_delete.clicked.connect(self._on_delete_sequence)
         self.sequence_duplicate.clicked.connect(self._on_duplicate_sequence)
@@ -3649,6 +3659,32 @@ class ChannelCardWidget(QWidget):
                 self.profile.sim.update(updated)
                 self.simulation_changed.emit(self.profile.name, dict(self.profile.sim))
 
+    @pyqtSlot(int)
+    def _on_pwm_changed(self, value: int) -> None:
+        self.pwm_value.setText(f"{value} %")
+        if self.enabled_checkbox.isChecked():
+            self._live_timer.start()  # sendet nach kurzer Pause automatisch
+
+    def _on_quick_pwm(self, value: int) -> None:
+        # DO hat keinen PWM-Slider → Quick "0%" = aus
+        if self.profile.type == "DO":
+            if value == 0:
+                self._emit_off()
+            return
+        self._set_pwm_slider(value)
+        if self.enabled_checkbox.isChecked():
+            # Quick-Buttons sollen sofort wirken (ohne Debounce)
+            self._emit_command()
+
+    def _on_enabled_toggled(self, checked: bool) -> None:
+        if checked:
+            # direkt aktuellen PWM/Setpoint übernehmen
+            self._emit_command()
+        else:
+            # sauber ausschalten
+            self._emit_off()
+
+
 
 class ChannelSimulationDialog(QDialog):
     def __init__(self, profile: ChannelProfile, parent: Optional[QWidget] = None) -> None:
@@ -3994,8 +4030,8 @@ class MainWindow(QMainWindow):
         self._show_startup_tab = False
         self._startup_tab_index: int = -1
         self._startup_config = StartupConfig()
-        self._startup_on_connect = True
-        self._startup_on_apply = True
+        self._startup_on_connect = False
+        self._startup_on_apply = False
         self._startup_delay_ms = 0
         self._startup_only_on_change = False
         self._startup_last_payloads: Dict[Tuple[str, Optional[str]], Dict[str, float]] = {}
@@ -4003,6 +4039,7 @@ class MainWindow(QMainWindow):
         self._startup_worker: Optional[StartupWorker] = None
         self._startup_running = False
         self._startup_pending_mode: Optional[str] = None
+        self._inline_init_done = False
         self._startup_status_messages: List[str] = []
         self._startup_is_valid = False
         self._restore_settings()
@@ -4143,7 +4180,7 @@ class MainWindow(QMainWindow):
         self.bustype_combo = QComboBox()
         self.bustype_combo.addItems(["socketcan", "vector", "pcan"])
         self.bustype_combo.setCurrentText(self._qt_settings.value("bustype", "socketcan"))
-        self.channel_edit = QLineEdit(self._qt_settings.value("channel", "vcan0"))
+        self.channel_edit = QLineEdit(self._qt_settings.value("channel", "can0"))
         self.channel_edit.setMaximumWidth(90)
         self.bitrate_spin = QSpinBox()
         self.bitrate_spin.setRange(10_000, 1_000_000)
@@ -4719,6 +4756,43 @@ class MainWindow(QMainWindow):
             return
         self._on_startup_config_changed()
 
+    def _run_startup_inline_once(self) -> None:
+        """
+        Führt die in der GUI/Config definierten Init-Steps genau einmal synchron aus.
+        Keine festen Messagenamen – es wird 1:1 verwendet, was der User im Startup-Tab konfiguriert hat.
+        """
+        if self._inline_init_done or not self.backend:
+            return
+        if not self._startup_is_valid:
+            # Nichts configured → als erledigt markieren, damit wir nicht dauernd prüfen
+            self._inline_init_done = True
+            return
+
+        steps = self._prepare_startup_steps(mode="normal", force=False)
+        if not steps:
+            self._inline_init_done = True
+            return
+
+        errors = []
+        for step in steps:
+            try:
+                self.backend.send_message_by_name(
+                    step.message,
+                    step.payload,
+                    repeat=max(1, int(step.repeat)),
+                    dt_ms=max(0, int(step.dt_ms)),
+                    force=True,  # hier bewusst: Startup soll sicher ankommen
+                )
+                # „Last payloads“ für On-Change-Logik aktualisieren:
+                self._startup_last_payloads[step.key] = dict(step.payload)
+            except BackendError as exc:
+                errors.append(f"{step.message}: {exc}")
+
+        self._inline_init_done = True
+        if errors:
+            self._append_startup_log("Inline Startup had issues:\n  " + "\n  ".join(errors))
+
+
     def _on_startup_config_changed(self) -> None:
         self._startup_last_payloads.clear()
         self._refresh_startup_tree()
@@ -5035,7 +5109,7 @@ class MainWindow(QMainWindow):
         def default_init_value(signal_name: str) -> float:
             lowered = signal_name.lower()
             if "frequency" in lowered:
-                return 20000.0
+                return 1000.0
             if "pwm_max" in lowered:
                 return 100.0
             return 0.0
@@ -5465,6 +5539,8 @@ class MainWindow(QMainWindow):
     def _on_channel_command(self, channel: str, command: Dict[str, float]) -> None:
         if not self.backend:
             return
+        # GUI-konfigurierte Init-Sequenz genau einmal vor dem ersten Schalten
+        self._run_startup_inline_once()
         self._channel_commands[channel] = {key: float(value) for key, value in command.items()}
         try:
             self.backend.apply_channel_command(channel, command)
@@ -5704,8 +5780,9 @@ class MainWindow(QMainWindow):
 
     def _apply_sequence_output(self, channel: str, pwm: float) -> None:
         pwm_value = max(0.0, min(100.0, float(pwm)))
-        enabled = 1.0 if pwm_value > 0.0 else 0.0
-        command = {"enabled": enabled, "select": enabled, "pwm": pwm_value}
+        # _apply_sequence_output(...)
+        command = {"enabled": 1.0, "select": 1.0, "pwm": pwm_value}
+
         self._on_channel_command(channel, command)
 
     def _on_sequencer_config_changed(self, channel: str, payload: object) -> None:
