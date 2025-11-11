@@ -1880,26 +1880,19 @@ class RealBackend(QObject, BackendBase):
         BackendBase.__init__(self)
         self._settings = ConnectionSettings("", "socketcan", "can0", 500000)
         self._db = None
+        self._frame_to_message: Dict[Tuple[int, bool], Any] = {}
+        self._signal_to_message: Dict[str, str] = {}
+        self._signal_cache: Dict[str, float] = {}
+        self._lock = threading.Lock()
         self._bus = None
         self._notifier = None
-        self._lock = threading.Lock()
-        self._signal_cache: Dict[str, float] = {}
-        self._signal_to_message: Dict[str, str] = {}
         self._channels: Dict[str, ChannelProfile] = {}
-        self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
-        self._rawid_to_msg: dict[tuple[int, bool], str] = {}
 
- 
-    def _normalize_dbc_fid(self, fid: int) -> tuple[int, bool]:
-        """DBC-Frame-ID -> (raw_id, is_ext)"""
+
+    def _normalize_dbc_fid(self, fid: int) -> Tuple[int, bool]:
         is_ext = bool(fid & 0x80000000)
-        raw = fid & (0x1FFFFFFF if is_ext else 0x7FF)
-        return raw, is_ext
-
-    def _make_dbc_fid(self, raw_id: int, is_ext: bool) -> int:
-        """(raw_id, is_ext) -> DBC-Frame-ID für cantools.get_message_by_frame_id"""
-        rid = raw_id & (0x1FFFFFFF if is_ext else 0x7FF)
-        return (0x80000000 | rid) if is_ext else rid
+        raw_id = fid & (0x1FFFFFFF if is_ext else 0x7FF)
+        return raw_id, is_ext
 
 
     def configure(self, settings: ConnectionSettings) -> None:
@@ -1951,10 +1944,12 @@ class RealBackend(QObject, BackendBase):
 
     def apply_database(self, database) -> None:
         self._db = database
-        self._signal_cache = {}
-        self._signal_to_message = {}
+        self._frame_to_message.clear()
+        self._signal_to_message.clear()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
+                raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
+                self._frame_to_message[(raw_id, is_ext)] = message
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
         with self._lock:
@@ -1963,16 +1958,6 @@ class RealBackend(QObject, BackendBase):
 
     def set_channel_profiles(self, profiles: Dict[str, ChannelProfile]) -> None:
         self._channels = profiles
-        self._status_handlers = {}
-        if not self._db:
-            return
-        for profile in profiles.values():
-            message_name = profile.status.message
-            message = self._db.get_message_by_name(message_name) if message_name else None
-            if message is None:
-                continue
-            raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
-            self._status_handlers[(raw_id, is_ext)] = (message_name, profile)
 
 
     def apply_channel_command(self, channel: str, command: Dict[str, float]) -> None:
@@ -2111,7 +2096,7 @@ class RealBackend(QObject, BackendBase):
 
     def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
         with self._lock:
-            return {name: float(self._signal_cache.get(name, 0.0)) for name in signal_names}
+            return {name: self._signal_cache.get(name) for name in signal_names}
 
     def _handle_status(self, message: can.Message) -> None:
         if self._db is None:
@@ -2119,21 +2104,9 @@ class RealBackend(QObject, BackendBase):
 
         raw_id = int(message.arbitration_id) & (0x1FFFFFFF if message.is_extended_id else 0x7FF)
         key = (raw_id, bool(message.is_extended_id))
-
-        handler = self._status_handlers.get(key)
-        if handler:
-            message_name, _profile = handler
-            dbc_message = self._db.get_message_by_name(message_name)
-        else:
-            # globaler Fallback: jedes bekannte DBC-Frame dekodieren
-            message_name = self._rawid_to_msg.get(key)
-            dbc_message = self._db.get_message_by_name(message_name) if message_name else None
-            if dbc_message is None:
-                try:
-                    db_fid = self._make_dbc_fid(raw_id, bool(message.is_extended_id))
-                    dbc_message = self._db.get_message_by_frame_id(db_fid)
-                except KeyError:
-                    return
+        dbc_message = self._frame_to_message.get(key)
+        if dbc_message is None:
+            return
 
         try:
             decoded = dbc_message.decode(message.data, decode_choices=False, scaling=True)
@@ -2142,7 +2115,11 @@ class RealBackend(QObject, BackendBase):
 
         with self._lock:
             for name, value in decoded.items():
-                self._signal_cache[name] = float(value)
+                if name in self._signal_cache:
+                    try:
+                        self._signal_cache[name] = float(value)
+                    except (TypeError, ValueError):
+                        continue
         self.status_updated.emit()
 
 
