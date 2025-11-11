@@ -2461,6 +2461,9 @@ class MultiAxisPlotDock(QDockWidget):
         self.plot_item.addItem(self._hud_item, ignoreBounds=True)
         self._hud_item.hide()
         self._updating_cursors = False
+        self._cursor_release_timer = QTimer(self)
+        self._cursor_release_timer.setSingleShot(True)
+        self._cursor_release_timer.timeout.connect(self._on_cursor_released)
         self._active_curve: Optional[pg.PlotDataItem] = None
         self.plot_item.vb.sigRangeChanged.connect(self._update_hud_position)
         self._cursor_menu_action: Optional[QAction] = None
@@ -2672,7 +2675,15 @@ class MultiAxisPlotDock(QDockWidget):
         line = pg.InfiniteLine(pos=position, angle=90, movable=True, pen=pg.mkPen(color, width=1.5))
         line.setZValue(50)
         line.sigPositionChanged.connect(self._on_cursor_moved)
-        line.sigDragFinished.connect(self._on_cursor_released)
+        drag_finished_signal = None
+        for attr in ("sigDragFinished", "sigPositionChangeFinished", "sigDragged"):
+            drag_finished_signal = getattr(line, attr, None)
+            if drag_finished_signal is not None:
+                break
+        if drag_finished_signal is not None:
+            drag_finished_signal.connect(self._on_cursor_released)
+        else:
+            line.sigPositionChanged.connect(self._on_cursor_release_fallback)
         self.plot_item.addItem(line, ignoreBounds=True)
         self._cursor_lines[label] = line
         try:
@@ -2694,6 +2705,9 @@ class MultiAxisPlotDock(QDockWidget):
         if self._updating_cursors:
             return
         self._update_cursor_info()
+
+    def _on_cursor_release_fallback(self) -> None:
+        self._cursor_release_timer.start(75)
 
     def _on_cursor_released(self) -> None:
         if self._updating_cursors:
