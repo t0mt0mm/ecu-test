@@ -1871,6 +1871,7 @@ class RealBackend(QObject, BackendBase):
         self._frame_to_message: Dict[int, str] = {}
         self._channels: Dict[str, ChannelProfile] = {}
         self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
+        self._write_frame_ids: Set[int] = set()
         
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
@@ -1924,6 +1925,7 @@ class RealBackend(QObject, BackendBase):
         self._signal_cache = {}
         self._signal_to_message = {}
         self._frame_to_message = {}
+        self._write_frame_ids = set()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
                 for signal in message.signals:
@@ -1936,9 +1938,15 @@ class RealBackend(QObject, BackendBase):
     def set_channel_profiles(self, profiles: Dict[str, ChannelProfile]) -> None:
         self._channels = profiles
         self._status_handlers = {}
+        self._write_frame_ids = set()
         if not self._db:
             return
         for profile in profiles.values():
+            write_message_name = profile.write.message
+            if write_message_name:
+                write_message = self._db.get_message_by_name(write_message_name)
+                if write_message is not None:
+                    self._write_frame_ids.add(write_message.frame_id)
             message_name = profile.status.message
             message = self._db.get_message_by_name(message_name) if message_name else None
             if message is None:
@@ -2088,6 +2096,8 @@ class RealBackend(QObject, BackendBase):
             return
         handler = self._status_handlers.get(message.arbitration_id)
         if handler is None:
+            if message.arbitration_id in self._write_frame_ids:
+                return
             message_name = self._frame_to_message.get(message.arbitration_id)
             if not message_name:
                 return
