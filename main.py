@@ -1868,6 +1868,7 @@ class RealBackend(QObject, BackendBase):
         self._lock = threading.Lock()
         self._signal_cache: Dict[str, float] = {}
         self._signal_to_message: Dict[str, str] = {}
+        self._frame_to_message: Dict[int, str] = {}
         self._channels: Dict[str, ChannelProfile] = {}
         self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
         
@@ -1922,10 +1923,12 @@ class RealBackend(QObject, BackendBase):
         self._db = database
         self._signal_cache = {}
         self._signal_to_message = {}
+        self._frame_to_message = {}
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
+                self._frame_to_message[message.frame_id] = message.name
         with self._lock:
             self._signal_cache = {name: 0.0 for name in self._signal_to_message}
         self.status_updated.emit()
@@ -2085,9 +2088,15 @@ class RealBackend(QObject, BackendBase):
             return
         handler = self._status_handlers.get(message.arbitration_id)
         if handler is None:
+            message_name = self._frame_to_message.get(message.arbitration_id)
+            if not message_name:
+                return
+        else:
+            message_name, _profile = handler
+        try:
+            dbc_message = self._db.get_message_by_name(message_name)
+        except KeyError:
             return
-        message_name, _profile = handler
-        dbc_message = self._db.get_message_by_name(message_name)
         if dbc_message is None:
             return
         try:
