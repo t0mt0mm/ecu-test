@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import csv
 import datetime
+import logging
 import math
 import numpy as np
 import os
@@ -94,6 +95,8 @@ from PyQt5.QtWidgets import (
     QAction,
     QStackedWidget,
 )
+
+logger = logging.getLogger(__name__)
 
 APP_QSS = """
 /* Global */
@@ -1595,7 +1598,10 @@ class DummyBackend(BackendBase):
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
                 self._frame_to_message[message.frame_id] = message.name
-                raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
+                raw_id, is_ext = self._normalize_dbc_fid(
+                    message.frame_id,
+                    is_extended=bool(getattr(message, "is_extended_frame", False)),
+                )
                 self._rawid_to_msg[(raw_id, is_ext)] = message.name
 
         with self._lock:
@@ -1880,26 +1886,25 @@ class RealBackend(QObject, BackendBase):
         BackendBase.__init__(self)
         self._settings = ConnectionSettings("", "socketcan", "can0", 500000)
         self._db = None
+        self._frame_to_message: Dict[Tuple[int, bool], Any] = {}
+        self._signal_to_message: Dict[str, str] = {}
+        self._signal_cache: Dict[str, float] = {}
+        self._lock = threading.Lock()
         self._bus = None
         self._notifier = None
-        self._lock = threading.Lock()
-        self._signal_cache: Dict[str, float] = {}
-        self._signal_to_message: Dict[str, str] = {}
         self._channels: Dict[str, ChannelProfile] = {}
-        self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
-        self._rawid_to_msg: dict[tuple[int, bool], str] = {}
 
- 
-    def _normalize_dbc_fid(self, fid: int) -> tuple[int, bool]:
-        """DBC-Frame-ID -> (raw_id, is_ext)"""
-        is_ext = bool(fid & 0x80000000)
-        raw = fid & (0x1FFFFFFF if is_ext else 0x7FF)
-        return raw, is_ext
 
-    def _make_dbc_fid(self, raw_id: int, is_ext: bool) -> int:
-        """(raw_id, is_ext) -> DBC-Frame-ID für cantools.get_message_by_frame_id"""
-        rid = raw_id & (0x1FFFFFFF if is_ext else 0x7FF)
-        return (0x80000000 | rid) if is_ext else rid
+    def _normalize_dbc_fid(self, fid: int, *, is_extended: Optional[bool] = None) -> Tuple[int, bool]:
+        """Normalize a DBC frame id to a raw id and the extended flag."""
+
+        # Prefer the explicit flag if available, otherwise fall back to the
+        # encoded "extended" bit that some DBC exports embed into the number.
+        if is_extended is None:
+            is_extended = bool(fid & 0x80000000)
+        mask = 0x1FFFFFFF if is_extended else 0x7FF
+        raw_id = fid & mask
+        return raw_id, bool(is_extended)
 
 
     def configure(self, settings: ConnectionSettings) -> None:
@@ -1951,10 +1956,25 @@ class RealBackend(QObject, BackendBase):
 
     def apply_database(self, database) -> None:
         self._db = database
-        self._signal_cache = {}
-        self._signal_to_message = {}
+        self._frame_to_message.clear()
+        self._signal_to_message.clear()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
+                explicit_flag = bool(getattr(message, "is_extended_frame", False))
+                raw_id, is_ext = self._normalize_dbc_fid(
+                    message.frame_id,
+                    is_extended=explicit_flag,
+                )
+                self._frame_to_message[(raw_id, is_ext)] = message
+
+                # Some toolchains encode the extended bit directly in the frame
+                # id without setting ``is_extended_frame``. To remain tolerant we
+                # keep a secondary entry that relies solely on the numeric id so
+                # frames with a mismatched flag can still be decoded.
+                fallback_raw, fallback_ext = self._normalize_dbc_fid(message.frame_id)
+                key = (fallback_raw, fallback_ext)
+                if key not in self._frame_to_message:
+                    self._frame_to_message[key] = message
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
         with self._lock:
@@ -1963,16 +1983,6 @@ class RealBackend(QObject, BackendBase):
 
     def set_channel_profiles(self, profiles: Dict[str, ChannelProfile]) -> None:
         self._channels = profiles
-        self._status_handlers = {}
-        if not self._db:
-            return
-        for profile in profiles.values():
-            message_name = profile.status.message
-            message = self._db.get_message_by_name(message_name) if message_name else None
-            if message is None:
-                continue
-            raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
-            self._status_handlers[(raw_id, is_ext)] = (message_name, profile)
 
 
     def apply_channel_command(self, channel: str, command: Dict[str, float]) -> None:
@@ -2111,29 +2121,35 @@ class RealBackend(QObject, BackendBase):
 
     def read_signal_values(self, signal_names: Iterable[str]) -> Dict[str, float]:
         with self._lock:
-            return {name: float(self._signal_cache.get(name, 0.0)) for name in signal_names}
+            values: Dict[str, float] = {}
+            for name in signal_names:
+                value = self._signal_cache.get(name)
+                if value is None:
+                    values[name] = 0.0
+                else:
+                    try:
+                        values[name] = float(value)
+                    except (TypeError, ValueError):
+                        values[name] = 0.0
+            return values
 
     def _handle_status(self, message: can.Message) -> None:
         if self._db is None:
             return
 
-        raw_id = int(message.arbitration_id) & (0x1FFFFFFF if message.is_extended_id else 0x7FF)
-        key = (raw_id, bool(message.is_extended_id))
-
-        handler = self._status_handlers.get(key)
-        if handler:
-            message_name, _profile = handler
-            dbc_message = self._db.get_message_by_name(message_name)
-        else:
-            # globaler Fallback: jedes bekannte DBC-Frame dekodieren
-            message_name = self._rawid_to_msg.get(key)
-            dbc_message = self._db.get_message_by_name(message_name) if message_name else None
-            if dbc_message is None:
-                try:
-                    db_fid = self._make_dbc_fid(raw_id, bool(message.is_extended_id))
-                    dbc_message = self._db.get_message_by_frame_id(db_fid)
-                except KeyError:
-                    return
+        raw_id, is_ext = self._normalize_dbc_fid(
+            int(message.arbitration_id),
+            is_extended=bool(getattr(message, "is_extended_id", False)),
+        )
+        key = (raw_id, is_ext)
+        dbc_message = self._frame_to_message.get(key)
+        if dbc_message is None:
+            # Fall back to the opposite flag in case the incoming frame toggles
+            # the extended bit compared to the DBC definition.
+            alternate_key = (raw_id, not is_ext)
+            dbc_message = self._frame_to_message.get(alternate_key)
+        if dbc_message is None:
+            return
 
         try:
             decoded = dbc_message.decode(message.data, decode_choices=False, scaling=True)
@@ -2142,7 +2158,11 @@ class RealBackend(QObject, BackendBase):
 
         with self._lock:
             for name, value in decoded.items():
-                self._signal_cache[name] = float(value)
+                if name in self._signal_cache:
+                    try:
+                        self._signal_cache[name] = float(value)
+                    except (TypeError, ValueError):
+                        continue
         self.status_updated.emit()
 
 
@@ -2716,12 +2736,13 @@ class MultiAxisPlotDock(QDockWidget):
         else:
             start_a = 0.0
             start_b = 1.0
-        self._create_cursor("A", start_a, (255, 0, 0))
+        self._create_cursor("A", start_a, (255, 255, 0))
         self._create_cursor("B", start_b, (0, 128, 255))
         self._update_cursor_info()
 
     def _create_cursor(self, label: str, position: float, color: Tuple[int, int, int]) -> None:
         line = pg.InfiniteLine(pos=position, angle=90, movable=True, pen=pg.mkPen(color, width=1.5))
+        line.setHoverPen(pg.mkPen((255, 255, 255), width=2))
         line.setZValue(50)
         line.sigPositionChanged.connect(self._on_cursor_moved)
         drag_finished_signal = None
@@ -4240,25 +4261,149 @@ class ChannelBuilderDialog(QDialog):
         self.result_profile = result
         self.accept()
 
-def load_channel_profiles(database) -> Dict[str, ChannelProfile]:
-    ensure_directories()
-    profiles: Dict[str, ChannelProfile] = {}
-    if os.path.exists(CHANNEL_PROFILE_PATH):
+def load_ecu_profile(path: str) -> dict:
+    resolved = path
+    if not os.path.isabs(resolved):
+        resolved = os.path.join(BASE_DIR, path)
+    try:
+        with open(resolved, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        logger.warning("ECU profile file not found: %s", resolved)
+        return {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.error("Failed to load ECU profile %s: %s", resolved, exc)
+        return {}
+    if not isinstance(data, dict):
+        logger.error("ECU profile %s has invalid format (expected mapping)", resolved)
+        return {}
+    return data
+
+
+def load_channel_profiles_from_ecu_profile(profile: dict) -> Dict[str, ChannelProfile]:
+    channels_section = profile.get("channels") if isinstance(profile, dict) else None
+    result: Dict[str, ChannelProfile] = {}
+    if not isinstance(channels_section, dict):
+        if channels_section is not None:
+            logger.error("ECU profile 'channels' section must be a mapping")
+        return result
+    for name, raw_data in channels_section.items():
+        if not isinstance(raw_data, dict):
+            logger.warning("Channel definition for %s is not a mapping and will be skipped", name)
+            continue
+        payload = dict(raw_data)
+        payload.setdefault("name", str(name))
         try:
-            with open(CHANNEL_PROFILE_PATH, "r", encoding="utf-8") as handle:
-                data = yaml.safe_load(handle) or []
-        except (OSError, yaml.YAMLError):
-            data = []
-        for entry in data:
-            try:
-                profile = ChannelProfile.from_yaml(entry)
-                profiles[profile.name] = profile
-            except Exception:
-                continue
-    if not profiles:
-        profiles = {profile.name: profile for profile in default_channel_profiles(database)}
-        save_channel_profiles(list(profiles.values()))
+            profile_obj = ChannelProfile.from_yaml(payload)
+        except Exception as exc:
+            logger.error("Failed to parse channel profile %s: %s", name, exc)
+            continue
+        result[profile_obj.name] = profile_obj
+    return result
+
+
+def load_saved_channel_profiles() -> Dict[str, ChannelProfile]:
+    ensure_directories()
+    if not os.path.exists(CHANNEL_PROFILE_PATH):
+        return {}
+    try:
+        with open(CHANNEL_PROFILE_PATH, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or []
+    except (OSError, yaml.YAMLError) as exc:
+        logger.error("Failed to load saved channel profiles from %s: %s", CHANNEL_PROFILE_PATH, exc)
+        return {}
+    profiles: Dict[str, ChannelProfile] = {}
+    for entry in data:
+        if isinstance(entry, ChannelProfile):
+            profiles[entry.name] = entry
+            continue
+        if not isinstance(entry, dict):
+            logger.warning("Ignoring channel profile entry with unexpected type: %r", type(entry))
+            continue
+        try:
+            profile = ChannelProfile.from_yaml(entry)
+        except Exception as exc:
+            logger.error("Failed to parse saved channel profile entry: %s", exc)
+            continue
+        profiles[profile.name] = profile
     return profiles
+
+
+def load_channel_profiles_from_sources() -> Dict[str, ChannelProfile]:
+    ecu_profile_path = os.path.join(PROFILE_DIR, "fccu.yaml")
+    ecu_profile = load_ecu_profile(ecu_profile_path)
+    base_profiles = load_channel_profiles_from_ecu_profile(ecu_profile)
+    profiles = dict(base_profiles)
+    saved_profiles = load_saved_channel_profiles()
+    if saved_profiles:
+        profiles.update(saved_profiles)
+    if not profiles:
+        logger.warning("No channel profiles could be loaded from %s or %s", ecu_profile_path, CHANNEL_PROFILE_PATH)
+    return profiles
+
+
+def load_channel_profiles(database=None) -> Dict[str, ChannelProfile]:
+    _ = database
+    return load_channel_profiles_from_sources()
+
+
+def run_startup_from_profile(backend: Optional[BackendBase], profile: dict) -> None:
+    if backend is None or not isinstance(profile, dict):
+        return
+    startup_section = profile.get("startup")
+    if not isinstance(startup_section, dict):
+        return
+    per_output = startup_section.get("per_output", [])
+    if not isinstance(per_output, list):
+        if per_output:
+            logger.warning("ECU profile startup per_output must be a list")
+        return
+    for index, entry in enumerate(per_output):
+        if not isinstance(entry, dict):
+            logger.warning("Startup per_output entry %d has invalid type %s", index, type(entry).__name__)
+            continue
+        message_name = entry.get("message")
+        if not message_name:
+            logger.warning("Startup per_output entry %d is missing a message name", index)
+            continue
+        fields = entry.get("fields") or {}
+        if not isinstance(fields, dict):
+            logger.warning("Startup per_output entry %d fields must be a mapping", index)
+            continue
+        payload: Dict[str, float] = {}
+        for field_name, raw_value in fields.items():
+            try:
+                payload[str(field_name)] = float(raw_value)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Startup per_output entry %d has invalid value for %s", index, field_name
+                )
+        if not payload:
+            continue
+        repeat_value = entry.get("repeat", 1)
+        try:
+            repeat_count = int(repeat_value)
+        except (TypeError, ValueError):
+            repeat_count = 1
+        if repeat_count <= 0:
+            repeat_count = 1
+        delay_value = entry.get("dt_ms", entry.get("delay_ms", entry.get("interval_ms", 0)))
+        try:
+            delay_ms = int(delay_value)
+        except (TypeError, ValueError):
+            delay_ms = 0
+        if delay_ms < 0:
+            delay_ms = 0
+        try:
+            backend.send_message_by_name(
+                str(message_name),
+                payload,
+                repeat=repeat_count,
+                dt_ms=delay_ms,
+                force=True,
+            )
+        except BackendError as exc:
+            logger.error("Failed to execute startup step %s from profile: %s", message_name, exc)
 
 
 def save_channel_profiles(profiles: List[ChannelProfile]) -> None:
@@ -4267,56 +4412,8 @@ def save_channel_profiles(profiles: List[ChannelProfile]) -> None:
     try:
         with open(CHANNEL_PROFILE_PATH, "w", encoding="utf-8") as handle:
             yaml.safe_dump(data, handle, sort_keys=False)
-    except OSError:
-        pass
-
-
-def default_channel_profiles(database) -> List[ChannelProfile]:
-    profiles: List[ChannelProfile] = []
-    if not database:
-        return profiles
-    try:
-        hs_write = database.get_message_by_name("QM_High_side_output_write")
-        hs_status = database.get_message_by_name("QM_High_side_output_status")
-    except KeyError:
-        hs_write = None
-        hs_status = None
-    if hs_write and hs_status:
-        for index in range(1, 6):
-            select = f"hs_out{index:02d}_select"
-            mode = f"hs_out{index:02d}_mode"
-            pwm = f"hs_out{index:02d}_value_pwm"
-            current = f"hs_out{index:02d}_current"
-            pwm_feedback = f"hs_out{index:02d}_pwm"
-            profile = ChannelProfile(
-                name=f"HS{index}",
-                type="HighSide",
-                write=ChannelMapping(message=hs_write.name, fields={"select": select, "mode": mode, "pwm": pwm}),
-                status=ChannelMapping(message=hs_status.name, fields={"current": current, "pwm_feedback": pwm_feedback}),
-                sim={"tau": 0.5, "current_gain": 8.0, "noise": 0.1},
-            )
-            profiles.append(profile)
-    try:
-        ai_status = database.get_message_by_name("QM_Analog_Input_status")
-    except KeyError:
-        ai_status = None
-    if ai_status:
-        for index in range(1, 6):
-            voltage = f"an_pin_{index:02d}_voltage"
-            current = f"an_pin_{index:02d}_current"
-            profile = ChannelProfile(
-                name=f"AI{index}",
-                type="AI_V",
-                status=ChannelMapping(message=ai_status.name, fields={"value": voltage}),
-            )
-            profiles.append(profile)
-            profile_current = ChannelProfile(
-                name=f"AI{index}_I",
-                type="AI_I",
-                status=ChannelMapping(message=ai_status.name, fields={"value": current}),
-            )
-            profiles.append(profile_current)
-    return profiles
+    except OSError as exc:
+        logger.error("Failed to save channel profiles to %s: %s", CHANNEL_PROFILE_PATH, exc)
 
 
 def collect_signal_definitions(database) -> Dict[str, List[SignalDefinition]]:
@@ -4369,6 +4466,7 @@ class MainWindow(QMainWindow):
         self._channel_commands: Dict[str, Dict[str, float]] = {}
         self._sequencer_configs: Dict[str, ChannelConfig] = {}
         self._sequence_runners: Dict[str, SequenceRunner] = {}
+        self._ecu_profile_cache: Optional[dict] = None
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -5497,7 +5595,11 @@ class MainWindow(QMainWindow):
                 return 100.0
             return 0.0
 
-        def add_per_output_step(channel_name: str, message_name: str) -> bool:
+        def add_per_output_step(
+            channel_name: str,
+            message_name: str,
+            preset_fields: Optional[Dict[str, Any]] = None,
+        ) -> bool:
             if any(
                 step.channel == channel_name and step.message == message_name
                 for step in self._startup_config.per_output
@@ -5507,27 +5609,49 @@ class MainWindow(QMainWindow):
             if message is None:
                 return False
             payload: Dict[str, float] = {}
-            for signal in message.signals:
-                if not is_signal_writable(signal.name, message_name):
-                    continue
-                payload[signal.name] = default_init_value(signal.name)
-            if not payload:
-                return False
+            available = {signal.name for signal in message.signals}
+            if isinstance(preset_fields, dict) and preset_fields:
+                for field_name, raw_value in preset_fields.items():
+                    if field_name not in available or not is_signal_writable(field_name, message_name):
+                        continue
+                    try:
+                        payload[field_name] = float(raw_value)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Invalid startup default for %s.%s", message_name, field_name
+                        )
+                if not payload:
+                    return False
+            else:
+                for signal in message.signals:
+                    if not is_signal_writable(signal.name, message_name):
+                        continue
+                    payload[signal.name] = default_init_value(signal.name)
+                if not payload:
+                    return False
             self._startup_config.per_output.append(
                 StartupPerOutputStep(channel=channel_name, message=message_name, fields=payload)
             )
             return True
 
         suggestions_added = main_switch_added
-        high_side_messages = [
-            ("HS1", "QM_High_side_output_init_01"),
-            ("HS2", "QM_High_side_output_init_02"),
-            ("HS3", "QM_High_side_output_init_03"),
-        ]
-        for channel_hint, message_name in high_side_messages:
-            target_channel = channel_hint if channel_hint in self._channel_profiles else message_name
-            if add_per_output_step(target_channel, message_name):
-                suggestions_added = True
+        profile_defaults = self._get_ecu_profile()
+        startup_section = profile_defaults.get("startup") if isinstance(profile_defaults, dict) else {}
+        per_output_defaults = (
+            startup_section.get("per_output") if isinstance(startup_section, dict) else []
+        )
+        if isinstance(per_output_defaults, list):
+            for entry in per_output_defaults:
+                if not isinstance(entry, dict):
+                    continue
+                message_name = str(entry.get("message", "")).strip()
+                if not message_name:
+                    continue
+                fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else None
+                channel_hint = str(entry.get("channel", "")).strip()
+                target_channel = channel_hint if channel_hint in self._channel_profiles else (channel_hint or message_name)
+                if add_per_output_step(target_channel, message_name, fields):
+                    suggestions_added = True
 
         for message in messages:
             name_lower = message.name.lower()
@@ -5847,6 +5971,7 @@ class MainWindow(QMainWindow):
         self._update_status_indicator(True)
         self.status_message_label.setText("Connected")
         if self._startup_on_connect:
+            self._run_profile_startup_steps()
             self._run_startup(mode="normal", force=not self._startup_only_on_change)
 
     def _disconnect_backend(self) -> None:
@@ -6581,8 +6706,9 @@ class MainWindow(QMainWindow):
             else:
                 continue
             new_profiles[profile.name] = profile
-        if not new_profiles and self._dbc:
-            new_profiles = load_channel_profiles(self._dbc)
+        if not new_profiles:
+            self._ecu_profile_cache = None
+            new_profiles = load_channel_profiles_from_sources()
         if new_profiles:
             self._channel_profiles = dict(sorted(new_profiles.items()))
             save_channel_profiles(list(self._channel_profiles.values()))
@@ -7076,10 +7202,25 @@ class MainWindow(QMainWindow):
         if checkbox.isChecked():
             self._all_outputs_off()
         if self._startup_on_apply:
+            self._run_profile_startup_steps()
             self._run_startup(mode="normal", force=not self._startup_only_on_change)
             self._set_hardware_pending(False, "Startup sequence triggered.")
         else:
             self._set_hardware_pending(False, "Setup applied to hardware.")
+
+    def _get_ecu_profile(self, *, force_reload: bool = False) -> dict:
+        if force_reload or self._ecu_profile_cache is None:
+            path = os.path.join(PROFILE_DIR, "fccu.yaml")
+            self._ecu_profile_cache = load_ecu_profile(path)
+        return dict(self._ecu_profile_cache or {})
+
+    def _run_profile_startup_steps(self) -> None:
+        if not self.backend:
+            return
+        profile = self._get_ecu_profile()
+        if not profile:
+            return
+        run_startup_from_profile(self.backend, profile)
 
     def _update_status_indicator(self, connected: bool) -> None:
         color = "green" if connected else "red"
@@ -7158,7 +7299,16 @@ class MainWindow(QMainWindow):
         self.signal_browser.set_signals(self._signals_by_message)
         self._watch_units = {definition.name: definition.unit for defs in self._signals_by_message.values() for definition in defs}
         self.watchlist_widget.set_units(self._watch_units)
-        self._channel_profiles = dict(sorted(load_channel_profiles(database).items()))
+        ecu_profile_path = os.path.join(PROFILE_DIR, "fccu.yaml")
+        ecu_profile = load_ecu_profile(ecu_profile_path)
+        base_profiles = load_channel_profiles_from_ecu_profile(ecu_profile)
+        saved_profiles = load_saved_channel_profiles()
+        combined_profiles: Dict[str, ChannelProfile] = dict(base_profiles)
+        if saved_profiles:
+            combined_profiles.update(saved_profiles)
+        if combined_profiles and not saved_profiles:
+            save_channel_profiles(list(combined_profiles.values()))
+        self._channel_profiles = dict(sorted(combined_profiles.items()))
         self._refresh_channel_cards()
         if self._pending_watchlist:
             self.watchlist_widget.add_signals(self._pending_watchlist)
