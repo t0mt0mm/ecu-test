@@ -2099,9 +2099,12 @@ class RealBackend(QObject, BackendBase):
             return
         if dbc_message is None:
             return
+        expected_length = getattr(dbc_message, "length", None)
+        if expected_length is not None and len(message.data) != expected_length:
+            return
         try:
             decoded = dbc_message.decode(message.data, decode_choices=False, scaling=True)
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, cantools_errors.DecodeError):
             return
         with self._lock:
             for name, value in decoded.items():
