@@ -1598,7 +1598,10 @@ class DummyBackend(BackendBase):
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
                 self._frame_to_message[message.frame_id] = message.name
-                raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
+                raw_id, is_ext = self._normalize_dbc_fid(
+                    message.frame_id,
+                    is_extended=bool(getattr(message, "is_extended_frame", False)),
+                )
                 self._rawid_to_msg[(raw_id, is_ext)] = message.name
 
         with self._lock:
@@ -1892,10 +1895,12 @@ class RealBackend(QObject, BackendBase):
         self._channels: Dict[str, ChannelProfile] = {}
 
 
-    def _normalize_dbc_fid(self, fid: int) -> Tuple[int, bool]:
-        is_ext = bool(fid & 0x80000000)
-        raw_id = fid & (0x1FFFFFFF if is_ext else 0x7FF)
-        return raw_id, is_ext
+    def _normalize_dbc_fid(self, fid: int, *, is_extended: Optional[bool] = None) -> Tuple[int, bool]:
+        if is_extended is None:
+            is_extended = bool(fid & 0x80000000)
+        mask = 0x1FFFFFFF if is_extended else 0x7FF
+        raw_id = fid & mask
+        return raw_id, is_extended
 
 
     def configure(self, settings: ConnectionSettings) -> None:
@@ -1951,7 +1956,10 @@ class RealBackend(QObject, BackendBase):
         self._signal_to_message.clear()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
-                raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
+                raw_id, is_ext = self._normalize_dbc_fid(
+                    message.frame_id,
+                    is_extended=bool(getattr(message, "is_extended_frame", False)),
+                )
                 self._frame_to_message[(raw_id, is_ext)] = message
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
@@ -2706,7 +2714,7 @@ class MultiAxisPlotDock(QDockWidget):
         else:
             start_a = 0.0
             start_b = 1.0
-        self._create_cursor("A", start_a, (255, 0, 0))
+        self._create_cursor("A", start_a, (255, 255, 0))
         self._create_cursor("B", start_b, (0, 128, 255))
         self._update_cursor_info()
 
@@ -4316,6 +4324,65 @@ def load_channel_profiles(database=None) -> Dict[str, ChannelProfile]:
     return load_channel_profiles_from_sources()
 
 
+def run_startup_from_profile(backend: Optional[BackendBase], profile: dict) -> None:
+    if backend is None or not isinstance(profile, dict):
+        return
+    startup_section = profile.get("startup")
+    if not isinstance(startup_section, dict):
+        return
+    per_output = startup_section.get("per_output", [])
+    if not isinstance(per_output, list):
+        if per_output:
+            logger.warning("ECU profile startup per_output must be a list")
+        return
+    for index, entry in enumerate(per_output):
+        if not isinstance(entry, dict):
+            logger.warning("Startup per_output entry %d has invalid type %s", index, type(entry).__name__)
+            continue
+        message_name = entry.get("message")
+        if not message_name:
+            logger.warning("Startup per_output entry %d is missing a message name", index)
+            continue
+        fields = entry.get("fields") or {}
+        if not isinstance(fields, dict):
+            logger.warning("Startup per_output entry %d fields must be a mapping", index)
+            continue
+        payload: Dict[str, float] = {}
+        for field_name, raw_value in fields.items():
+            try:
+                payload[str(field_name)] = float(raw_value)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Startup per_output entry %d has invalid value for %s", index, field_name
+                )
+        if not payload:
+            continue
+        repeat_value = entry.get("repeat", 1)
+        try:
+            repeat_count = int(repeat_value)
+        except (TypeError, ValueError):
+            repeat_count = 1
+        if repeat_count <= 0:
+            repeat_count = 1
+        delay_value = entry.get("dt_ms", entry.get("delay_ms", entry.get("interval_ms", 0)))
+        try:
+            delay_ms = int(delay_value)
+        except (TypeError, ValueError):
+            delay_ms = 0
+        if delay_ms < 0:
+            delay_ms = 0
+        try:
+            backend.send_message_by_name(
+                str(message_name),
+                payload,
+                repeat=repeat_count,
+                dt_ms=delay_ms,
+                force=True,
+            )
+        except BackendError as exc:
+            logger.error("Failed to execute startup step %s from profile: %s", message_name, exc)
+
+
 def save_channel_profiles(profiles: List[ChannelProfile]) -> None:
     ensure_directories()
     data = [profile.to_yaml() for profile in profiles]
@@ -4376,6 +4443,7 @@ class MainWindow(QMainWindow):
         self._channel_commands: Dict[str, Dict[str, float]] = {}
         self._sequencer_configs: Dict[str, ChannelConfig] = {}
         self._sequence_runners: Dict[str, SequenceRunner] = {}
+        self._ecu_profile_cache: Optional[dict] = None
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -5504,7 +5572,11 @@ class MainWindow(QMainWindow):
                 return 100.0
             return 0.0
 
-        def add_per_output_step(channel_name: str, message_name: str) -> bool:
+        def add_per_output_step(
+            channel_name: str,
+            message_name: str,
+            preset_fields: Optional[Dict[str, Any]] = None,
+        ) -> bool:
             if any(
                 step.channel == channel_name and step.message == message_name
                 for step in self._startup_config.per_output
@@ -5514,27 +5586,49 @@ class MainWindow(QMainWindow):
             if message is None:
                 return False
             payload: Dict[str, float] = {}
-            for signal in message.signals:
-                if not is_signal_writable(signal.name, message_name):
-                    continue
-                payload[signal.name] = default_init_value(signal.name)
-            if not payload:
-                return False
+            available = {signal.name for signal in message.signals}
+            if isinstance(preset_fields, dict) and preset_fields:
+                for field_name, raw_value in preset_fields.items():
+                    if field_name not in available or not is_signal_writable(field_name, message_name):
+                        continue
+                    try:
+                        payload[field_name] = float(raw_value)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Invalid startup default for %s.%s", message_name, field_name
+                        )
+                if not payload:
+                    return False
+            else:
+                for signal in message.signals:
+                    if not is_signal_writable(signal.name, message_name):
+                        continue
+                    payload[signal.name] = default_init_value(signal.name)
+                if not payload:
+                    return False
             self._startup_config.per_output.append(
                 StartupPerOutputStep(channel=channel_name, message=message_name, fields=payload)
             )
             return True
 
         suggestions_added = main_switch_added
-        high_side_messages = [
-            ("HS1", "QM_High_side_output_init_01"),
-            ("HS2", "QM_High_side_output_init_02"),
-            ("HS3", "QM_High_side_output_init_03"),
-        ]
-        for channel_hint, message_name in high_side_messages:
-            target_channel = channel_hint if channel_hint in self._channel_profiles else message_name
-            if add_per_output_step(target_channel, message_name):
-                suggestions_added = True
+        profile_defaults = self._get_ecu_profile()
+        startup_section = profile_defaults.get("startup") if isinstance(profile_defaults, dict) else {}
+        per_output_defaults = (
+            startup_section.get("per_output") if isinstance(startup_section, dict) else []
+        )
+        if isinstance(per_output_defaults, list):
+            for entry in per_output_defaults:
+                if not isinstance(entry, dict):
+                    continue
+                message_name = str(entry.get("message", "")).strip()
+                if not message_name:
+                    continue
+                fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else None
+                channel_hint = str(entry.get("channel", "")).strip()
+                target_channel = channel_hint if channel_hint in self._channel_profiles else (channel_hint or message_name)
+                if add_per_output_step(target_channel, message_name, fields):
+                    suggestions_added = True
 
         for message in messages:
             name_lower = message.name.lower()
@@ -5854,6 +5948,7 @@ class MainWindow(QMainWindow):
         self._update_status_indicator(True)
         self.status_message_label.setText("Connected")
         if self._startup_on_connect:
+            self._run_profile_startup_steps()
             self._run_startup(mode="normal", force=not self._startup_only_on_change)
 
     def _disconnect_backend(self) -> None:
@@ -6589,6 +6684,7 @@ class MainWindow(QMainWindow):
                 continue
             new_profiles[profile.name] = profile
         if not new_profiles:
+            self._ecu_profile_cache = None
             new_profiles = load_channel_profiles_from_sources()
         if new_profiles:
             self._channel_profiles = dict(sorted(new_profiles.items()))
@@ -7083,10 +7179,25 @@ class MainWindow(QMainWindow):
         if checkbox.isChecked():
             self._all_outputs_off()
         if self._startup_on_apply:
+            self._run_profile_startup_steps()
             self._run_startup(mode="normal", force=not self._startup_only_on_change)
             self._set_hardware_pending(False, "Startup sequence triggered.")
         else:
             self._set_hardware_pending(False, "Setup applied to hardware.")
+
+    def _get_ecu_profile(self, *, force_reload: bool = False) -> dict:
+        if force_reload or self._ecu_profile_cache is None:
+            path = os.path.join(PROFILE_DIR, "fccu.yaml")
+            self._ecu_profile_cache = load_ecu_profile(path)
+        return dict(self._ecu_profile_cache or {})
+
+    def _run_profile_startup_steps(self) -> None:
+        if not self.backend:
+            return
+        profile = self._get_ecu_profile()
+        if not profile:
+            return
+        run_startup_from_profile(self.backend, profile)
 
     def _update_status_indicator(self, connected: bool) -> None:
         color = "green" if connected else "red"
