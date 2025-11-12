@@ -1896,11 +1896,15 @@ class RealBackend(QObject, BackendBase):
 
 
     def _normalize_dbc_fid(self, fid: int, *, is_extended: Optional[bool] = None) -> Tuple[int, bool]:
+        """Normalize a DBC frame id to a raw id and the extended flag."""
+
+        # Prefer the explicit flag if available, otherwise fall back to the
+        # encoded "extended" bit that some DBC exports embed into the number.
         if is_extended is None:
             is_extended = bool(fid & 0x80000000)
         mask = 0x1FFFFFFF if is_extended else 0x7FF
         raw_id = fid & mask
-        return raw_id, is_extended
+        return raw_id, bool(is_extended)
 
 
     def configure(self, settings: ConnectionSettings) -> None:
@@ -1956,11 +1960,21 @@ class RealBackend(QObject, BackendBase):
         self._signal_to_message.clear()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
+                explicit_flag = bool(getattr(message, "is_extended_frame", False))
                 raw_id, is_ext = self._normalize_dbc_fid(
                     message.frame_id,
-                    is_extended=bool(getattr(message, "is_extended_frame", False)),
+                    is_extended=explicit_flag,
                 )
                 self._frame_to_message[(raw_id, is_ext)] = message
+
+                # Some toolchains encode the extended bit directly in the frame
+                # id without setting ``is_extended_frame``. To remain tolerant we
+                # keep a secondary entry that relies solely on the numeric id so
+                # frames with a mismatched flag can still be decoded.
+                fallback_raw, fallback_ext = self._normalize_dbc_fid(message.frame_id)
+                key = (fallback_raw, fallback_ext)
+                if key not in self._frame_to_message:
+                    self._frame_to_message[key] = message
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
         with self._lock:
@@ -2123,9 +2137,17 @@ class RealBackend(QObject, BackendBase):
         if self._db is None:
             return
 
-        raw_id = int(message.arbitration_id) & (0x1FFFFFFF if message.is_extended_id else 0x7FF)
-        key = (raw_id, bool(message.is_extended_id))
+        raw_id, is_ext = self._normalize_dbc_fid(
+            int(message.arbitration_id),
+            is_extended=bool(getattr(message, "is_extended_id", False)),
+        )
+        key = (raw_id, is_ext)
         dbc_message = self._frame_to_message.get(key)
+        if dbc_message is None:
+            # Fall back to the opposite flag in case the incoming frame toggles
+            # the extended bit compared to the DBC definition.
+            alternate_key = (raw_id, not is_ext)
+            dbc_message = self._frame_to_message.get(alternate_key)
         if dbc_message is None:
             return
 
@@ -2720,6 +2742,7 @@ class MultiAxisPlotDock(QDockWidget):
 
     def _create_cursor(self, label: str, position: float, color: Tuple[int, int, int]) -> None:
         line = pg.InfiniteLine(pos=position, angle=90, movable=True, pen=pg.mkPen(color, width=1.5))
+        line.setHoverPen(pg.mkPen((255, 255, 255), width=2))
         line.setZValue(50)
         line.sigPositionChanged.connect(self._on_cursor_moved)
         drag_finished_signal = None
