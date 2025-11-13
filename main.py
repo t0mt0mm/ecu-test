@@ -2107,12 +2107,21 @@ class RealBackend(QObject, BackendBase):
             message_name = self._frame_to_message.get(message.arbitration_id)
             if not message_name:
                 return
+            try:
+                dbc_message = self._db.get_message_by_name(message_name)
+            except KeyError:
+                return
+            # Skip decoding for unhandled frames that would overwrite existing
+            # status signals, e.g. safety-domain messages duplicating high-side
+            # feedback values with different scaling/semantics.
+            if any(signal.name in self._status_signal_names for signal in dbc_message.signals):
+                return
         else:
             message_name, _profile = handler
-        try:
-            dbc_message = self._db.get_message_by_name(message_name)
-        except KeyError:
-            return
+            try:
+                dbc_message = self._db.get_message_by_name(message_name)
+            except KeyError:
+                return
         if dbc_message is None:
             return
         expected_length = getattr(dbc_message, "length", None)
