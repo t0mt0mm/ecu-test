@@ -703,18 +703,46 @@ class StateMachineConfig:
         states_raw = data.get("states") if isinstance(data, dict) else []
         transitions_raw = data.get("transitions") if isinstance(data, dict) else []
         initial_state = data.get("initial_state") if isinstance(data, dict) else None
+
+        def _append_state(states: List[StateDefinition], value: Any, fallback_name: Optional[str] = None) -> None:
+            name_value = ""
+            if isinstance(value, dict):
+                state = StateDefinition.from_dict(value)
+                name_value = state.name
+            elif isinstance(value, str):
+                name_value = value
+            elif value is None and fallback_name:
+                name_value = fallback_name
+            else:
+                name_value = str(value)
+            name_value = name_value.strip()
+            if not name_value and fallback_name:
+                name_value = str(fallback_name).strip()
+            if name_value:
+                states.append(StateDefinition(name=name_value))
+
         states: List[StateDefinition] = []
         if isinstance(states_raw, list):
             for entry in states_raw:
-                if isinstance(entry, dict):
-                    state = StateDefinition.from_dict(entry)
-                    if state.name:
-                        states.append(state)
+                _append_state(states, entry)
+        elif isinstance(states_raw, dict):
+            for key, value in states_raw.items():
+                _append_state(states, value, fallback_name=str(key))
+
         transitions: List[StateTransition] = []
         if isinstance(transitions_raw, list):
             for entry in transitions_raw:
                 if isinstance(entry, dict):
-                    transitions.append(StateTransition.from_dict(entry))
+                    transition = StateTransition.from_dict(entry)
+                    transitions.append(transition)
+        elif isinstance(transitions_raw, dict):
+            for key, value in transitions_raw.items():
+                if isinstance(value, dict):
+                    transition = StateTransition.from_dict(value)
+                    if not transition.name:
+                        transition.name = str(key)
+                    transitions.append(transition)
+
         config = cls(name=name, states=states, transitions=transitions, initial_state=initial_state)
         config.ensure_initial_state()
         return config
@@ -5811,8 +5839,15 @@ class MainWindow(QMainWindow):
             return
         self.transition_list.clear()
         for transition in config.transitions:
-            title = transition.name.strip() if transition.name.strip() else f"{transition.source} → {transition.target}"
-            description = f"{title}: {transition.source} → {transition.target}"
+            title_value = (transition.name or "").strip()
+            if not title_value:
+                source = (transition.source or "").strip()
+                target = (transition.target or "").strip()
+                if source or target:
+                    title_value = f"{source} → {target}".strip()
+                else:
+                    title_value = "Transition"
+            description = f"{title_value}: {transition.source} → {transition.target}"
             self.transition_list.addItem(description)
         if self.transition_list.count() and self.transition_list.currentRow() < 0:
             self.transition_list.setCurrentRow(0)
