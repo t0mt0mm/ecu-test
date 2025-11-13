@@ -1587,6 +1587,21 @@ class DummyBackend(BackendBase):
         self._simulation_configs = {}
         self._simulators = {}
         self._signal_to_message = {}
+        self._frame_to_message: Dict[int, str] = {}
+        self._rawid_to_msg: Dict[tuple[int, bool], str] = {}
+
+        if self._db is not None:
+            for message in getattr(self._db, "messages", []):
+                for signal in message.signals:
+                    self._signal_to_message[signal.name] = message.name
+                self._frame_to_message[message.frame_id] = message.name
+                raw_id, is_ext = self._normalize_dbc_fid(message.frame_id)
+                self._rawid_to_msg[(raw_id, is_ext)] = message.name
+
+        with self._lock:
+            self._signal_cache = {name: 0.0 for name in self._signal_to_message}
+        self.status_updated.emit()
+
         self._overrides = {}
         if self._dbc is not None:
             for message in getattr(self._dbc, "messages", []):
@@ -1598,7 +1613,9 @@ class DummyBackend(BackendBase):
                     simulator.apply_profile(config.clone())
                     self._simulators[signal.name] = simulator
                     self._signal_values[signal.name] = simulator.update(0.0, 0.0)
+
         self._refresh_overrides()
+
 
     def set_channel_profiles(self, profiles: Dict[str, ChannelProfile]) -> None:
         self._channels = profiles
@@ -2131,10 +2148,14 @@ class RealBackend(QObject, BackendBase):
             decoded = dbc_message.decode(message.data, decode_choices=False, scaling=True)
         except (ValueError, KeyError, cantools_errors.DecodeError):
             return
+
         with self._lock:
             for name, value in decoded.items():
                 self._signal_cache[name] = float(value)
         self.status_updated.emit()
+
+
+
 
 class _StatusListener(can.Listener):
     def __init__(self, backend: "RealBackend") -> None:
