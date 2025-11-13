@@ -144,7 +144,8 @@ CONFIG_DIR = os.path.join(BASE_DIR, "config")
 PROFILE_DIR = os.path.join(BASE_DIR, "profiles")
 WHITELIST_PATH = os.path.join(CONFIG_DIR, "signals.yaml")
 CHANNEL_PROFILE_PATH = os.path.join(PROFILE_DIR, "channels.yaml")
-DEFAULT_SETUP_PATH = os.path.join(PROFILE_DIR, "default_setup.json")
+PRIMARY_SETUP_PATH = os.path.join(PROFILE_DIR, "fccu.yaml")
+DEFAULT_SETUP_PATH = os.path.join(PROFILE_DIR, "default_setup.yaml")
 DUMMY_SIMULATION_PATH = os.path.join(PROFILE_DIR, "dummy_simulations.json")
 
 
@@ -152,44 +153,14 @@ FACTORY_DEFAULT_SETUP = {
     "version": 1,
     "backend": {"type": "dummy", "device_id": None},
     "signals": {
-        "watchlist": [],
-        "plot_signals": [],
+        "watch": [],
+        "plot": [],
         "multi_plot": {"enabled": False, "paused": False, "windows": []},
     },
     "channels": {"profiles": [], "plot_visibility": {}},
     "sequencer": {"per_channel": {}},
-    "dummy": {"simulations": {}},
-    "startup": {
-        "version": 1,
-        "globals": [],
-        "per_output": [
-            {
-                "channel": "HS1",
-                "message": "QM_High_side_output_init_01",
-                "fields": {
-                    "hs_out01_frequency": 1000.0,
-                    "hs_out01_pwm_min": 0.0,
-                    "hs_out01_pwm_max": 100.0,
-                    "hs_out01_Kp": 0.0,
-                    "hs_out01_Ki": 0.0,
-                    "hs_out01_Kd": 0.0,
-                    "hs_out02_frequency": 1000.0,
-                    "hs_out02_pwm_min": 0.0,
-                    "hs_out02_pwm_max": 100.0,
-                    "hs_out02_Kp": 0.0,
-                    "hs_out02_Ki": 0.0,
-                    "hs_out02_Kd": 0.0,
-                    "hs_out03_frequency": 1000.0,
-                    "hs_out03_pwm_min": 0.0,
-                    "hs_out03_pwm_max": 100.0,
-                    "hs_out03_Kp": 0.0,
-                    "hs_out03_Ki": 0.0,
-                    "hs_out03_Kd": 0.0,
-                },
-            },
-        ],
-        "teardown": [],
-    },
+    "dummy": {"sim": {}},
+    "startup": {"version": 1, "globals": [], "per_output": [], "teardown": []},
 }
 
 
@@ -1868,10 +1839,11 @@ class RealBackend(QObject, BackendBase):
         self._lock = threading.Lock()
         self._signal_cache: Dict[str, float] = {}
         self._signal_to_message: Dict[str, str] = {}
-        self._frame_to_message: Dict[int, str] = {}
+        self._message_by_name: Dict[str, Any] = {}
+        self._frame_to_message: Dict[Tuple[int, bool], Any] = {}
         self._channels: Dict[str, ChannelProfile] = {}
-        self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
-        self._write_frame_ids: Set[int] = set()
+        self._status_handlers: Dict[Tuple[int, bool], Tuple[Any, ChannelProfile]] = {}
+        self._write_frame_ids: Set[Tuple[int, bool]] = set()
         self._status_signal_names: Set[str] = set()
         
     def configure(self, settings: ConnectionSettings) -> None:
@@ -1925,14 +1897,17 @@ class RealBackend(QObject, BackendBase):
         self._db = database
         self._signal_cache = {}
         self._signal_to_message = {}
+        self._message_by_name = {}
         self._frame_to_message = {}
         self._write_frame_ids = set()
         self._status_signal_names = set()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
+                self._message_by_name[message.name] = message
                 for signal in message.signals:
                     self._signal_to_message[signal.name] = message.name
-                self._frame_to_message[message.frame_id] = message.name
+                key = (int(message.frame_id), bool(getattr(message, "is_extended_frame", False)))
+                self._frame_to_message[key] = message
         with self._lock:
             self._signal_cache = {name: 0.0 for name in self._signal_to_message}
         self.status_updated.emit()
@@ -1947,17 +1922,19 @@ class RealBackend(QObject, BackendBase):
         for profile in profiles.values():
             write_message_name = profile.write.message
             if write_message_name:
-                write_message = self._db.get_message_by_name(write_message_name)
+                write_message = self._message_by_name.get(write_message_name)
                 if write_message is not None:
-                    self._write_frame_ids.add(write_message.frame_id)
+                    key = (int(write_message.frame_id), bool(getattr(write_message, "is_extended_frame", False)))
+                    self._write_frame_ids.add(key)
             for signal_name in profile.status.fields.values():
                 if signal_name:
                     self._status_signal_names.add(signal_name)
             message_name = profile.status.message
-            message = self._db.get_message_by_name(message_name) if message_name else None
+            message = self._message_by_name.get(message_name) if message_name else None
             if message is None:
                 continue
-            self._status_handlers[message.frame_id] = (message_name, profile)
+            key = (int(message.frame_id), bool(getattr(message, "is_extended_frame", False)))
+            self._status_handlers[key] = (message, profile)
             for signal in message.signals:
                 self._status_signal_names.add(signal.name)
 
@@ -1968,7 +1945,7 @@ class RealBackend(QObject, BackendBase):
         message_name = profile.write.message
         if not message_name:
             raise BackendError(f"Channel {channel} has no write message configured")
-        message = self._db.get_message_by_name(message_name)
+        message = self._message_by_name.get(message_name)
         if message is None:
             raise BackendError(f"Message {message_name} not found in DBC")
         payload: Dict[str, float] = {}
@@ -2002,7 +1979,7 @@ class RealBackend(QObject, BackendBase):
             data = message.encode(complete, scaling=True, strict=True)
 
             can_message = can.Message(
-                arbitration_id=message.frame_id,
+                arbitration_id=int(message.frame_id),
                 data=data,
                 is_extended_id=bool(getattr(message, "is_extended_frame", False)),
                 is_fd=True,
@@ -2031,9 +2008,8 @@ class RealBackend(QObject, BackendBase):
         _ = force
         if self._db is None or self._bus is None:
             raise BackendError("Real backend is not connected")
-        try:
-            dbc_message = self._db.get_message_by_name(message)
-        except KeyError:
+        dbc_message = self._message_by_name.get(message)
+        if dbc_message is None:
             raise BackendError(f"Message {message} not found in DBC")
         valid_names = {signal.name for signal in dbc_message.signals}
         prepared: Dict[str, float] = {}
@@ -2068,7 +2044,7 @@ class RealBackend(QObject, BackendBase):
                     data = dbc_message.encode(complete, scaling=True, strict=True)
 
                     message_obj = can.Message(
-                        arbitration_id=dbc_message.frame_id,
+                        arbitration_id=int(dbc_message.frame_id),
                         data=data,
                         is_extended_id=bool(getattr(dbc_message, "is_extended_frame", False)),
                         is_fd=True,
@@ -2100,16 +2076,13 @@ class RealBackend(QObject, BackendBase):
     def _handle_status(self, message: can.Message) -> None:
         if self._db is None:
             return
-        handler = self._status_handlers.get(message.arbitration_id)
+        key = (int(message.arbitration_id), bool(getattr(message, "is_extended_id", False)))
+        handler = self._status_handlers.get(key)
         if handler is None:
-            if message.arbitration_id in self._write_frame_ids:
+            if key in self._write_frame_ids:
                 return
-            message_name = self._frame_to_message.get(message.arbitration_id)
-            if not message_name:
-                return
-            try:
-                dbc_message = self._db.get_message_by_name(message_name)
-            except KeyError:
+            dbc_message = self._frame_to_message.get(key)
+            if dbc_message is None:
                 return
             # Skip decoding for unhandled frames that would overwrite existing
             # status signals, e.g. safety-domain messages duplicating high-side
@@ -2117,11 +2090,7 @@ class RealBackend(QObject, BackendBase):
             if any(signal.name in self._status_signal_names for signal in dbc_message.signals):
                 return
         else:
-            message_name, _profile = handler
-            try:
-                dbc_message = self._db.get_message_by_name(message_name)
-            except KeyError:
-                return
+            dbc_message, _profile = handler
         if dbc_message is None:
             return
         expected_length = getattr(dbc_message, "length", None)
@@ -2704,12 +2673,18 @@ class MultiAxisPlotDock(QDockWidget):
         else:
             start_a = 0.0
             start_b = 1.0
-        self._create_cursor("A", start_a, (255, 0, 0))
+        self._create_cursor("A", start_a, (255, 215, 0))
         self._create_cursor("B", start_b, (0, 128, 255))
         self._update_cursor_info()
 
     def _create_cursor(self, label: str, position: float, color: Tuple[int, int, int]) -> None:
-        line = pg.InfiniteLine(pos=position, angle=90, movable=True, pen=pg.mkPen(color, width=1.5))
+        base_pen = pg.mkPen(color, width=1.5)
+        hover_pen = pg.mkPen((255, 255, 255), width=2.0)
+        line = pg.InfiniteLine(pos=position, angle=90, movable=True, pen=base_pen)
+        try:
+            line.setHoverPen(hover_pen)
+        except AttributeError:
+            pass
         line.setZValue(50)
         line.sigPositionChanged.connect(self._on_cursor_moved)
         drag_finished_signal = None
@@ -4404,12 +4379,15 @@ class MainWindow(QMainWindow):
         self._inline_init_done = False
         self._startup_status_messages: List[str] = []
         self._startup_is_valid = False
+        self._active_setup_path: Optional[str] = None
         self._restore_settings()
         self._build_ui()
+        self._update_yaml_status(None)
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._on_timer)
         self._timer.start()
+        self._load_initial_setup()
         self._load_initial_backend()
 
     # UI construction
@@ -4421,6 +4399,8 @@ class MainWindow(QMainWindow):
         status_bar = QStatusBar()
         status_bar.addWidget(self.status_indicator)
         status_bar.addWidget(self.status_message_label, 1)
+        self.yaml_path_label = QLabel("YAML: <unsaved>")
+        status_bar.addPermanentWidget(self.yaml_path_label)
         self.csv_preset_status_label = QLabel()
         status_bar.addPermanentWidget(self.csv_preset_status_label)
         self.setStatusBar(status_bar)
@@ -4459,12 +4439,15 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
         setup_menu = menu_bar.addMenu("Setup")
-        self.save_setup_action = QAction("Save Setup…", self)
-        self.save_setup_action.triggered.connect(self._export_setup)
-        setup_menu.addAction(self.save_setup_action)
-        self.load_setup_action = QAction("Load Setup…", self)
-        self.load_setup_action.triggered.connect(self._import_setup)
-        setup_menu.addAction(self.load_setup_action)
+        self.load_yaml_action = QAction("Load YAML…", self)
+        self.load_yaml_action.triggered.connect(self._load_yaml)
+        setup_menu.addAction(self.load_yaml_action)
+        self.save_yaml_action = QAction("Save YAML", self)
+        self.save_yaml_action.triggered.connect(self._save_yaml)
+        setup_menu.addAction(self.save_yaml_action)
+        self.save_yaml_as_action = QAction("Save YAML As…", self)
+        self.save_yaml_as_action.triggered.connect(self._save_yaml_as)
+        setup_menu.addAction(self.save_yaml_as_action)
         setup_menu.addSeparator()
         self.save_default_action = QAction("Save as Default…", self)
         self.save_default_action.triggered.connect(self._save_as_default)
@@ -5754,6 +5737,23 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.dummy_tab, "Dummy Advanced")
 
     # Backend management
+    def _load_initial_setup(self) -> None:
+        candidates = [PRIMARY_SETUP_PATH, DEFAULT_SETUP_PATH]
+        for path in candidates:
+            if not path or not os.path.exists(path):
+                continue
+            payload = self._load_setup_payload(path)
+            if payload is None:
+                continue
+            self._apply_setup_payload(payload)
+            self._active_setup_path = path
+            self._update_yaml_status(path)
+            return
+        fallback = copy.deepcopy(FACTORY_DEFAULT_SETUP)
+        self._apply_setup_payload(fallback)
+        self._active_setup_path = None
+        self._update_yaml_status(None)
+
     def _load_initial_backend(self) -> None:
         self._load_dbc(self.dbc_edit.text())
         self._switch_backend(self.backend_name)
@@ -6359,22 +6359,29 @@ class MainWindow(QMainWindow):
                 dummy_profiles[name] = config.to_dict()
         else:
             dummy_profiles = self._read_stored_dummy_profiles()
+        profiles_yaml = [profile.to_yaml() for profile in self._channel_profiles.values()]
+        write_map = {profile.name: profile.write.to_yaml() for profile in self._channel_profiles.values()}
+        status_map = {profile.name: profile.status.to_yaml() for profile in self._channel_profiles.values()}
+        signals_payload = {
+            "watch": list(self.watchlist_widget.signal_names),
+            "plot": list(self.watchlist_widget.plot_signal_names),
+            "multi_plot": {
+                "enabled": bool(self._multi_plot_enabled),
+                "paused": bool(self._multi_plot_paused),
+                "windows": windows,
+            },
+        }
+        channels_payload: Dict[str, Any] = {
+            "profiles": profiles_yaml,
+            "write": write_map,
+            "status": status_map,
+            "plot_visibility": dict(self._channel_plot_settings),
+        }
         payload = {
             "version": 1,
             "backend": {"type": backend_type, "device_id": device_id or None},
-            "signals": {
-                "watchlist": list(self.watchlist_widget.signal_names),
-                "plot_signals": list(self.watchlist_widget.plot_signal_names),
-                "multi_plot": {
-                    "enabled": bool(self._multi_plot_enabled),
-                    "paused": bool(self._multi_plot_paused),
-                    "windows": windows,
-                },
-            },
-            "channels": {
-                "profiles": [profile.to_yaml() for profile in self._channel_profiles.values()],
-                "plot_visibility": dict(self._channel_plot_settings),
-            },
+            "signals": signals_payload,
+            "channels": channels_payload,
             "sequencer": {
                 "per_channel": {
                     name: {
@@ -6385,7 +6392,6 @@ class MainWindow(QMainWindow):
                     for name, config in self._sequencer_configs.items()
                 }
             },
-            "dummy": {"simulations": dummy_profiles},
             "startup": {
                 **self._startup_config.to_dict(),
                 "on_connect": bool(self._startup_on_connect),
@@ -6394,35 +6400,43 @@ class MainWindow(QMainWindow):
                 "only_on_change": bool(self._startup_only_on_change),
             },
         }
+        if dummy_profiles:
+            payload["dummy"] = {"sim": dummy_profiles}
         return payload
 
-    def _export_setup(self) -> None:
+    def _save_yaml(self) -> None:
+        if not self._active_setup_path:
+            self._save_yaml_as()
+            return
+        payload = self._collect_setup_payload()
+        if self._write_yaml_payload(self._active_setup_path, payload):
+            self._update_yaml_status(self._active_setup_path)
+            self._set_hardware_pending(True, f"Saved {os.path.basename(self._active_setup_path)}.")
+
+    def _save_yaml_as(self) -> None:
         ensure_directories()
-        default_path = os.path.join(PROFILE_DIR, "setup.json")
+        default_path = PRIMARY_SETUP_PATH if os.path.exists(PRIMARY_SETUP_PATH) else DEFAULT_SETUP_PATH
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save setup",
+            "Save YAML",
             default_path,
-            "JSON Files (*.json)",
+            "YAML Files (*.yaml *.yml)",
         )
         if not path:
             return
         payload = self._collect_setup_payload()
-        try:
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2)
-        except OSError as exc:
-            self._show_error(f"Failed to save setup: {exc}")
-            return
-        self.status_message_label.setText(f"Setup saved to {os.path.basename(path)}")
+        if self._write_yaml_payload(path, payload):
+            self._active_setup_path = path
+            self._update_yaml_status(path)
+            self._set_hardware_pending(True, f"Saved {os.path.basename(path)}.")
 
-    def _import_setup(self) -> None:
+    def _load_yaml(self) -> None:
         ensure_directories()
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Load setup",
+            "Load YAML",
             PROFILE_DIR,
-            "JSON Files (*.json)",
+            "YAML Files (*.yaml *.yml)",
         )
         if not path:
             return
@@ -6430,19 +6444,58 @@ class MainWindow(QMainWindow):
         if payload is None:
             return
         self._apply_setup_payload(payload)
+        self._active_setup_path = path
+        self._update_yaml_status(path)
         self._set_hardware_pending(True, f"Loaded {os.path.basename(path)}. Apply to hardware when ready.")
 
     def _load_setup_payload(self, path: str) -> Optional[dict]:
+        data: Optional[dict]
         try:
             with open(path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (OSError, json.JSONDecodeError) as exc:
+                loaded = yaml.safe_load(handle)
+        except (OSError, yaml.YAMLError) as exc:
             self._show_error(f"Failed to load setup: {exc}")
+            return None
+        if loaded is None:
+            data = {}
+        elif isinstance(loaded, dict):
+            data = loaded
+        else:
+            self._show_error("Invalid setup file format.")
             return None
         if not isinstance(data, dict):
             self._show_error("Invalid setup file format.")
             return None
         return data
+
+    def _write_yaml_payload(self, path: str, payload: dict) -> bool:
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
+        except OSError as exc:
+            self._show_error(f"Failed to save setup: {exc}")
+            return False
+        return True
+
+    def _update_yaml_status(self, path: Optional[str]) -> None:
+        if not hasattr(self, "yaml_path_label") or self.yaml_path_label is None:
+            return
+        if path:
+            normalized = os.path.abspath(path)
+            try:
+                rel = os.path.relpath(normalized, PROFILE_DIR)
+            except ValueError:
+                rel = os.path.basename(normalized)
+            display = rel if not rel.startswith("..") else os.path.basename(normalized)
+        else:
+            display = "<unsaved>"
+        self.yaml_path_label.setText(f"YAML: {display}")
+        status = f"Active setup: {display}"
+        if hasattr(self, "statusBar"):
+            self.statusBar().showMessage(status, 5000)
 
     def _apply_setup_payload(self, payload: dict, scopes: Optional[Set[str]] = None) -> None:
         version_value = payload.get("version") if isinstance(payload, dict) else None
@@ -6498,8 +6551,14 @@ class MainWindow(QMainWindow):
     def _apply_signals_setup(self, data: dict) -> None:
         if not isinstance(data, dict):
             data = {}
-        watchlist = [str(name) for name in data.get("watchlist", [])]
-        plot_signals = {str(name) for name in data.get("plot_signals", [])}
+        watch_section = data.get("watch") if isinstance(data, dict) else None
+        if not isinstance(watch_section, list):
+            watch_section = data.get("watchlist", []) if isinstance(data, dict) else []
+        watchlist = [str(name) for name in watch_section]
+        plot_section = data.get("plot") if isinstance(data, dict) else None
+        if not isinstance(plot_section, list):
+            plot_section = data.get("plot_signals", []) if isinstance(data, dict) else []
+        plot_signals = {str(name) for name in plot_section}
         existing = list(self.watchlist_widget.signal_names)
         if existing:
             self.watchlist_widget.remove_signals(existing)
@@ -6557,6 +6616,8 @@ class MainWindow(QMainWindow):
 
     def _apply_channels_setup(self, data: dict) -> None:
         profiles_section = data.get("profiles", []) if isinstance(data, dict) else []
+        if not isinstance(profiles_section, list):
+            profiles_section = []
         new_profiles: Dict[str, ChannelProfile] = {}
         for entry in profiles_section:
             if isinstance(entry, ChannelProfile):
@@ -6642,7 +6703,9 @@ class MainWindow(QMainWindow):
     def _apply_dummy_setup(self, data: dict) -> None:
         if not isinstance(data, dict):
             data = {}
-        simulations = data.get("simulations", {}) if isinstance(data, dict) else {}
+        simulations = data.get("sim", {}) if isinstance(data, dict) else {}
+        if not isinstance(simulations, dict):
+            simulations = data.get("simulations", {}) if isinstance(data, dict) else {}
         if not simulations:
             if isinstance(self.backend, DummyBackend):
                 self.simulation_widget.set_profiles(self.backend.simulation_profiles())
@@ -6707,13 +6770,8 @@ class MainWindow(QMainWindow):
     def _save_as_default(self) -> None:
         ensure_directories()
         payload = self._collect_setup_payload()
-        try:
-            with open(DEFAULT_SETUP_PATH, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2)
-        except OSError as exc:
-            self._show_error(f"Failed to save default setup: {exc}")
-            return
-        self.status_message_label.setText("Default setup saved.")
+        if self._write_yaml_payload(DEFAULT_SETUP_PATH, payload):
+            self.status_message_label.setText("Default setup saved.")
 
     def _prompt_reset_defaults(self) -> None:
         dialog = QDialog(self)
@@ -6760,10 +6818,10 @@ class MainWindow(QMainWindow):
         if os.path.exists(DEFAULT_SETUP_PATH):
             try:
                 with open(DEFAULT_SETUP_PATH, "r", encoding="utf-8") as handle:
-                    data = json.load(handle)
+                    data = yaml.safe_load(handle)
                 if isinstance(data, dict):
                     return data
-            except (OSError, json.JSONDecodeError) as exc:
+            except (OSError, yaml.YAMLError) as exc:
                 self._show_error(f"Failed to load default setup: {exc}")
         return copy.deepcopy(FACTORY_DEFAULT_SETUP)
 
@@ -6814,12 +6872,12 @@ class MainWindow(QMainWindow):
         if os.path.exists(DEFAULT_SETUP_PATH):
             try:
                 with open(DEFAULT_SETUP_PATH, "r", encoding="utf-8") as handle:
-                    stored = json.load(handle)
+                    stored = yaml.safe_load(handle)
                 if isinstance(stored, dict):
                     section = stored.get("startup")
                     if isinstance(section, dict):
                         config_data = section
-            except (OSError, json.JSONDecodeError):
+            except (OSError, yaml.YAMLError):
                 config_data = None
         if config_data is None:
             fallback = FACTORY_DEFAULT_SETUP.get("startup", {})
