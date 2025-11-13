@@ -1845,6 +1845,7 @@ class RealBackend(QObject, BackendBase):
         self._status_handlers: Dict[Tuple[int, bool], Tuple[Any, ChannelProfile]] = {}
         self._write_frame_ids: Set[Tuple[int, bool]] = set()
         self._status_signal_names: Set[str] = set()
+        self._command_state: Dict[str, Dict[str, float]] = {}
         
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
@@ -1901,6 +1902,7 @@ class RealBackend(QObject, BackendBase):
         self._frame_to_message = {}
         self._write_frame_ids = set()
         self._status_signal_names = set()
+        self._command_state = {}
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
                 self._message_by_name[message.name] = message
@@ -1938,6 +1940,29 @@ class RealBackend(QObject, BackendBase):
             for signal in message.signals:
                 self._status_signal_names.add(signal.name)
 
+    def _compose_command_payload(self, message: Any, overrides: Dict[str, float]) -> Dict[str, float]:
+        with self._lock:
+            base = dict(self._command_state.get(message.name, {}))
+        for signal in getattr(message, "signals", []):
+            if signal.name not in base:
+                initial = getattr(signal, "initial", None)
+                base[signal.name] = float(initial) if initial is not None else 0.0
+        for name, value in overrides.items():
+            base[name] = float(value)
+        return base
+
+    def _finalize_command(
+        self,
+        message_name: str,
+        complete: Dict[str, float],
+        overrides: Dict[str, float],
+    ) -> None:
+        with self._lock:
+            self._command_state[message_name] = {name: float(value) for name, value in complete.items()}
+            for name, value in overrides.items():
+                if name not in self._status_signal_names:
+                    self._signal_cache[name] = float(value)
+
     def apply_channel_command(self, channel: str, command: Dict[str, float]) -> None:
         profile = self._channels.get(channel)
         if profile is None or self._db is None or self._bus is None:
@@ -1965,17 +1990,11 @@ class RealBackend(QObject, BackendBase):
             if not is_signal_writable(signal_name, message_name):
                 raise BackendError(f"Signal {signal_name} is not writable")
             payload[signal_name] = float(raw_value)
-        # payload enthält aktuell nur die gemappten Felder dieses Channels
+        # The payload currently only contains the mapped fields for this channel
         if not payload:
             return
         try:
-            # --- NEU: vollständiges Dict aus DBC-Initials/0 bauen und payload drüberlegen ---
-            complete: Dict[str, float] = {
-                sig.name: (sig.initial if getattr(sig, "initial", None) is not None else 0.0)
-                for sig in message.signals
-            }
-            complete.update(payload)
-
+            complete = self._compose_command_payload(message, payload)
             data = message.encode(complete, scaling=True, strict=True)
 
             can_message = can.Message(
@@ -1987,11 +2006,7 @@ class RealBackend(QObject, BackendBase):
             )
             self._bus.send(can_message)
 
-            # Update the cache only with the command signals we actually transmitted
-            with self._lock:
-                for name, value in payload.items():
-                    if name not in self._status_signal_names:
-                        self._signal_cache[name] = float(value)
+            self._finalize_command(message_name, complete, payload)
 
         except (ValueError, can.CanError) as exc:
             raise BackendError(str(exc))
@@ -2022,7 +2037,6 @@ class RealBackend(QObject, BackendBase):
                 prepared[name] = float(value)
             except (TypeError, ValueError):
                 raise BackendError(f"Invalid value for signal {name}")
-# ... oberhalb wurden dbc_message und prepared bereits gebaut ...
         if not prepared:
             return
         repeat_count = max(1, int(repeat))
@@ -2031,16 +2045,7 @@ class RealBackend(QObject, BackendBase):
             tries = 0
             while tries < 3:
                 try:
-                    # --- FIX: vollständiges Payload aus prepared + Defaults der DBC-Signale ---
-                    complete: Dict[str, float] = dict(prepared)
-                    for sig in dbc_message.signals:              # statt: for sig in message.signals
-                        if sig.name not in complete:
-                            if getattr(sig, "initial", None) is not None:
-                                complete[sig.name] = sig.initial
-                            else:
-                                complete[sig.name] = 0.0          # sicherer Default
-
-                    # --- FIX: complete encodieren, nicht prepared ---
+                    complete = self._compose_command_payload(dbc_message, prepared)
                     data = dbc_message.encode(complete, scaling=True, strict=True)
 
                     message_obj = can.Message(
@@ -2052,11 +2057,7 @@ class RealBackend(QObject, BackendBase):
                     )
                     self._bus.send(message_obj)
 
-                    # --- FIX: Only update the cache with explicitly transmitted signals ---
-                    with self._lock:
-                        for name, value in prepared.items():
-                            if name not in self._status_signal_names:
-                                self._signal_cache[name] = float(value)
+                    self._finalize_command(message, complete, prepared)
                     break
                 except (ValueError, can.CanError) as exc:
                     tries += 1
