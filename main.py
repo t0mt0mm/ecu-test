@@ -16,7 +16,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, TYPE_CHECKING
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*sipPyTypeDict.*")
 
@@ -44,10 +44,12 @@ from PyQt5.QtCore import (
     QEasingCurve,
     QThread,
     QByteArray,
+    QPointF,
+    QRectF,
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt5.QtGui import QColor, QPalette
+from PyQt5.QtGui import QColor, QPalette, QPen, QBrush, QPainterPath, QPolygonF, QPainter
 from PyQt5.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -82,6 +84,7 @@ from PyQt5.QtWidgets import (
     QToolBar,
     QToolButton,
     QTextBrowser,
+    QListWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QWidgetAction,
@@ -93,6 +96,11 @@ from PyQt5.QtWidgets import (
     QMenu,
     QAction,
     QStackedWidget,
+    QGraphicsView,
+    QGraphicsScene,
+    QGraphicsEllipseItem,
+    QGraphicsPathItem,
+    QGraphicsTextItem,
 )
 
 APP_QSS = """
@@ -159,6 +167,7 @@ FACTORY_DEFAULT_SETUP = {
     },
     "channels": {"profiles": [], "plot_visibility": {}},
     "sequencer": {"per_channel": {}},
+    "state_machines": {"active": None, "definitions": []},
     "dummy": {"sim": {}},
     "startup": {"version": 1, "globals": [], "per_output": [], "teardown": []},
 }
@@ -501,6 +510,213 @@ class ChannelProfile:
             "sim": dict(self.sim),
         }
 
+
+@dataclass
+class StateCondition:
+    signal: str
+    operator: str = ">="
+    value: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StateCondition":
+        signal = str(data.get("signal", ""))
+        operator = str(data.get("operator", ">=")).strip() or ">="
+        try:
+            value = float(data.get("value", 0.0))
+        except (TypeError, ValueError):
+            value = 0.0
+        return cls(signal=signal, operator=operator, value=value)
+
+    def to_dict(self) -> dict:
+        return {"signal": self.signal, "operator": self.operator, "value": float(self.value)}
+
+    def evaluate(self, signal_values: Dict[str, float]) -> bool:
+        actual = float(signal_values.get(self.signal, 0.0))
+        expected = float(self.value)
+        op = self.operator.strip()
+        if op == ">":
+            return actual > expected
+        if op == ">=":
+            return actual >= expected
+        if op == "<":
+            return actual < expected
+        if op == "<=":
+            return actual <= expected
+        if op == "==":
+            return actual == expected
+        if op == "!=":
+            return actual != expected
+        return False
+
+
+@dataclass
+class StateAction:
+    type: str = "send_message"
+    message: str = ""
+    fields: Dict[str, float] = field(default_factory=dict)
+    channel: str = ""
+    command: Dict[str, float] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StateAction":
+        action_type = str(data.get("type", "send_message"))
+        message = str(data.get("message", "")) if action_type == "send_message" else ""
+        channel = str(data.get("channel", "")) if action_type == "set_channel" else ""
+        fields_raw = data.get("fields") if isinstance(data, dict) else None
+        command_raw = data.get("command") if isinstance(data, dict) else None
+        fields: Dict[str, float] = {}
+        if isinstance(fields_raw, dict):
+            for key, value in fields_raw.items():
+                try:
+                    fields[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        command: Dict[str, float] = {}
+        if isinstance(command_raw, dict):
+            for key, value in command_raw.items():
+                try:
+                    command[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        return cls(type=action_type, message=message, fields=fields, channel=channel, command=command)
+
+    def to_dict(self) -> dict:
+        payload: Dict[str, Any] = {"type": self.type}
+        if self.type == "send_message":
+            payload["message"] = self.message
+            payload["fields"] = {key: float(value) for key, value in self.fields.items()}
+        elif self.type == "set_channel":
+            payload["channel"] = self.channel
+            payload["command"] = {key: float(value) for key, value in self.command.items()}
+        else:
+            payload["data"] = {}
+        return payload
+
+
+@dataclass
+class StateTransition:
+    name: str
+    source: str
+    target: str
+    conditions: List[StateCondition] = field(default_factory=list)
+    actions: List[StateAction] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StateTransition":
+        name = str(data.get("name", ""))
+        source = str(data.get("source", ""))
+        target = str(data.get("target", ""))
+        conditions_raw = data.get("conditions") if isinstance(data, dict) else []
+        actions_raw = data.get("actions") if isinstance(data, dict) else []
+        conditions: List[StateCondition] = []
+        if isinstance(conditions_raw, list):
+            for entry in conditions_raw:
+                if isinstance(entry, dict):
+                    conditions.append(StateCondition.from_dict(entry))
+        actions: List[StateAction] = []
+        if isinstance(actions_raw, list):
+            for entry in actions_raw:
+                if isinstance(entry, dict):
+                    actions.append(StateAction.from_dict(entry))
+        return cls(name=name, source=source, target=target, conditions=conditions, actions=actions)
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "target": self.target,
+            "conditions": [condition.to_dict() for condition in self.conditions],
+            "actions": [action.to_dict() for action in self.actions],
+        }
+
+
+@dataclass
+class StateDefinition:
+    name: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StateDefinition":
+        return cls(name=str(data.get("name", "")))
+
+    def to_dict(self) -> dict:
+        return {"name": self.name}
+
+
+@dataclass
+class StateMachineConfig:
+    name: str
+    states: List[StateDefinition] = field(default_factory=list)
+    transitions: List[StateTransition] = field(default_factory=list)
+    initial_state: Optional[str] = None
+
+    def clone(self) -> "StateMachineConfig":
+        return StateMachineConfig(
+            name=self.name,
+            states=[StateDefinition(name=state.name) for state in self.states],
+            transitions=[
+                StateTransition(
+                    name=transition.name,
+                    source=transition.source,
+                    target=transition.target,
+                    conditions=[StateCondition(signal=c.signal, operator=c.operator, value=c.value) for c in transition.conditions],
+                    actions=[
+                        StateAction(
+                            type=action.type,
+                            message=action.message,
+                            fields=dict(action.fields),
+                            channel=action.channel,
+                            command=dict(action.command),
+                        )
+                        for action in transition.actions
+                    ],
+                )
+                for transition in self.transitions
+            ],
+            initial_state=self.initial_state,
+        )
+
+    @property
+    def state_names(self) -> List[str]:
+        return [state.name for state in self.states]
+
+    def ensure_initial_state(self) -> None:
+        names = [state.name for state in self.states if state.name]
+        if not names:
+            self.initial_state = None
+            return
+        if self.initial_state not in names:
+            self.initial_state = names[0]
+
+    def to_dict(self) -> dict:
+        self.ensure_initial_state()
+        return {
+            "name": self.name,
+            "states": [state.to_dict() for state in self.states],
+            "transitions": [transition.to_dict() for transition in self.transitions],
+            "initial_state": self.initial_state,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StateMachineConfig":
+        name = str(data.get("name", "State Machine"))
+        states_raw = data.get("states") if isinstance(data, dict) else []
+        transitions_raw = data.get("transitions") if isinstance(data, dict) else []
+        initial_state = data.get("initial_state") if isinstance(data, dict) else None
+        states: List[StateDefinition] = []
+        if isinstance(states_raw, list):
+            for entry in states_raw:
+                if isinstance(entry, dict):
+                    state = StateDefinition.from_dict(entry)
+                    if state.name:
+                        states.append(state)
+        transitions: List[StateTransition] = []
+        if isinstance(transitions_raw, list):
+            for entry in transitions_raw:
+                if isinstance(entry, dict):
+                    transitions.append(StateTransition.from_dict(entry))
+        config = cls(name=name, states=states, transitions=transitions, initial_state=initial_state)
+        config.ensure_initial_state()
+        return config
 
 class SequenceRepeatMode(Enum):
     OFF = "off"
@@ -998,6 +1214,204 @@ class StartupStepDialog(QDialog):
             )
         super().accept()
 
+class StateTransitionDialog(QDialog):
+    def __init__(
+        self,
+        states: List[str],
+        *,
+        parent: Optional[QWidget] = None,
+        existing: Optional[StateTransition] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configure transition")
+        self._states = list(states)
+        self.result_transition: Optional[StateTransition] = None
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.name_edit = QLineEdit(existing.name if existing else "")
+        form.addRow("Name", self.name_edit)
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(self._states)
+        self.source_combo.setEditable(False)
+        self.target_combo = QComboBox()
+        self.target_combo.addItems(self._states)
+        self.target_combo.setEditable(False)
+        if existing:
+            self.source_combo.setCurrentText(existing.source)
+            self.target_combo.setCurrentText(existing.target)
+        form.addRow("Source", self.source_combo)
+        form.addRow("Target", self.target_combo)
+        layout.addLayout(form)
+        self.condition_table = QTableWidget(0, 3)
+        self.condition_table.setHorizontalHeaderLabels(["Signal", "Operator", "Value"])
+        self.condition_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.condition_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.condition_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.condition_table.verticalHeader().setVisible(False)
+        self.condition_table.setAlternatingRowColors(True)
+        self.condition_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(QLabel("Conditions"))
+        layout.addWidget(self.condition_table)
+        condition_buttons = QHBoxLayout()
+        add_condition = QToolButton()
+        add_condition.setText("Add condition")
+        add_condition.clicked.connect(self._add_condition_row)
+        remove_condition = QToolButton()
+        remove_condition.setText("Remove condition")
+        remove_condition.clicked.connect(self._remove_condition_row)
+        condition_buttons.addWidget(add_condition)
+        condition_buttons.addWidget(remove_condition)
+        condition_buttons.addStretch(1)
+        layout.addLayout(condition_buttons)
+        self.action_table = QTableWidget(0, 3)
+        self.action_table.setHorizontalHeaderLabels(["Type", "Target", "Parameters"])
+        self.action_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.action_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.action_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.action_table.verticalHeader().setVisible(False)
+        self.action_table.setAlternatingRowColors(True)
+        self.action_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(QLabel("Actions"))
+        layout.addWidget(self.action_table)
+        action_buttons = QHBoxLayout()
+        add_action = QToolButton()
+        add_action.setText("Add action")
+        add_action.clicked.connect(self._add_action_row)
+        remove_action = QToolButton()
+        remove_action.setText("Remove action")
+        remove_action.clicked.connect(self._remove_action_row)
+        action_buttons.addWidget(add_action)
+        action_buttons.addWidget(remove_action)
+        action_buttons.addStretch(1)
+        layout.addLayout(action_buttons)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+        if existing:
+            for condition in existing.conditions:
+                self._add_condition_row(condition.signal, condition.operator, str(condition.value))
+            for action in existing.actions:
+                if action.type == "send_message":
+                    params = ", ".join(f"{key}={value}" for key, value in action.fields.items())
+                    self._add_action_row(action.type, action.message, params)
+                elif action.type == "set_channel":
+                    params = ", ".join(f"{key}={value}" for key, value in action.command.items())
+                    self._add_action_row(action.type, action.channel, params)
+        else:
+            self._add_condition_row()
+            self._add_action_row()
+
+    def _add_condition_row(self, signal: str = "", operator: str = ">=", value: str = "0") -> None:
+        row = self.condition_table.rowCount()
+        self.condition_table.insertRow(row)
+        self.condition_table.setItem(row, 0, QTableWidgetItem(signal))
+        combo = QComboBox()
+        combo.addItems([">", ">=", "<", "<=", "==", "!="])
+        if operator not in {">", ">=", "<", "<=", "==", "!="}:
+            operator = ">="
+        combo.setCurrentText(operator)
+        self.condition_table.setCellWidget(row, 1, combo)
+        self.condition_table.setItem(row, 2, QTableWidgetItem(value))
+
+    def _remove_condition_row(self) -> None:
+        row = self.condition_table.currentRow()
+        if row >= 0:
+            self.condition_table.removeRow(row)
+
+    def _add_action_row(self, action_type: str = "send_message", target: str = "", params: str = "") -> None:
+        row = self.action_table.rowCount()
+        self.action_table.insertRow(row)
+        combo = QComboBox()
+        combo.addItems(["send_message", "set_channel"])
+        if action_type not in {"send_message", "set_channel"}:
+            action_type = "send_message"
+        combo.setCurrentText(action_type)
+        self.action_table.setCellWidget(row, 0, combo)
+        self.action_table.setItem(row, 1, QTableWidgetItem(target))
+        item = QTableWidgetItem(params)
+        item.setToolTip("Comma separated key=value pairs, e.g. signal=1.0")
+        self.action_table.setItem(row, 2, item)
+
+    def _remove_action_row(self) -> None:
+        row = self.action_table.currentRow()
+        if row >= 0:
+            self.action_table.removeRow(row)
+
+    def accept(self) -> None:  # type: ignore[override]
+        if not self._states:
+            QMessageBox.warning(self, "Invalid input", "Please create at least one state before defining transitions.")
+            return
+        name = self.name_edit.text().strip()
+        source = self.source_combo.currentText().strip()
+        target = self.target_combo.currentText().strip()
+        if not source or source not in self._states:
+            QMessageBox.warning(self, "Invalid input", "Please select a valid source state.")
+            return
+        if not target or target not in self._states:
+            QMessageBox.warning(self, "Invalid input", "Please select a valid target state.")
+            return
+        conditions: List[StateCondition] = []
+        for row in range(self.condition_table.rowCount()):
+            signal_item = self.condition_table.item(row, 0)
+            value_item = self.condition_table.item(row, 2)
+            operator_widget = self.condition_table.cellWidget(row, 1)
+            if signal_item is None or value_item is None or not isinstance(operator_widget, QComboBox):
+                continue
+            signal = signal_item.text().strip()
+            if not signal:
+                continue
+            operator = operator_widget.currentText()
+            try:
+                value = float(value_item.text())
+            except (TypeError, ValueError):
+                QMessageBox.warning(self, "Invalid input", f"Condition value for '{signal}' is not numeric.")
+                return
+            conditions.append(StateCondition(signal=signal, operator=operator, value=value))
+        actions: List[StateAction] = []
+        for row in range(self.action_table.rowCount()):
+            type_widget = self.action_table.cellWidget(row, 0)
+            target_item = self.action_table.item(row, 1)
+            params_item = self.action_table.item(row, 2)
+            if not isinstance(type_widget, QComboBox) or target_item is None or params_item is None:
+                continue
+            action_type = type_widget.currentText()
+            target_value = target_item.text().strip()
+            params_text = params_item.text().strip()
+            try:
+                pairs = self._parse_pairs(params_text)
+            except ValueError as exc:
+                QMessageBox.warning(self, "Invalid input", str(exc))
+                return
+            if action_type == "send_message":
+                if not target_value:
+                    QMessageBox.warning(self, "Invalid input", "Message name is required for send_message actions.")
+                    return
+                actions.append(StateAction(type="send_message", message=target_value, fields=pairs))
+            elif action_type == "set_channel":
+                if not target_value:
+                    QMessageBox.warning(self, "Invalid input", "Channel name is required for set_channel actions.")
+                    return
+                actions.append(StateAction(type="set_channel", channel=target_value, command=pairs))
+        self.result_transition = StateTransition(name=name, source=source, target=target, conditions=conditions, actions=actions)
+        super().accept()
+
+    def _parse_pairs(self, text: str) -> Dict[str, float]:
+        pairs: Dict[str, float] = {}
+        if not text:
+            return pairs
+        for token in text.split(","):
+            key, _, raw_value = token.partition("=")
+            key = key.strip()
+            raw_value = raw_value.strip()
+            if not key or not raw_value:
+                raise ValueError("Parameters must be provided as key=value pairs.")
+            try:
+                pairs[key] = float(raw_value)
+            except ValueError:
+                raise ValueError(f"Invalid numeric value for '{key}'.")
+        return pairs
+
 class SequenceRunner(QObject):
     progressed = pyqtSignal(int, str, float)
     finished = pyqtSignal()
@@ -1188,6 +1602,209 @@ class SequenceRunner(QObject):
         remaining = max(0.0, self._phase_end - self._now_fn())
         self.progressed.emit(self._sequence_index, self._phase, remaining)
 
+class StateMachineGraphView(QGraphicsView):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        scene = QGraphicsScene(self)
+        self.setScene(scene)
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setStyleSheet("background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;")
+        self.setMinimumHeight(260)
+        self._last_rect = QRectF()
+
+    def update_graph(self, config: Optional[StateMachineConfig], active_state: Optional[str]) -> None:
+        scene = self.scene()
+        if scene is None:
+            return
+        scene.clear()
+        if not config or not config.states:
+            self._last_rect = QRectF()
+            return
+        states = config.state_names
+        total = len(states)
+        radius = max(120.0, 60.0 + 35.0 * total)
+        center = QPointF(0.0, 0.0)
+        positions: Dict[str, QPointF] = {}
+        for index, name in enumerate(states):
+            angle = (2.0 * math.pi * index) / max(total, 1)
+            x = center.x() + radius * math.cos(angle)
+            y = center.y() + radius * math.sin(angle)
+            positions[name] = QPointF(x, y)
+        node_radius = 28.0
+        base_pen = QPen(QColor("#94a3b8"))
+        base_pen.setWidthF(2.0)
+        highlight_pen = QPen(QColor("#2563eb"))
+        highlight_pen.setWidthF(3.0)
+        text_color = QColor("#0f172a")
+        edge_pen = QPen(QColor("#cbd5f5"))
+        edge_pen.setWidthF(2.0)
+        active_edge_pen = QPen(QColor("#6366f1"))
+        active_edge_pen.setWidthF(2.5)
+        arrow_highlight = QBrush(QColor("#6366f1"))
+        for transition in config.transitions:
+            start = positions.get(transition.source)
+            end = positions.get(transition.target)
+            if start is None or end is None:
+                continue
+            path = QPainterPath(start)
+            path.lineTo(end)
+            is_active = active_state == transition.source
+            path_item = QGraphicsPathItem(path)
+            path_item.setPen(active_edge_pen if is_active else edge_pen)
+            scene.addItem(path_item)
+            dx = end.x() - start.x()
+            dy = end.y() - start.y()
+            length = math.hypot(dx, dy)
+            if length <= 0.0:
+                continue
+            ux = dx / length
+            uy = dy / length
+            tip = QPointF(end.x() - ux * node_radius, end.y() - uy * node_radius)
+            arrow_length = 12.0
+            arrow_width = 6.0
+            left = QPointF(
+                tip.x() - ux * arrow_length + (-uy) * arrow_width,
+                tip.y() - uy * arrow_length + ux * arrow_width,
+            )
+            right = QPointF(
+                tip.x() - ux * arrow_length - (-uy) * arrow_width,
+                tip.y() - uy * arrow_length - ux * arrow_width,
+            )
+            polygon = QPolygonF([tip, left, right])
+            scene.addPolygon(polygon, path_item.pen(), arrow_highlight if is_active else QBrush(path_item.pen().color()))
+        for name in states:
+            pos = positions[name]
+            scene.addEllipse(
+                pos.x() - node_radius,
+                pos.y() - node_radius,
+                node_radius * 2.0,
+                node_radius * 2.0,
+                highlight_pen if name == active_state else base_pen,
+                QBrush(QColor("#ffffff") if name != active_state else QColor("#fde68a")),
+            )
+            label = scene.addText(name)
+            font = label.font()
+            font.setPointSize(10)
+            font.setBold(name == active_state)
+            label.setFont(font)
+            label.setDefaultTextColor(text_color if name != active_state else QColor("#1e293b"))
+            rect = label.boundingRect()
+            label.setPos(pos.x() - rect.width() / 2.0, pos.y() - rect.height() / 2.0)
+        bounds = scene.itemsBoundingRect().adjusted(-40.0, -40.0, 40.0, 40.0)
+        scene.setSceneRect(bounds)
+        if not bounds.isNull():
+            self._last_rect = bounds
+            self.fitInView(bounds, Qt.KeepAspectRatio)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if not self._last_rect.isNull():
+            self.fitInView(self._last_rect, Qt.KeepAspectRatio)
+
+
+class StateMachineRunner(QObject):
+    state_changed = pyqtSignal(str)
+    stopped = pyqtSignal()
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._backend: Optional["BackendBase"] = None
+        self._config: Optional[StateMachineConfig] = None
+        self._transitions_by_source: Dict[str, List[StateTransition]] = {}
+        self._running = False
+        self._current_state: Optional[str] = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def current_state(self) -> Optional[str]:
+        return self._current_state
+
+    def set_backend(self, backend: Optional["BackendBase"]) -> None:
+        self._backend = backend
+
+    def set_config(self, config: Optional[StateMachineConfig]) -> None:
+        self._config = config
+        self._transitions_by_source = self._build_transition_map(config) if config else {}
+        if self._running and (not config or self._current_state not in (config.state_names if config else [])):
+            self.stop()
+
+    def start(self) -> bool:
+        if not self._backend or not self._config:
+            return False
+        self._config.ensure_initial_state()
+        initial = self._config.initial_state
+        if not initial:
+            return False
+        if initial not in self._config.state_names:
+            return False
+        self._current_state = initial
+        self._running = True
+        self.state_changed.emit(initial)
+        return True
+
+    def stop(self) -> None:
+        if not self._running:
+            return
+        self._running = False
+        self._current_state = None
+        self.stopped.emit()
+
+    def step(self) -> None:
+        if not self._running or not self._backend or not self._config or not self._current_state:
+            return
+        transitions = self._transitions_by_source.get(self._current_state, [])
+        if not transitions:
+            return
+        required: Set[str] = set()
+        for transition in transitions:
+            for condition in transition.conditions:
+                if condition.signal:
+                    required.add(condition.signal)
+        try:
+            values = self._backend.read_signal_values(required) if required else {}
+        except BackendError as exc:
+            self.error_occurred.emit(str(exc))
+            self.stop()
+            return
+        for transition in transitions:
+            if not transition.conditions or all(condition.evaluate(values) for condition in transition.conditions):
+                try:
+                    self._execute_actions(transition.actions)
+                except BackendError as exc:
+                    self.error_occurred.emit(str(exc))
+                    self.stop()
+                    return
+                self._current_state = transition.target
+                if self._config and self._current_state not in self._config.state_names:
+                    self._config.states.append(StateDefinition(name=self._current_state))
+                    self._transitions_by_source.setdefault(self._current_state, [])
+                self.state_changed.emit(self._current_state)
+                return
+
+    def _execute_actions(self, actions: Iterable[StateAction]) -> None:
+        if not self._backend:
+            return
+        for action in actions:
+            if action.type == "send_message":
+                if action.message and action.fields:
+                    self._backend.send_message_by_name(action.message, action.fields)
+            elif action.type == "set_channel":
+                if action.channel and action.command:
+                    self._backend.apply_channel_command(action.channel, action.command)
+
+    def _build_transition_map(
+        self, config: Optional[StateMachineConfig]
+    ) -> Dict[str, List[StateTransition]]:
+        mapping: Dict[str, List[StateTransition]] = {}
+        if not config:
+            return mapping
+        for transition in config.transitions:
+            mapping.setdefault(transition.source, []).append(transition)
+        return mapping
 
 
 class BackendError(Exception):
@@ -4333,6 +4950,9 @@ class MainWindow(QMainWindow):
         self._channel_commands: Dict[str, Dict[str, float]] = {}
         self._sequencer_configs: Dict[str, ChannelConfig] = {}
         self._sequence_runners: Dict[str, SequenceRunner] = {}
+        self._state_machine_configs: Dict[str, StateMachineConfig] = {}
+        self._active_state_machine: Optional[str] = None
+        self._state_machine_runner = StateMachineRunner(self)
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -4354,8 +4974,19 @@ class MainWindow(QMainWindow):
         self._suspend_plot_assignment = False
         self._hardware_apply_required = False
         self._measurement_cursors_enabled = False
+        self._updating_state_machine_ui = False
         self.channels_dock: Optional[QDockWidget] = None
         self.signals_dock: Optional[QDockWidget] = None
+        self.state_machine_dock: Optional[QDockWidget] = None
+        self.state_machine_combo: Optional[QComboBox] = None
+        self.state_machine_graph: Optional[StateMachineGraphView] = None
+        self.state_machine_start_button: Optional[QPushButton] = None
+        self.state_machine_stop_button: Optional[QPushButton] = None
+        self.state_machine_status_label: Optional[QLabel] = None
+        self.state_list: Optional[QListWidget] = None
+        self.state_name_edit: Optional[QLineEdit] = None
+        self.state_initial_combo: Optional[QComboBox] = None
+        self.transition_list: Optional[QListWidget] = None
         self._saved_dock_state: Optional[QByteArray] = None
         self._channel_grid_cols = 2
         self._channel_columns: List[QVBoxLayout] = []
@@ -4381,6 +5012,9 @@ class MainWindow(QMainWindow):
         self._startup_status_messages: List[str] = []
         self._startup_is_valid = False
         self._active_setup_path: Optional[str] = None
+        self._state_machine_runner.state_changed.connect(self._on_state_machine_state_changed)
+        self._state_machine_runner.stopped.connect(self._on_state_machine_runner_stopped)
+        self._state_machine_runner.error_occurred.connect(self._on_state_machine_error)
         self._restore_settings()
         self._build_ui()
         self._update_yaml_status(None)
@@ -4426,6 +5060,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_stack)
         self._build_channels_tab()
         self._build_signals_tab()
+        self._build_state_machine_dock()
         #self._apply_default_dock_layout()
         #if not self._restore_dock_layout():
         #    self._apply_default_dock_layout()
@@ -4885,6 +5520,484 @@ class MainWindow(QMainWindow):
         dock.setWidget(widget)
         self.signals_dock = dock
         self._apply_log_visibility()
+
+    def _build_state_machine_dock(self) -> None:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+        top_controls = QHBoxLayout()
+        top_controls.addWidget(QLabel("State Machine:"))
+        self.state_machine_combo = QComboBox()
+        self.state_machine_combo.currentIndexChanged.connect(self._on_state_machine_selected)
+        top_controls.addWidget(self.state_machine_combo, 1)
+        new_btn = QToolButton()
+        new_btn.setText("New")
+        new_btn.setAutoRaise(True)
+        new_btn.clicked.connect(self._on_state_machine_add)
+        duplicate_btn = QToolButton()
+        duplicate_btn.setText("Duplicate")
+        duplicate_btn.setAutoRaise(True)
+        duplicate_btn.clicked.connect(self._on_state_machine_duplicate)
+        rename_btn = QToolButton()
+        rename_btn.setText("Rename")
+        rename_btn.setAutoRaise(True)
+        rename_btn.clicked.connect(self._on_state_machine_rename)
+        remove_btn = QToolButton()
+        remove_btn.setText("Delete")
+        remove_btn.setAutoRaise(True)
+        remove_btn.clicked.connect(self._on_state_machine_remove)
+        for button in (new_btn, duplicate_btn, rename_btn, remove_btn):
+            top_controls.addWidget(button)
+        layout.addLayout(top_controls)
+        runner_controls = QHBoxLayout()
+        self.state_machine_start_button = QPushButton("Start")
+        self.state_machine_start_button.clicked.connect(self._on_state_machine_start)
+        self.state_machine_stop_button = QPushButton("Stop")
+        self.state_machine_stop_button.clicked.connect(self._on_state_machine_stop)
+        self.state_machine_stop_button.setEnabled(False)
+        runner_controls.addWidget(self.state_machine_start_button)
+        runner_controls.addWidget(self.state_machine_stop_button)
+        runner_controls.addStretch(1)
+        self.state_machine_status_label = QLabel("Idle")
+        self.state_machine_status_label.setStyleSheet("color: #475569;")
+        runner_controls.addWidget(self.state_machine_status_label)
+        layout.addLayout(runner_controls)
+        splitter = QSplitter(Qt.Horizontal)
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+        states_group = QGroupBox("States")
+        states_layout = QVBoxLayout(states_group)
+        self.state_list = QListWidget()
+        self.state_list.currentRowChanged.connect(self._on_state_selected)
+        states_layout.addWidget(self.state_list)
+        state_buttons = QHBoxLayout()
+        add_state_btn = QToolButton()
+        add_state_btn.setText("Add")
+        add_state_btn.setAutoRaise(True)
+        add_state_btn.clicked.connect(self._on_state_add)
+        remove_state_btn = QToolButton()
+        remove_state_btn.setText("Remove")
+        remove_state_btn.setAutoRaise(True)
+        remove_state_btn.clicked.connect(self._on_state_remove)
+        state_buttons.addWidget(add_state_btn)
+        state_buttons.addWidget(remove_state_btn)
+        state_buttons.addStretch(1)
+        states_layout.addLayout(state_buttons)
+        state_form = QFormLayout()
+        state_form.setContentsMargins(0, 0, 0, 0)
+        state_form.setSpacing(4)
+        self.state_name_edit = QLineEdit()
+        self.state_name_edit.setPlaceholderText("Rename selected state")
+        self.state_name_edit.editingFinished.connect(self._on_state_name_edited)
+        state_form.addRow("Name", self.state_name_edit)
+        self.state_initial_combo = QComboBox()
+        self.state_initial_combo.currentIndexChanged.connect(self._on_initial_state_changed)
+        state_form.addRow("Initial", self.state_initial_combo)
+        states_layout.addLayout(state_form)
+        left_layout.addWidget(states_group)
+        transitions_group = QGroupBox("Transitions")
+        transitions_layout = QVBoxLayout(transitions_group)
+        self.transition_list = QListWidget()
+        self.transition_list.currentRowChanged.connect(self._on_transition_selected)
+        transitions_layout.addWidget(self.transition_list)
+        transition_buttons = QHBoxLayout()
+        add_transition_btn = QToolButton()
+        add_transition_btn.setText("Add")
+        add_transition_btn.setAutoRaise(True)
+        add_transition_btn.clicked.connect(self._on_transition_add)
+        edit_transition_btn = QToolButton()
+        edit_transition_btn.setText("Edit")
+        edit_transition_btn.setAutoRaise(True)
+        edit_transition_btn.clicked.connect(self._on_transition_edit)
+        remove_transition_btn = QToolButton()
+        remove_transition_btn.setText("Remove")
+        remove_transition_btn.setAutoRaise(True)
+        remove_transition_btn.clicked.connect(self._on_transition_remove)
+        transition_buttons.addWidget(add_transition_btn)
+        transition_buttons.addWidget(edit_transition_btn)
+        transition_buttons.addWidget(remove_transition_btn)
+        transition_buttons.addStretch(1)
+        transitions_layout.addLayout(transition_buttons)
+        left_layout.addWidget(transitions_group, 1)
+        splitter.addWidget(left_widget)
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+        self.state_machine_graph = StateMachineGraphView()
+        right_layout.addWidget(self.state_machine_graph, 1)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
+        dock = QDockWidget("State Machine", self)
+        dock.setObjectName("Dock_StateMachine")
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        dock.setWidget(widget)
+        self.state_machine_dock = dock
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self._refresh_state_machine_combo()
+        self._set_state_machine_buttons()
+
+    def _current_state_machine(self) -> Optional[StateMachineConfig]:
+        if not self._active_state_machine:
+            return None
+        return self._state_machine_configs.get(self._active_state_machine)
+
+    def _refresh_state_machine_combo(self) -> None:
+        if not self.state_machine_combo:
+            return
+        self._updating_state_machine_ui = True
+        try:
+            current_name = self._active_state_machine or ""
+            self.state_machine_combo.clear()
+            for name in sorted(self._state_machine_configs.keys()):
+                self.state_machine_combo.addItem(name)
+            if current_name and current_name in self._state_machine_configs:
+                index = self.state_machine_combo.findText(current_name)
+                if index >= 0:
+                    self.state_machine_combo.setCurrentIndex(index)
+            elif self.state_machine_combo.count():
+                self.state_machine_combo.setCurrentIndex(0)
+        finally:
+            self._updating_state_machine_ui = False
+        self._populate_state_machine_editor()
+        self._set_state_machine_buttons()
+        if not self._state_machine_runner.is_running:
+            self._update_state_machine_status("Idle")
+
+    def _populate_state_machine_editor(self) -> None:
+        config = self._current_state_machine()
+        if not self.state_list or not self.state_initial_combo or not self.transition_list:
+            return
+        self._updating_state_machine_ui = True
+        try:
+            self.state_list.clear()
+            self.transition_list.clear()
+            self.state_initial_combo.clear()
+            if self.state_name_edit:
+                self.state_name_edit.clear()
+            if not config:
+                return
+            for state in config.states:
+                self.state_list.addItem(state.name or "<unnamed>")
+            if self.state_initial_combo is not None:
+                self.state_initial_combo.addItems(config.state_names)
+                if config.initial_state:
+                    idx = self.state_initial_combo.findText(config.initial_state)
+                    if idx >= 0:
+                        self.state_initial_combo.setCurrentIndex(idx)
+            self._populate_transition_list(config)
+        finally:
+            self._updating_state_machine_ui = False
+        self._update_state_machine_graph()
+
+    def _populate_transition_list(self, config: StateMachineConfig) -> None:
+        if not self.transition_list:
+            return
+        self.transition_list.clear()
+        for transition in config.transitions:
+            title = transition.name.strip() if transition.name.strip() else f"{transition.source} → {transition.target}"
+            description = f"{title}: {transition.source} → {transition.target}"
+            self.transition_list.addItem(description)
+
+    def _update_state_machine_graph(self) -> None:
+        if not self.state_machine_graph:
+            return
+        config = self._current_state_machine()
+        active = self._state_machine_runner.current_state if self._state_machine_runner.is_running else None
+        self.state_machine_graph.update_graph(config, active)
+
+    def _set_state_machine_buttons(self) -> None:
+        running = self._state_machine_runner.is_running
+        config = self._current_state_machine()
+        if self.state_machine_start_button:
+            has_config = config is not None and bool(config.states)
+            self.state_machine_start_button.setEnabled(not running and has_config and self.backend is not None)
+        if self.state_machine_stop_button:
+            self.state_machine_stop_button.setEnabled(running)
+
+    def _on_state_machine_add(self) -> None:
+        base = "State Machine"
+        counter = 1
+        name = base
+        while name in self._state_machine_configs:
+            counter += 1
+            name = f"{base} {counter}"
+        state_name = "State 1"
+        config = StateMachineConfig(name=name, states=[StateDefinition(name=state_name)], initial_state=state_name)
+        self._state_machine_configs[name] = config
+        self._active_state_machine = name
+        self._state_machine_runner.set_config(config)
+        self._state_machine_runner.stop()
+        self._refresh_state_machine_combo()
+        self._state_machine_changed()
+
+    def _on_state_machine_duplicate(self) -> None:
+        config = self._current_state_machine()
+        if not config:
+            return
+        copy = config.clone()
+        base = f"{config.name} Copy"
+        name = base
+        suffix = 2
+        while name in self._state_machine_configs:
+            name = f"{base} {suffix}"
+            suffix += 1
+        copy.name = name
+        self._state_machine_configs[name] = copy
+        self._active_state_machine = name
+        self._state_machine_runner.set_config(copy)
+        self._state_machine_runner.stop()
+        self._refresh_state_machine_combo()
+        self._state_machine_changed()
+
+    def _on_state_machine_rename(self) -> None:
+        config = self._current_state_machine()
+        if not config:
+            return
+        new_name, ok = QInputDialog.getText(self, "Rename state machine", "New name", text=config.name)
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == config.name:
+            return
+        if new_name in self._state_machine_configs and new_name != config.name:
+            QMessageBox.warning(self, "Duplicate name", "A state machine with this name already exists.")
+            return
+        self._state_machine_configs.pop(config.name, None)
+        config.name = new_name
+        self._state_machine_configs[new_name] = config
+        self._active_state_machine = new_name
+        self._refresh_state_machine_combo()
+        self._state_machine_changed()
+
+    def _on_state_machine_remove(self) -> None:
+        config = self._current_state_machine()
+        if not config:
+            return
+        if QMessageBox.question(
+            self,
+            "Remove state machine",
+            f"Delete '{config.name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        self._state_machine_runner.stop()
+        self._state_machine_configs.pop(config.name, None)
+        self._active_state_machine = next(iter(self._state_machine_configs), None)
+        self._refresh_state_machine_combo()
+        self._state_machine_changed()
+
+    def _on_state_machine_selected(self, index: int) -> None:
+        if self._updating_state_machine_ui or not self.state_machine_combo:
+            return
+        name = self.state_machine_combo.itemText(index) if index >= 0 else ""
+        self._active_state_machine = name if name in self._state_machine_configs else None
+        config = self._current_state_machine()
+        self._state_machine_runner.set_config(config)
+        self._state_machine_runner.stop()
+        self._populate_state_machine_editor()
+        self._set_state_machine_buttons()
+        self._update_state_machine_status("Idle")
+
+    def _on_state_add(self) -> None:
+        config = self._current_state_machine()
+        if not config:
+            return
+        base = "State"
+        counter = len(config.states) + 1
+        name = f"{base} {counter}"
+        existing = set(config.state_names)
+        while name in existing:
+            counter += 1
+            name = f"{base} {counter}"
+        config.states.append(StateDefinition(name=name))
+        config.ensure_initial_state()
+        self._populate_state_machine_editor()
+        if self.state_list:
+            self.state_list.setCurrentRow(len(config.states) - 1)
+        self._state_machine_changed()
+
+    def _on_state_remove(self) -> None:
+        config = self._current_state_machine()
+        if not config or not self.state_list:
+            return
+        index = self.state_list.currentRow()
+        if index < 0 or index >= len(config.states):
+            return
+        removed = config.states.pop(index).name
+        config.transitions = [
+            transition
+            for transition in config.transitions
+            if transition.source != removed and transition.target != removed
+        ]
+        config.ensure_initial_state()
+        self._populate_state_machine_editor()
+        self._state_machine_changed()
+
+    def _on_state_selected(self, index: int) -> None:
+        if self._updating_state_machine_ui or not self.state_name_edit:
+            return
+        config = self._current_state_machine()
+        if not config or index < 0 or index >= len(config.states):
+            self._updating_state_machine_ui = True
+            try:
+                self.state_name_edit.clear()
+            finally:
+                self._updating_state_machine_ui = False
+            return
+        self._updating_state_machine_ui = True
+        try:
+            self.state_name_edit.setText(config.states[index].name)
+        finally:
+            self._updating_state_machine_ui = False
+
+    def _on_state_name_edited(self) -> None:
+        if self._updating_state_machine_ui or not self.state_list or not self.state_name_edit:
+            return
+        config = self._current_state_machine()
+        if not config:
+            return
+        index = self.state_list.currentRow()
+        if index < 0 or index >= len(config.states):
+            return
+        new_name = self.state_name_edit.text().strip()
+        old_name = config.states[index].name
+        if not new_name:
+            self._updating_state_machine_ui = True
+            try:
+                self.state_name_edit.setText(old_name)
+            finally:
+                self._updating_state_machine_ui = False
+            return
+        if new_name != old_name and new_name in config.state_names:
+            QMessageBox.warning(self, "Duplicate state", "Another state already uses this name.")
+            self._updating_state_machine_ui = True
+            try:
+                self.state_name_edit.setText(old_name)
+            finally:
+                self._updating_state_machine_ui = False
+            return
+        if new_name == old_name:
+            return
+        config.states[index].name = new_name
+        for transition in config.transitions:
+            if transition.source == old_name:
+                transition.source = new_name
+            if transition.target == old_name:
+                transition.target = new_name
+        if config.initial_state == old_name:
+            config.initial_state = new_name
+        self._populate_state_machine_editor()
+        self._state_machine_changed()
+
+    def _on_initial_state_changed(self, index: int) -> None:
+        if self._updating_state_machine_ui or not self.state_initial_combo:
+            return
+        config = self._current_state_machine()
+        if not config:
+            return
+        name = self.state_initial_combo.itemText(index) if index >= 0 else ""
+        if name and name in config.state_names:
+            config.initial_state = name
+            self._state_machine_changed()
+
+    def _on_transition_selected(self, index: int) -> None:
+        _ = index
+
+    def _on_transition_add(self) -> None:
+        config = self._current_state_machine()
+        if not config:
+            return
+        dialog = StateTransitionDialog(config.state_names, parent=self)
+        if dialog.exec_() == QDialog.Accepted and dialog.result_transition:
+            config.transitions.append(dialog.result_transition)
+            self._populate_state_machine_editor()
+            if self.transition_list:
+                self.transition_list.setCurrentRow(len(config.transitions) - 1)
+            self._state_machine_changed()
+
+    def _on_transition_edit(self) -> None:
+        config = self._current_state_machine()
+        if not config or not self.transition_list:
+            return
+        index = self.transition_list.currentRow()
+        if index < 0 or index >= len(config.transitions):
+            return
+        transition = config.transitions[index]
+        dialog = StateTransitionDialog(config.state_names, parent=self, existing=transition)
+        if dialog.exec_() == QDialog.Accepted and dialog.result_transition:
+            config.transitions[index] = dialog.result_transition
+            self._populate_state_machine_editor()
+            self.transition_list.setCurrentRow(index)
+            self._state_machine_changed()
+
+    def _on_transition_remove(self) -> None:
+        config = self._current_state_machine()
+        if not config or not self.transition_list:
+            return
+        index = self.transition_list.currentRow()
+        if index < 0 or index >= len(config.transitions):
+            return
+        config.transitions.pop(index)
+        self._populate_state_machine_editor()
+        self._state_machine_changed()
+
+    def _state_machine_changed(self) -> None:
+        self._state_machine_runner.stop()
+        config = self._current_state_machine()
+        self._state_machine_runner.set_config(config)
+        self._set_state_machine_buttons()
+        self._update_state_machine_graph()
+        self._set_hardware_pending(True, "State machine updated. Save to persist changes.")
+        if not self._state_machine_runner.is_running:
+            self._update_state_machine_status("Idle")
+
+    def _on_state_machine_start(self) -> None:
+        config = self._current_state_machine()
+        if not config:
+            return
+        if not config.states:
+            QMessageBox.warning(self, "State machine", "Add at least one state before starting the runner.")
+            return
+        self._state_machine_runner.set_backend(self.backend)
+        self._state_machine_runner.set_config(config)
+        if not self.backend:
+            QMessageBox.warning(self, "State machine", "Connect a backend before starting the state machine.")
+            return
+        if not self._state_machine_runner.start():
+            QMessageBox.warning(self, "State machine", "Unable to start. Ensure initial state is defined.")
+            return
+        self._set_state_machine_buttons()
+        self._update_state_machine_status("Running")
+
+    def _on_state_machine_stop(self) -> None:
+        self._state_machine_runner.stop()
+
+    def _on_state_machine_state_changed(self, state: str) -> None:
+        self._set_state_machine_buttons()
+        self._update_state_machine_status(f"Active: {state}")
+        self._update_state_machine_graph()
+        self._populate_state_machine_editor()
+
+    def _on_state_machine_runner_stopped(self) -> None:
+        self._set_state_machine_buttons()
+        self._update_state_machine_status("Idle")
+        self._update_state_machine_graph()
+
+    def _on_state_machine_error(self, message: str) -> None:
+        self._show_error(message)
+        self._on_state_machine_runner_stopped()
+
+    def _update_state_machine_status(self, text: str) -> None:
+        if self.state_machine_status_label:
+            self.state_machine_status_label.setText(text)
 
     def _apply_default_dock_layout(self) -> None:
         if not self.channels_dock or not self.signals_dock:
@@ -5768,6 +6881,7 @@ class MainWindow(QMainWindow):
         backend_class = self.backends[name]
         self.backend = backend_class() if backend_class is not RealBackend else backend_class()
         self.backend_name = name
+        self._state_machine_runner.set_backend(self.backend)
         self._update_dummy_tab_visibility()
         self._apply_backend_configuration()
         if isinstance(self.backend, RealBackend):
@@ -5783,6 +6897,7 @@ class MainWindow(QMainWindow):
         self._update_channel_card_modes()
         self.signal_browser.set_allow_simulation(isinstance(self.backend, DummyBackend))
         self._update_apply_action_state()
+        self._set_state_machine_buttons()
 
     def _update_apply_action_state(self) -> None:
         if hasattr(self, "apply_hardware_action"):
@@ -5844,6 +6959,10 @@ class MainWindow(QMainWindow):
                 self.backend.stop()
             except BackendError:
                 pass
+        self.backend = None
+        self._state_machine_runner.stop()
+        self._state_machine_runner.set_backend(None)
+        self._set_state_machine_buttons()
         self._update_status_indicator(False)
 
     def _on_mode_changed(self, name: str) -> None:
@@ -6378,6 +7497,10 @@ class MainWindow(QMainWindow):
             "status": status_map,
             "plot_visibility": dict(self._channel_plot_settings),
         }
+        state_payload = {
+            "active": self._active_state_machine,
+            "definitions": [config.to_dict() for config in self._state_machine_configs.values()],
+        }
         payload = {
             "version": 1,
             "backend": {"type": backend_type, "device_id": device_id or None},
@@ -6400,6 +7523,7 @@ class MainWindow(QMainWindow):
                 "delay_ms": int(self._startup_delay_ms),
                 "only_on_change": bool(self._startup_only_on_change),
             },
+            "state_machines": state_payload,
         }
         if dummy_profiles:
             payload["dummy"] = {"sim": dummy_profiles}
@@ -6507,7 +7631,7 @@ class MainWindow(QMainWindow):
         if version != 1:
             self._show_error("Unsupported setup version.")
             return
-        target_scopes = scopes or {"backend", "signals", "channels", "sequencer", "dummy", "startup"}
+        target_scopes = scopes or {"backend", "signals", "channels", "sequencer", "dummy", "startup", "state_machines"}
         if "backend" in target_scopes:
             self._apply_backend_section(payload.get("backend", {}))
         if "channels" in target_scopes:
@@ -6520,6 +7644,8 @@ class MainWindow(QMainWindow):
             self._apply_dummy_setup(payload.get("dummy", {}))
         if "startup" in target_scopes:
             self._apply_startup_setup(payload.get("startup", {}))
+        if "state_machines" in target_scopes:
+            self._apply_state_machine_setup(payload.get("state_machines", {}))
         self._set_hardware_pending(True, "Setup loaded. Apply to hardware when ready.")
         self._save_settings()
 
@@ -6768,6 +7894,27 @@ class MainWindow(QMainWindow):
         self._refresh_startup_tree()
         self._validate_startup_config()
 
+    def _apply_state_machine_setup(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            data = {}
+        definitions = data.get("definitions") if isinstance(data, dict) else []
+        configs: Dict[str, StateMachineConfig] = {}
+        if isinstance(definitions, list):
+            for entry in definitions:
+                if isinstance(entry, dict):
+                    config = StateMachineConfig.from_dict(entry)
+                    configs[config.name] = config
+        self._state_machine_configs = configs
+        active_value = data.get("active") if isinstance(data, dict) else None
+        if isinstance(active_value, str) and active_value in configs:
+            self._active_state_machine = active_value
+        else:
+            self._active_state_machine = next(iter(configs), None)
+        self._refresh_state_machine_combo()
+        self._state_machine_runner.set_config(self._current_state_machine())
+        self._state_machine_runner.stop()
+        self._set_state_machine_buttons()
+
     def _save_as_default(self) -> None:
         ensure_directories()
         payload = self._collect_setup_payload()
@@ -6975,6 +8122,8 @@ class MainWindow(QMainWindow):
             self._show_error(str(exc))
             return
         self._update_sequencers()
+        if self._state_machine_runner.is_running:
+            self._state_machine_runner.step()
         self._refresh_values(dt)
         self._handle_logging(dt)
 
