@@ -1872,6 +1872,7 @@ class RealBackend(QObject, BackendBase):
         self._channels: Dict[str, ChannelProfile] = {}
         self._status_handlers: Dict[int, Tuple[str, ChannelProfile]] = {}
         self._write_frame_ids: Set[int] = set()
+        self._status_signal_names: Set[str] = set()
         
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
@@ -1926,6 +1927,7 @@ class RealBackend(QObject, BackendBase):
         self._signal_to_message = {}
         self._frame_to_message = {}
         self._write_frame_ids = set()
+        self._status_signal_names = set()
         if self._db is not None:
             for message in getattr(self._db, "messages", []):
                 for signal in message.signals:
@@ -1939,6 +1941,7 @@ class RealBackend(QObject, BackendBase):
         self._channels = profiles
         self._status_handlers = {}
         self._write_frame_ids = set()
+        self._status_signal_names = set()
         if not self._db:
             return
         for profile in profiles.values():
@@ -1947,11 +1950,16 @@ class RealBackend(QObject, BackendBase):
                 write_message = self._db.get_message_by_name(write_message_name)
                 if write_message is not None:
                     self._write_frame_ids.add(write_message.frame_id)
+            for signal_name in profile.status.fields.values():
+                if signal_name:
+                    self._status_signal_names.add(signal_name)
             message_name = profile.status.message
             message = self._db.get_message_by_name(message_name) if message_name else None
             if message is None:
                 continue
             self._status_handlers[message.frame_id] = (message_name, profile)
+            for signal in message.signals:
+                self._status_signal_names.add(signal.name)
 
     def apply_channel_command(self, channel: str, command: Dict[str, float]) -> None:
         profile = self._channels.get(channel)
@@ -2002,11 +2010,10 @@ class RealBackend(QObject, BackendBase):
             )
             self._bus.send(can_message)
 
-            # Cache sinnvollerweise mit complete aktualisieren
+            # Update the cache only with the command signals we actually transmitted
             with self._lock:
-                valid_names = {s.name for s in message.signals}
-                for name, value in complete.items():
-                    if name in valid_names:
+                for name, value in payload.items():
+                    if name not in self._status_signal_names:
                         self._signal_cache[name] = float(value)
 
         except (ValueError, can.CanError) as exc:
@@ -2069,11 +2076,10 @@ class RealBackend(QObject, BackendBase):
                     )
                     self._bus.send(message_obj)
 
-                    # --- FIX: Cache mit complete aktualisieren ---
+                    # --- FIX: Only update the cache with explicitly transmitted signals ---
                     with self._lock:
-                        valid_names = {s.name for s in dbc_message.signals}
-                        for name, value in complete.items():
-                            if name in valid_names:
+                        for name, value in prepared.items():
+                            if name not in self._status_signal_names:
                                 self._signal_cache[name] = float(value)
                     break
                 except (ValueError, can.CanError) as exc:
