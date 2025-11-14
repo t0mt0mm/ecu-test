@@ -1319,6 +1319,78 @@ class StartupStepDialog(QDialog):
             )
         super().accept()
 
+class MessageParameterWidget(QWidget):
+    textChanged = pyqtSignal(str)
+
+    def __init__(self, signals: Iterable[str] = (), text: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.signal_combo = QComboBox(self)
+        self.signal_combo.setEditable(False)
+        self.signal_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.signal_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.signal_combo.addItem("Select signal…", "")
+        self.signal_combo.currentIndexChanged.connect(self._on_signal_selected)
+        self.line_edit = QLineEdit(self)
+        self.line_edit.setPlaceholderText("signal=value, comma separated")
+        self.line_edit.textChanged.connect(self.textChanged)
+        layout.addWidget(self.signal_combo)
+        layout.addWidget(self.line_edit, 1)
+        self.setFocusProxy(self.line_edit)
+        self._signals: List[str] = []
+        self.set_signals(signals)
+        self.set_text(text)
+
+    def set_signals(self, signals: Iterable[str]) -> None:
+        normalized = sorted({str(name).strip() for name in signals if str(name).strip()})
+        if normalized == self._signals:
+            return
+        self._signals = normalized
+        current = self.signal_combo.currentData() if self.signal_combo.count() else ""
+        self.signal_combo.blockSignals(True)
+        self.signal_combo.clear()
+        self.signal_combo.addItem("Select signal…", "")
+        for name in self._signals:
+            self.signal_combo.addItem(name, name)
+        if isinstance(current, str) and current in self._signals:
+            index = self.signal_combo.findData(current)
+            if index >= 0:
+                self.signal_combo.setCurrentIndex(index)
+            else:
+                self.signal_combo.setCurrentIndex(0)
+        else:
+            self.signal_combo.setCurrentIndex(0)
+        self.signal_combo.blockSignals(False)
+
+    def set_text(self, text: str) -> None:
+        self.line_edit.blockSignals(True)
+        self.line_edit.setText(text)
+        self.line_edit.blockSignals(False)
+
+    def text(self) -> str:
+        return self.line_edit.text().strip()
+
+    def setToolTip(self, text: str) -> None:  # type: ignore[override]
+        super().setToolTip(text)
+        self.line_edit.setToolTip(text)
+        self.signal_combo.setToolTip("Insert signal name into the parameter list")
+
+    def _on_signal_selected(self, index: int) -> None:
+        name = self.signal_combo.itemData(index)
+        if not isinstance(name, str) or not name:
+            return
+        existing = self.text()
+        snippet = f"{name}="
+        if snippet not in existing:
+            updated = f"{existing}, {snippet}" if existing else snippet
+            self.set_text(updated)
+        self.signal_combo.blockSignals(True)
+        self.signal_combo.setCurrentIndex(0)
+        self.signal_combo.blockSignals(False)
+
+
 class StateTransitionDialog(QDialog):
     def __init__(
         self,
@@ -1326,6 +1398,7 @@ class StateTransitionDialog(QDialog):
         *,
         signal_names: Iterable[str] = (),
         message_names: Iterable[str] = (),
+        message_signals: Optional[Dict[str, Iterable[str]]] = None,
         channel_names: Iterable[str] = (),
         parent: Optional[QWidget] = None,
         existing: Optional[StateTransition] = None,
@@ -1335,6 +1408,14 @@ class StateTransitionDialog(QDialog):
         self._states = list(states)
         self._signal_names = sorted({str(name).strip() for name in signal_names if str(name).strip()})
         self._message_names = sorted({str(name).strip() for name in message_names if str(name).strip()})
+        self._message_signals: Dict[str, List[str]] = {}
+        if message_signals:
+            for key, values in message_signals.items():
+                message = str(key).strip()
+                if not message:
+                    continue
+                normalized = sorted({str(value).strip() for value in values if str(value).strip()})
+                self._message_signals[message] = normalized
         self._channel_names = sorted({str(name).strip() for name in channel_names if str(name).strip()})
         self.result_transition: Optional[StateTransition] = None
         layout = QVBoxLayout(self)
@@ -1451,16 +1532,75 @@ class StateTransitionDialog(QDialog):
         combo.setCurrentText(action_type)
         combo.currentTextChanged.connect(lambda value, widget=combo: self._on_action_type_combo_changed(widget, value))
         self.action_table.setCellWidget(row, 0, combo)
-        self.action_table.setCellWidget(row, 1, self._create_target_editor(action_type, target))
-        item = QTableWidgetItem(params)
-        item.setToolTip(self._params_tooltip(action_type))
-        self.action_table.setItem(row, 2, item)
+        target_editor = self._create_target_editor(action_type, target)
+        self.action_table.setCellWidget(row, 1, target_editor)
+        current_target = ""
+        if isinstance(target_editor, QComboBox):
+            current_target = target_editor.currentText().strip()
+        self._set_params_editor(row, action_type, current_target, params)
         self.action_table.setCellWidget(row, 3, self._create_sequence_editor(action_type, sequence_mode))
 
     def _remove_action_row(self) -> None:
         row = self.action_table.currentRow()
         if row >= 0:
             self.action_table.removeRow(row)
+
+    def _set_params_editor(self, row: int, action_type: str, target: str, params: str) -> None:
+        if action_type == "send_message":
+            existing_widget = self.action_table.cellWidget(row, 2)
+            if isinstance(existing_widget, MessageParameterWidget):
+                params_text = existing_widget.text()
+                self.action_table.removeCellWidget(row, 2)
+                existing_widget.deleteLater()
+            else:
+                item = self.action_table.takeItem(row, 2)
+                params_text = params if params else (item.text() if item else "")
+                if item is not None:
+                    del item
+            widget = MessageParameterWidget(self._message_signals.get(target, []), params_text)
+            widget.setToolTip(self._params_tooltip(action_type))
+            self.action_table.setCellWidget(row, 2, widget)
+            self.action_table.resizeRowToContents(row)
+        else:
+            existing_widget = self.action_table.cellWidget(row, 2)
+            if isinstance(existing_widget, MessageParameterWidget):
+                params_text = existing_widget.text()
+                self.action_table.removeCellWidget(row, 2)
+                existing_widget.deleteLater()
+            else:
+                params_text = params
+            item = QTableWidgetItem(params_text)
+            item.setToolTip(self._params_tooltip(action_type))
+            self.action_table.setItem(row, 2, item)
+            self.action_table.resizeRowToContents(row)
+
+    def _extract_params_text(self, row: int) -> str:
+        widget = self.action_table.cellWidget(row, 2)
+        if isinstance(widget, MessageParameterWidget):
+            return widget.text()
+        item = self.action_table.item(row, 2)
+        if item is not None:
+            return item.text().strip()
+        return ""
+
+    def _extract_sequence_mode(self, row: int) -> str:
+        sequence_widget = self.action_table.cellWidget(row, 3)
+        if isinstance(sequence_widget, QComboBox):
+            data = sequence_widget.currentData()
+            if isinstance(data, str):
+                return data
+        return "none"
+
+    def _on_action_target_changed(self, combo_widget: QComboBox, value: str) -> None:
+        row = self._row_for_widget(combo_widget)
+        if row < 0:
+            return
+        type_widget = self.action_table.cellWidget(row, 0)
+        if not isinstance(type_widget, QComboBox) or type_widget.currentText() != "send_message":
+            return
+        params_widget = self.action_table.cellWidget(row, 2)
+        if isinstance(params_widget, MessageParameterWidget):
+            params_widget.set_signals(self._message_signals.get(value.strip(), []))
 
     def accept(self) -> None:  # type: ignore[override]
         if not self._states:
@@ -1502,9 +1642,8 @@ class StateTransitionDialog(QDialog):
         for row in range(self.action_table.rowCount()):
             type_widget = self.action_table.cellWidget(row, 0)
             target_widget = self.action_table.cellWidget(row, 1)
-            params_item = self.action_table.item(row, 2)
             sequence_widget = self.action_table.cellWidget(row, 3)
-            if not isinstance(type_widget, QComboBox) or params_item is None:
+            if not isinstance(type_widget, QComboBox):
                 continue
             action_type = type_widget.currentText()
             target_value = ""
@@ -1518,7 +1657,7 @@ class StateTransitionDialog(QDialog):
                 fallback_item = self.action_table.item(row, 1)
                 if fallback_item is not None:
                     target_value = fallback_item.text().strip()
-            params_text = params_item.text().strip()
+            params_text = self._extract_params_text(row)
             try:
                 pairs = self._parse_pairs(params_text)
             except ValueError as exc:
@@ -1609,6 +1748,7 @@ class StateTransitionDialog(QDialog):
         completer = QCompleter(options)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         combo.setCompleter(completer)
+        combo.currentTextChanged.connect(lambda value, widget=combo: self._on_action_target_changed(widget, value))
         return combo
 
     def _create_sequence_editor(self, action_type: str, current: str) -> QWidget:
@@ -1636,22 +1776,16 @@ class StateTransitionDialog(QDialog):
         row = self._row_for_widget(combo_widget)
         if row < 0:
             return
+        target_widget = self.action_table.cellWidget(row, 1)
         current_target = ""
-        existing = self.action_table.cellWidget(row, 1)
-        if isinstance(existing, QComboBox):
-            current_target = existing.currentText().strip()
+        if isinstance(target_widget, QComboBox):
+            current_target = target_widget.currentText().strip()
+        params_text = self._extract_params_text(row)
+        sequence_mode = self._extract_sequence_mode(row)
         editor = self._create_target_editor(action_type, current_target)
         self.action_table.setCellWidget(row, 1, editor)
-        params_item = self.action_table.item(row, 2)
-        if params_item is not None:
-            params_item.setToolTip(self._params_tooltip(action_type))
-        existing_sequence = self.action_table.cellWidget(row, 3)
-        current_sequence = "none"
-        if isinstance(existing_sequence, QComboBox):
-            data = existing_sequence.currentData()
-            if isinstance(data, str):
-                current_sequence = data
-        self.action_table.setCellWidget(row, 3, self._create_sequence_editor(action_type, current_sequence))
+        self._set_params_editor(row, action_type, current_target, params_text)
+        self.action_table.setCellWidget(row, 3, self._create_sequence_editor(action_type, sequence_mode))
 
     def _row_for_widget(self, widget: QWidget) -> int:
         for row in range(self.action_table.rowCount()):
@@ -5850,12 +5984,14 @@ class MainWindow(QMainWindow):
         self.state_list = QListWidget()
         self.state_list.setAlternatingRowColors(True)
         self.state_list.currentRowChanged.connect(self._on_state_selected)
+        self.state_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.state_list.setMinimumHeight(160)
         list_style = (
             "QListWidget { border: 1px solid #d8dee9; border-radius: 6px; padding: 4px; }"
             " QListWidget::item { padding: 4px 6px; }"
         )
         self.state_list.setStyleSheet(list_style)
-        states_layout.addWidget(self.state_list)
+        states_layout.addWidget(self.state_list, 1)
         state_buttons = QHBoxLayout()
         add_state_btn = QToolButton()
         add_state_btn.setText("Add")
@@ -5880,14 +6016,17 @@ class MainWindow(QMainWindow):
         self.state_initial_combo.currentIndexChanged.connect(self._on_initial_state_changed)
         state_form.addRow("Initial", self.state_initial_combo)
         states_layout.addLayout(state_form)
+        states_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         left_layout.addWidget(states_group)
         transitions_group = QGroupBox("Transitions")
         transitions_layout = QVBoxLayout(transitions_group)
         self.transition_list = QListWidget()
         self.transition_list.setAlternatingRowColors(True)
         self.transition_list.currentRowChanged.connect(self._on_transition_selected)
+        self.transition_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.transition_list.setMinimumHeight(200)
         self.transition_list.setStyleSheet(list_style)
-        transitions_layout.addWidget(self.transition_list)
+        transitions_layout.addWidget(self.transition_list, 1)
         transition_buttons = QHBoxLayout()
         add_transition_btn = QToolButton()
         add_transition_btn.setText("Add")
@@ -5906,6 +6045,7 @@ class MainWindow(QMainWindow):
         transition_buttons.addWidget(remove_transition_btn)
         transition_buttons.addStretch(1)
         transitions_layout.addLayout(transition_buttons)
+        transitions_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         left_layout.addWidget(transitions_group, 1)
         splitter.addWidget(left_widget)
         right_widget = QWidget()
@@ -5947,6 +6087,15 @@ class MainWindow(QMainWindow):
 
     def _state_machine_channel_names(self) -> List[str]:
         return sorted(self._channel_profiles.keys())
+
+    def _state_machine_message_signals(self) -> Dict[str, List[str]]:
+        mapping: Dict[str, Set[str]] = {}
+        for message, definitions in self._signals_by_message.items():
+            names = mapping.setdefault(message, set())
+            for definition in definitions:
+                if definition.name:
+                    names.add(definition.name)
+        return {message: sorted(names) for message, names in mapping.items()}
 
     def _refresh_state_machine_combo(self) -> None:
         if not self.state_machine_combo:
@@ -6229,6 +6378,7 @@ class MainWindow(QMainWindow):
             config.state_names,
             signal_names=self._state_machine_signal_names(),
             message_names=self._state_machine_message_names(),
+            message_signals=self._state_machine_message_signals(),
             channel_names=self._state_machine_channel_names(),
             parent=self,
         )
@@ -6251,6 +6401,7 @@ class MainWindow(QMainWindow):
             config.state_names,
             signal_names=self._state_machine_signal_names(),
             message_names=self._state_machine_message_names(),
+            message_signals=self._state_machine_message_signals(),
             channel_names=self._state_machine_channel_names(),
             parent=self,
             existing=transition,
