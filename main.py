@@ -136,8 +136,8 @@ QPushButton:pressed { background: #ededee; }
 QPushButton:disabled { color: #9aa0a6; background: #f3f4f6; border-color: #e5e7eb; }
 
 /* Gruppen / Tabs / Docks */
-QGroupBox { margin-top: 12px; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; top: -6px; padding: 0 4px; background: transparent; }
+QGroupBox { margin-top: 14px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; top: 0px; padding: 0 4px; background: transparent; }
 QTabWidget::pane { border: 1px solid #e0e0e0; }
 QTabBar::tab { background: #eef1f5; border: 1px solid #e0e0e0; padding: 6px 10px; margin: 1px; }
 QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
@@ -557,6 +557,7 @@ class StateAction:
     fields: Dict[str, float] = field(default_factory=dict)
     channel: str = ""
     command: Dict[str, float] = field(default_factory=dict)
+    sequence_mode: str = "none"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StateAction":
@@ -565,6 +566,15 @@ class StateAction:
         channel = str(data.get("channel", "")) if action_type == "set_channel" else ""
         fields_raw = data.get("fields") if isinstance(data, dict) else None
         command_raw = data.get("command") if isinstance(data, dict) else None
+        sequence_value = "none"
+        if isinstance(data, dict):
+            raw_sequence = data.get("sequence") or data.get("sequence_mode")
+            if isinstance(raw_sequence, str):
+                normalized = raw_sequence.strip().lower()
+                if normalized in {"start", "stop", "reset", "none"}:
+                    sequence_value = normalized
+            elif isinstance(raw_sequence, bool):
+                sequence_value = "start" if raw_sequence else "none"
         fields: Dict[str, float] = {}
         if isinstance(fields_raw, dict):
             for key, value in fields_raw.items():
@@ -579,7 +589,14 @@ class StateAction:
                     command[str(key)] = float(value)
                 except (TypeError, ValueError):
                     continue
-        return cls(type=action_type, message=message, fields=fields, channel=channel, command=command)
+        return cls(
+            type=action_type,
+            message=message,
+            fields=fields,
+            channel=channel,
+            command=command,
+            sequence_mode=sequence_value,
+        )
 
     def to_dict(self) -> dict:
         payload: Dict[str, Any] = {"type": self.type}
@@ -589,6 +606,8 @@ class StateAction:
         elif self.type == "set_channel":
             payload["channel"] = self.channel
             payload["command"] = {key: float(value) for key, value in self.command.items()}
+            if self.sequence_mode and self.sequence_mode != "none":
+                payload["sequence"] = self.sequence_mode
         else:
             payload["data"] = {}
         return payload
@@ -604,21 +623,57 @@ class StateTransition:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StateTransition":
-        name = str(data.get("name", ""))
-        source = str(data.get("source", ""))
-        target = str(data.get("target", ""))
-        conditions_raw = data.get("conditions") if isinstance(data, dict) else []
-        actions_raw = data.get("actions") if isinstance(data, dict) else []
+        name = str(
+            data.get("name")
+            or data.get("title")
+            or data.get("label")
+            or data.get("id")
+            or ""
+        )
+        source = str(
+            data.get("source")
+            or data.get("from")
+            or data.get("start")
+            or data.get("state")
+            or ""
+        )
+        target = str(
+            data.get("target")
+            or data.get("to")
+            or data.get("end")
+            or data.get("next")
+            or ""
+        )
+        conditions_raw = None
+        actions_raw = None
+        if isinstance(data, dict):
+            conditions_raw = data.get("conditions") or data.get("when") or data.get("condition")
+            actions_raw = data.get("actions") or data.get("do") or data.get("action")
+        if conditions_raw is None:
+            conditions_raw = []
+        if actions_raw is None:
+            actions_raw = []
         conditions: List[StateCondition] = []
         if isinstance(conditions_raw, list):
             for entry in conditions_raw:
                 if isinstance(entry, dict):
                     conditions.append(StateCondition.from_dict(entry))
+        elif isinstance(conditions_raw, dict):
+            for key, value in conditions_raw.items():
+                if isinstance(value, dict):
+                    condition = StateCondition.from_dict({"signal": key, **value})
+                    conditions.append(condition)
         actions: List[StateAction] = []
         if isinstance(actions_raw, list):
             for entry in actions_raw:
                 if isinstance(entry, dict):
                     actions.append(StateAction.from_dict(entry))
+        elif isinstance(actions_raw, dict):
+            for key, value in actions_raw.items():
+                if isinstance(value, dict):
+                    action_payload = dict(value)
+                    action_payload.setdefault("type", key)
+                    actions.append(StateAction.from_dict(action_payload))
         return cls(name=name, source=source, target=target, conditions=conditions, actions=actions)
 
     def to_dict(self) -> dict:
@@ -707,8 +762,29 @@ class StateMachineConfig:
         def _append_state(states: List[StateDefinition], value: Any, fallback_name: Optional[str] = None) -> None:
             name_value = ""
             if isinstance(value, dict):
-                state = StateDefinition.from_dict(value)
-                name_value = state.name
+                candidates = [
+                    value.get("name"),
+                    value.get("title"),
+                    value.get("label"),
+                    value.get("state"),
+                    value.get("id"),
+                ]
+                for candidate in candidates:
+                    if isinstance(candidate, str) and candidate.strip():
+                        name_value = candidate.strip()
+                        break
+                if not name_value and len(value) == 1:
+                    key, nested = next(iter(value.items()))
+                    if isinstance(nested, dict):
+                        nested_name = nested.get("name") or nested.get("title") or nested.get("label")
+                        if isinstance(nested_name, str) and nested_name.strip():
+                            name_value = nested_name.strip()
+                        else:
+                            name_value = str(key)
+                    else:
+                        name_value = str(nested if nested is not None else key)
+                if not name_value and fallback_name:
+                    name_value = str(fallback_name)
             elif isinstance(value, str):
                 name_value = value
             elif value is None and fallback_name:
@@ -1299,11 +1375,13 @@ class StateTransitionDialog(QDialog):
         condition_buttons.addWidget(remove_condition)
         condition_buttons.addStretch(1)
         layout.addLayout(condition_buttons)
-        self.action_table = QTableWidget(0, 3)
-        self.action_table.setHorizontalHeaderLabels(["Type", "Target", "Parameters"])
-        self.action_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.action_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.action_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.action_table = QTableWidget(0, 4)
+        self.action_table.setHorizontalHeaderLabels(["Type", "Target", "Parameters", "Sequence"])
+        header = self.action_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.action_table.verticalHeader().setVisible(False)
         self.action_table.setAlternatingRowColors(True)
         self.action_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1331,10 +1409,10 @@ class StateTransitionDialog(QDialog):
             for action in existing.actions:
                 if action.type == "send_message":
                     params = ", ".join(f"{key}={value}" for key, value in action.fields.items())
-                    self._add_action_row(action.type, action.message, params)
+                    self._add_action_row(action.type, action.message, params, action.sequence_mode)
                 elif action.type == "set_channel":
                     params = ", ".join(f"{key}={value}" for key, value in action.command.items())
-                    self._add_action_row(action.type, action.channel, params)
+                    self._add_action_row(action.type, action.channel, params, action.sequence_mode)
         else:
             self._add_condition_row()
             self._add_action_row()
@@ -1357,7 +1435,13 @@ class StateTransitionDialog(QDialog):
         if row >= 0:
             self.condition_table.removeRow(row)
 
-    def _add_action_row(self, action_type: str = "send_message", target: str = "", params: str = "") -> None:
+    def _add_action_row(
+        self,
+        action_type: str = "send_message",
+        target: str = "",
+        params: str = "",
+        sequence_mode: str = "none",
+    ) -> None:
         row = self.action_table.rowCount()
         self.action_table.insertRow(row)
         combo = QComboBox()
@@ -1371,6 +1455,7 @@ class StateTransitionDialog(QDialog):
         item = QTableWidgetItem(params)
         item.setToolTip(self._params_tooltip(action_type))
         self.action_table.setItem(row, 2, item)
+        self.action_table.setCellWidget(row, 3, self._create_sequence_editor(action_type, sequence_mode))
 
     def _remove_action_row(self) -> None:
         row = self.action_table.currentRow()
@@ -1418,6 +1503,7 @@ class StateTransitionDialog(QDialog):
             type_widget = self.action_table.cellWidget(row, 0)
             target_widget = self.action_table.cellWidget(row, 1)
             params_item = self.action_table.item(row, 2)
+            sequence_widget = self.action_table.cellWidget(row, 3)
             if not isinstance(type_widget, QComboBox) or params_item is None:
                 continue
             action_type = type_widget.currentText()
@@ -1438,6 +1524,11 @@ class StateTransitionDialog(QDialog):
             except ValueError as exc:
                 QMessageBox.warning(self, "Invalid input", str(exc))
                 return
+            sequence_mode = "none"
+            if isinstance(sequence_widget, QComboBox):
+                data = sequence_widget.currentData()
+                if isinstance(data, str) and data in {"start", "stop", "reset", "none"}:
+                    sequence_mode = data
             if action_type == "send_message":
                 if not target_value:
                     QMessageBox.warning(self, "Invalid input", "Message name is required for send_message actions.")
@@ -1447,7 +1538,21 @@ class StateTransitionDialog(QDialog):
                 if not target_value:
                     QMessageBox.warning(self, "Invalid input", "Channel name is required for set_channel actions.")
                     return
-                actions.append(StateAction(type="set_channel", channel=target_value, command=pairs))
+                if not pairs and sequence_mode == "none":
+                    QMessageBox.warning(
+                        self,
+                        "Invalid input",
+                        "Provide channel command parameters or choose a sequence action.",
+                    )
+                    return
+                actions.append(
+                    StateAction(
+                        type="set_channel",
+                        channel=target_value,
+                        command=pairs,
+                        sequence_mode=sequence_mode,
+                    )
+                )
         self.result_transition = StateTransition(name=name, source=source, target=target, conditions=conditions, actions=actions)
         super().accept()
 
@@ -1506,6 +1611,27 @@ class StateTransitionDialog(QDialog):
         combo.setCompleter(completer)
         return combo
 
+    def _create_sequence_editor(self, action_type: str, current: str) -> QWidget:
+        if action_type == "set_channel":
+            combo = QComboBox()
+            options = [
+                ("none", "No sequence"),
+                ("start", "Start sequence"),
+                ("stop", "Stop sequence"),
+                ("reset", "Reset sequence"),
+            ]
+            for value, label in options:
+                combo.addItem(label, value)
+            if current not in {"start", "stop", "reset", "none"}:
+                current = "none"
+            index = combo.findData(current)
+            combo.setCurrentIndex(max(0, index))
+            return combo
+        placeholder = QLabel("—")
+        placeholder.setAlignment(Qt.AlignCenter)
+        placeholder.setEnabled(False)
+        return placeholder
+
     def _on_action_type_combo_changed(self, combo_widget: QComboBox, action_type: str) -> None:
         row = self._row_for_widget(combo_widget)
         if row < 0:
@@ -1519,16 +1645,30 @@ class StateTransitionDialog(QDialog):
         params_item = self.action_table.item(row, 2)
         if params_item is not None:
             params_item.setToolTip(self._params_tooltip(action_type))
+        existing_sequence = self.action_table.cellWidget(row, 3)
+        current_sequence = "none"
+        if isinstance(existing_sequence, QComboBox):
+            data = existing_sequence.currentData()
+            if isinstance(data, str):
+                current_sequence = data
+        self.action_table.setCellWidget(row, 3, self._create_sequence_editor(action_type, current_sequence))
 
     def _row_for_widget(self, widget: QWidget) -> int:
         for row in range(self.action_table.rowCount()):
-            if self.action_table.cellWidget(row, 0) is widget or self.action_table.cellWidget(row, 1) is widget:
+            if (
+                self.action_table.cellWidget(row, 0) is widget
+                or self.action_table.cellWidget(row, 1) is widget
+                or self.action_table.cellWidget(row, 3) is widget
+            ):
                 return row
         return -1
 
     def _params_tooltip(self, action_type: str) -> str:
         if action_type == "set_channel":
-            return "Comma separated key=value pairs, e.g. enabled=1.0, pwm=50"
+            return (
+                "Comma separated key=value pairs, e.g. enabled=1.0, pwm=50"
+                " (leave empty when only using sequences)"
+            )
         return "Comma separated key=value pairs, e.g. signal=1.0"
 
 class SequenceRunner(QObject):
@@ -1833,6 +1973,7 @@ class StateMachineRunner(QObject):
         self._transitions_by_source: Dict[str, List[StateTransition]] = {}
         self._running = False
         self._current_state: Optional[str] = None
+        self._sequence_controller: Optional[Callable[[str, str], None]] = None
 
     @property
     def is_running(self) -> bool:
@@ -1844,6 +1985,9 @@ class StateMachineRunner(QObject):
 
     def set_backend(self, backend: Optional["BackendBase"]) -> None:
         self._backend = backend
+
+    def set_sequence_controller(self, controller: Optional[Callable[[str, str], None]]) -> None:
+        self._sequence_controller = controller
 
     def set_config(self, config: Optional[StateMachineConfig]) -> None:
         self._config = config
@@ -1912,8 +2056,21 @@ class StateMachineRunner(QObject):
                 if action.message and action.fields:
                     self._backend.send_message_by_name(action.message, action.fields)
             elif action.type == "set_channel":
-                if action.channel and action.command:
+                if not action.channel:
+                    continue
+                if action.command:
                     self._backend.apply_channel_command(action.channel, action.command)
+                if (
+                    self._sequence_controller
+                    and action.sequence_mode
+                    and action.sequence_mode != "none"
+                ):
+                    try:
+                        self._sequence_controller(action.channel, action.sequence_mode)
+                    except BackendError:
+                        raise
+                    except Exception as exc:
+                        raise BackendError(str(exc)) from exc
 
     def _build_transition_map(
         self, config: Optional[StateMachineConfig]
@@ -5072,6 +5229,7 @@ class MainWindow(QMainWindow):
         self._state_machine_configs: Dict[str, StateMachineConfig] = {}
         self._active_state_machine: Optional[str] = None
         self._state_machine_runner = StateMachineRunner(self)
+        self._state_machine_runner.set_sequence_controller(self._state_machine_sequence_control)
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -5692,6 +5850,11 @@ class MainWindow(QMainWindow):
         self.state_list = QListWidget()
         self.state_list.setAlternatingRowColors(True)
         self.state_list.currentRowChanged.connect(self._on_state_selected)
+        list_style = (
+            "QListWidget { border: 1px solid #d8dee9; border-radius: 6px; padding: 4px; }"
+            " QListWidget::item { padding: 4px 6px; }"
+        )
+        self.state_list.setStyleSheet(list_style)
         states_layout.addWidget(self.state_list)
         state_buttons = QHBoxLayout()
         add_state_btn = QToolButton()
@@ -5723,6 +5886,7 @@ class MainWindow(QMainWindow):
         self.transition_list = QListWidget()
         self.transition_list.setAlternatingRowColors(True)
         self.transition_list.currentRowChanged.connect(self._on_transition_selected)
+        self.transition_list.setStyleSheet(list_style)
         transitions_layout.addWidget(self.transition_list)
         transition_buttons = QHBoxLayout()
         add_transition_btn = QToolButton()
@@ -6117,6 +6281,41 @@ class MainWindow(QMainWindow):
         self._set_hardware_pending(True, "State machine updated. Save to persist changes.")
         if not self._state_machine_runner.is_running:
             self._update_state_machine_status("Idle")
+
+    def _state_machine_sequence_control(self, channel: str, mode: str) -> None:
+        runner = self._sequence_runners.get(channel)
+        card = self._channel_cards.get(channel)
+        if not runner or not card:
+            raise BackendError(f"No sequence available for channel {channel}.")
+        config = self._sequencer_configs.get(channel)
+        if config is None:
+            config = self._sequencer_configs.setdefault(channel, ChannelConfig())
+        normalized = (mode or "none").lower()
+        if normalized == "start":
+            if runner.is_running:
+                return
+            enabled_sequences = [
+                sequence
+                for sequence in config.sequences
+                if sequence.enabled
+                and sequence.duration_s > 0
+                and sequence.on_s > 0
+                and sequence.off_s > 0
+            ]
+            if not enabled_sequences:
+                raise BackendError(f"No enabled sequence available for {channel}.")
+            runner.load(config.sequences, config.repeat_mode, config.repeat_limit_s)
+            if not runner.start():
+                raise BackendError(f"Failed to start sequence for {channel}.")
+            card.set_sequence_running(True)
+            runner.emit_progress()
+        elif normalized == "stop":
+            if runner.is_running:
+                runner.stop()
+                card.set_sequence_running(False)
+        elif normalized == "reset":
+            runner.reset()
+            card.set_sequence_running(False)
 
     def _on_state_machine_start(self) -> None:
         config = self._current_state_machine()
