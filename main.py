@@ -101,6 +101,7 @@ from PyQt5.QtWidgets import (
     QGraphicsScene,
     QGraphicsEllipseItem,
     QGraphicsPathItem,
+    QGraphicsRectItem,
     QGraphicsTextItem,
 )
 
@@ -2034,6 +2035,9 @@ class StateMachineGraphView(QGraphicsView):
         active_edge_pen = QPen(QColor("#6366f1"))
         active_edge_pen.setWidthF(2.5)
         arrow_highlight = QBrush(QColor("#6366f1"))
+        label_pen = QPen(QColor("#cbd5f5"))
+        label_pen.setWidthF(1.0)
+        label_brush = QBrush(QColor(255, 255, 255, 230))
         for transition in config.transitions:
             start = positions.get(transition.source)
             end = positions.get(transition.target)
@@ -2065,6 +2069,27 @@ class StateMachineGraphView(QGraphicsView):
             )
             polygon = QPolygonF([tip, left, right])
             scene.addPolygon(polygon, path_item.pen(), arrow_highlight if is_active else QBrush(path_item.pen().color()))
+            label_text = transition.name or f"{transition.source} → {transition.target}"
+            midpoint = QPointF(start.x() + dx * 0.5, start.y() + dy * 0.5)
+            label_item = scene.addText(label_text)
+            font = label_item.font()
+            font.setPointSize(8)
+            label_item.setFont(font)
+            label_item.setDefaultTextColor(QColor("#1e293b" if is_active else "#334155"))
+            raw_rect = label_item.boundingRect()
+            padded_rect = QRectF(
+                midpoint.x() - (raw_rect.width() + 12.0) / 2.0,
+                midpoint.y() - (raw_rect.height() + 6.0) / 2.0,
+                raw_rect.width() + 12.0,
+                raw_rect.height() + 6.0,
+            )
+            background = scene.addRect(padded_rect, label_pen, label_brush)
+            background.setZValue(0.5)
+            label_item.setPos(
+                padded_rect.x() + (padded_rect.width() - raw_rect.width()) / 2.0,
+                padded_rect.y() + (padded_rect.height() - raw_rect.height()) / 2.0,
+            )
+            label_item.setZValue(1.0)
         for name in states:
             pos = positions[name]
             scene.addEllipse(
@@ -6054,6 +6079,9 @@ class MainWindow(QMainWindow):
         self.state_machine_status_label.setStyleSheet("color: #475569;")
         runner_controls.addWidget(self.state_machine_status_label)
         layout.addLayout(runner_controls)
+
+        self.state_machine_graph = StateMachineGraphView()
+        layout.addWidget(self.state_machine_graph)
         tabs = QTabWidget()
         tabs.setTabPosition(QTabWidget.North)
 
