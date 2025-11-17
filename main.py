@@ -1868,6 +1868,9 @@ class StateMachineGraphView(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setStyleSheet("background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;")
         self.setMinimumHeight(260)
+        self.setAlignment(Qt.AlignCenter)
+        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self._last_rect = QRectF()
 
     def update_graph(self, config: Optional[StateMachineConfig], active_state: Optional[str]) -> None:
@@ -1875,6 +1878,7 @@ class StateMachineGraphView(QGraphicsView):
         if scene is None:
             return
         scene.clear()
+        self.resetTransform()
         if not config or not config.states:
             self._last_rect = QRectF()
             return
@@ -1894,42 +1898,76 @@ class StateMachineGraphView(QGraphicsView):
         highlight_pen = QPen(QColor("#2563eb"))
         highlight_pen.setWidthF(3.0)
         text_color = QColor("#0f172a")
-        edge_pen = QPen(QColor("#cbd5f5"))
-        edge_pen.setWidthF(2.0)
-        active_edge_pen = QPen(QColor("#6366f1"))
-        active_edge_pen.setWidthF(2.5)
+        edge_pen = QPen(QColor("#64748b"))
+        edge_pen.setWidthF(1.8)
+        active_edge_pen = QPen(QColor("#2563eb"))
+        active_edge_pen.setWidthF(2.6)
         arrow_highlight = QBrush(QColor("#6366f1"))
         for transition in config.transitions:
             start = positions.get(transition.source)
             end = positions.get(transition.target)
             if start is None or end is None:
                 continue
-            path = QPainterPath(start)
-            path.lineTo(end)
             is_active = active_state == transition.source
-            path_item = QGraphicsPathItem(path)
-            path_item.setPen(active_edge_pen if is_active else edge_pen)
-            scene.addItem(path_item)
-            dx = end.x() - start.x()
-            dy = end.y() - start.y()
-            length = math.hypot(dx, dy)
-            if length <= 0.0:
-                continue
-            ux = dx / length
-            uy = dy / length
-            tip = QPointF(end.x() - ux * node_radius, end.y() - uy * node_radius)
-            arrow_length = 12.0
-            arrow_width = 6.0
-            left = QPointF(
-                tip.x() - ux * arrow_length + (-uy) * arrow_width,
-                tip.y() - uy * arrow_length + ux * arrow_width,
-            )
-            right = QPointF(
-                tip.x() - ux * arrow_length - (-uy) * arrow_width,
-                tip.y() - uy * arrow_length - ux * arrow_width,
-            )
-            polygon = QPolygonF([tip, left, right])
-            scene.addPolygon(polygon, path_item.pen(), arrow_highlight if is_active else QBrush(path_item.pen().color()))
+            if start == end:
+                control_offset = node_radius * 2.6
+                loop_path = QPainterPath(start + QPointF(0.0, -node_radius))
+                loop_path.cubicTo(
+                    start + QPointF(control_offset, -control_offset),
+                    start + QPointF(control_offset, control_offset),
+                    start + QPointF(0.0, node_radius),
+                )
+                loop_path.cubicTo(
+                    start + QPointF(-control_offset, control_offset),
+                    start + QPointF(-control_offset, -control_offset),
+                    start + QPointF(0.0, -node_radius),
+                )
+                path_item = QGraphicsPathItem(loop_path)
+                path_item.setPen(active_edge_pen if is_active else edge_pen)
+                scene.addItem(path_item)
+                arrow_tip = start + QPointF(0.0, -node_radius - 12.0)
+                left = arrow_tip + QPointF(-6.0, 8.0)
+                right = arrow_tip + QPointF(6.0, 8.0)
+                polygon = QPolygonF([arrow_tip, left, right])
+                pen = active_edge_pen if is_active else edge_pen
+                scene.addPolygon(polygon, pen, arrow_highlight if is_active else QBrush(pen.color()))
+            else:
+                path = QPainterPath(start)
+                control_distance = node_radius * 1.2
+                mid_point = QPointF((start.x() + end.x()) / 2.0, (start.y() + end.y()) / 2.0)
+                normal = QPointF(-(end.y() - start.y()), end.x() - start.x())
+                length = math.hypot(normal.x(), normal.y())
+                if length > 0.0:
+                    scale = control_distance / length
+                    normal = QPointF(normal.x() * scale, normal.y() * scale)
+                else:
+                    normal = QPointF(0.0, 0.0)
+                control_point = QPointF(mid_point.x() + normal.x(), mid_point.y() + normal.y())
+                path.quadTo(control_point, end)
+                path_item = QGraphicsPathItem(path)
+                path_item.setPen(active_edge_pen if is_active else edge_pen)
+                scene.addItem(path_item)
+                dx = end.x() - control_point.x()
+                dy = end.y() - control_point.y()
+                length = math.hypot(dx, dy)
+                if length <= 0.0:
+                    continue
+                ux = dx / length
+                uy = dy / length
+                tip = QPointF(end.x() - ux * node_radius, end.y() - uy * node_radius)
+                arrow_length = 12.0
+                arrow_width = 6.0
+                left = QPointF(
+                    tip.x() - ux * arrow_length + (-uy) * arrow_width,
+                    tip.y() - uy * arrow_length + ux * arrow_width,
+                )
+                right = QPointF(
+                    tip.x() - ux * arrow_length - (-uy) * arrow_width,
+                    tip.y() - uy * arrow_length - ux * arrow_width,
+                )
+                pen = path_item.pen()
+                polygon = QPolygonF([tip, left, right])
+                scene.addPolygon(polygon, pen, arrow_highlight if is_active else QBrush(pen.color()))
         for name in states:
             pos = positions[name]
             scene.addEllipse(
@@ -2296,6 +2334,57 @@ def ensure_message_length(message: Any, signal_names: Optional[Iterable[str]] = 
             message.length = required_bytes
         except AttributeError:
             pass
+
+
+def _signal_bit_range(signal: Any) -> Optional[Tuple[int, int]]:
+    start = getattr(signal, "start", None)
+    length = getattr(signal, "length", None)
+    try:
+        start_int = int(start)
+        length_int = int(length)
+    except (TypeError, ValueError):
+        return None
+    if length_int <= 0:
+        return None
+    return start_int, start_int + length_int
+
+
+def sanitize_message_payload(
+    message: Any, payload: Dict[str, float], preferred: Optional[Iterable[str]] = None
+) -> Dict[str, float]:
+    if not payload:
+        return {}
+    preferred_names = {name for name in (preferred or []) if name in payload}
+    sanitized: Dict[str, float] = {}
+    occupied: List[Tuple[int, int, str]] = []
+    signals = list(getattr(message, "signals", []) or [])
+    for signal in signals:
+        name = getattr(signal, "name", "")
+        if name not in payload:
+            continue
+        bit_range = _signal_bit_range(signal)
+        if bit_range is None:
+            sanitized[name] = payload[name]
+            continue
+        start_bit, end_bit = bit_range
+        conflicting_index = None
+        for index, (used_start, used_end, used_name) in enumerate(occupied):
+            if start_bit < used_end and end_bit > used_start:
+                conflicting_index = index
+                break
+        if conflicting_index is None:
+            occupied.append((start_bit, end_bit, name))
+            sanitized[name] = payload[name]
+            continue
+        used_start, used_end, used_name = occupied[conflicting_index]
+        if name in preferred_names and used_name not in preferred_names:
+            occupied[conflicting_index] = (start_bit, end_bit, name)
+            sanitized.pop(used_name, None)
+            sanitized[name] = payload[name]
+        else:
+            # Keep the existing signal to avoid overlapping writes.
+            continue
+    return sanitized
 
 class _SignalSimulator:
     def __init__(self, config: SignalSimulationConfig) -> None:
@@ -2922,6 +3011,7 @@ class RealBackend(QObject, BackendBase):
             return
         try:
             complete = self._compose_command_payload(message, payload)
+            complete = sanitize_message_payload(message, complete, payload.keys())
             ensure_message_length(message, complete.keys())
             data = message.encode(complete, scaling=True, strict=True)
 
@@ -2936,7 +3026,7 @@ class RealBackend(QObject, BackendBase):
 
             self._finalize_command(message_name, complete, payload)
 
-        except (ValueError, can.CanError) as exc:
+        except (ValueError, OverflowError, can.CanError, cantools_errors.EncodeError) as exc:
             raise BackendError(str(exc))
 
     def send_message_by_name(
@@ -2974,6 +3064,7 @@ class RealBackend(QObject, BackendBase):
             while tries < 3:
                 try:
                     complete = self._compose_command_payload(dbc_message, prepared)
+                    complete = sanitize_message_payload(dbc_message, complete, prepared.keys())
                     ensure_message_length(dbc_message, complete.keys())
                     data = dbc_message.encode(complete, scaling=True, strict=True)
 
@@ -2988,7 +3079,7 @@ class RealBackend(QObject, BackendBase):
 
                     self._finalize_command(message, complete, prepared)
                     break
-                except (ValueError, can.CanError) as exc:
+                except (ValueError, OverflowError, can.CanError, cantools_errors.EncodeError) as exc:
                     tries += 1
                     if tries >= 3:
                         raise BackendError(str(exc))
@@ -6943,9 +7034,10 @@ class MainWindow(QMainWindow):
                 lines.append(f"{step.message}: message not found")
                 continue
             try:
-                ensure_message_length(message, step.payload.keys())
-                encoded = message.encode(step.payload, scaling=True, strict=True)
-            except (ValueError, KeyError) as exc:
+                sanitized = sanitize_message_payload(message, dict(step.payload), step.payload.keys())
+                ensure_message_length(message, sanitized.keys())
+                encoded = message.encode(sanitized, scaling=True, strict=True)
+            except (ValueError, OverflowError, KeyError, cantools_errors.EncodeError) as exc:
                 lines.append(f"{step.message}: failed to encode ({exc})")
                 continue
             data_hex = " ".join(f"{byte:02X}" for byte in encoded)
@@ -8320,6 +8412,12 @@ class MainWindow(QMainWindow):
             for entry in definitions:
                 if isinstance(entry, dict):
                     config = StateMachineConfig.from_dict(entry)
+                    configs[config.name] = config
+        elif isinstance(definitions, dict):
+            for key, entry in definitions.items():
+                if isinstance(entry, dict):
+                    merged = {"name": key, **entry}
+                    config = StateMachineConfig.from_dict(merged)
                     configs[config.name] = config
         self._state_machine_configs = configs
         active_value = data.get("active") if isinstance(data, dict) else None
