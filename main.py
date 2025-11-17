@@ -101,6 +101,7 @@ from PyQt5.QtWidgets import (
     QGraphicsScene,
     QGraphicsEllipseItem,
     QGraphicsPathItem,
+    QGraphicsRectItem,
     QGraphicsTextItem,
 )
 
@@ -2065,6 +2066,36 @@ class StateMachineGraphView(QGraphicsView):
             )
             polygon = QPolygonF([tip, left, right])
             scene.addPolygon(polygon, path_item.pen(), arrow_highlight if is_active else QBrush(path_item.pen().color()))
+            label_lines: List[str] = []
+            title = transition.name.strip() if isinstance(transition.name, str) else ""
+            fallback_title = f"{transition.source} → {transition.target}"
+            label_lines.append(title or fallback_title)
+            for condition in transition.conditions:
+                label_lines.append(f"if {condition.signal} {condition.operator} {condition.value}")
+            for action in transition.actions:
+                if action.type == "send_message":
+                    header = "send message"
+                    target_label = action.message.strip() or "message"
+                    label_lines.append(f"{header}: {target_label}")
+                    for key, value in action.fields.items():
+                        label_lines.append(f"  {key}={value}")
+                elif action.type == "set_channel":
+                    header = "set channel"
+                    target_label = action.channel.strip() or "channel"
+                    label_lines.append(f"{header}: {target_label}")
+                    for key, value in action.command.items():
+                        label_lines.append(f"  {key}={value}")
+                    if action.sequence_mode and action.sequence_mode != "none":
+                        label_lines.append(f"  sequence={action.sequence_mode}")
+            label_text = "\n".join(label_lines)
+            midpoint = QPointF(start.x() + dx * 0.5, start.y() + dy * 0.5)
+            label_item = scene.addText(label_text)
+            font = label_item.font()
+            font.setPointSize(8)
+            label_item.setFont(font)
+            label_item.setDefaultTextColor(QColor("#1e293b" if is_active else "#334155"))
+            raw_rect = label_item.boundingRect()
+            label_item.setPos(midpoint.x() - raw_rect.width() / 2.0, midpoint.y() - raw_rect.height() / 2.0)
         for name in states:
             pos = positions[name]
             scene.addEllipse(
@@ -6054,6 +6085,9 @@ class MainWindow(QMainWindow):
         self.state_machine_status_label.setStyleSheet("color: #475569;")
         runner_controls.addWidget(self.state_machine_status_label)
         layout.addLayout(runner_controls)
+
+        self.state_machine_graph = StateMachineGraphView()
+        layout.addWidget(self.state_machine_graph)
         tabs = QTabWidget()
         tabs.setTabPosition(QTabWidget.North)
 
@@ -6265,7 +6299,7 @@ class MainWindow(QMainWindow):
         names = list(self._state_machine_configs.keys()) if hasattr(self, "_state_machine_configs") else []
         config = self._current_state_machine()
 
-        # Fallback, wenn noch keine aktive SM oder ungültiger Name gesetzt ist
+        # Fallback if no active state machine is set or the name is invalid
         if not names:
             # Nichts definiert → alles leeren und Graph zurücksetzen
             self.state_table.setRowCount(0)
