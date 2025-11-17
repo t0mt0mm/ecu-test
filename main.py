@@ -5394,10 +5394,10 @@ class MainWindow(QMainWindow):
         self.state_machine_start_button: Optional[QPushButton] = None
         self.state_machine_stop_button: Optional[QPushButton] = None
         self.state_machine_status_label: Optional[QLabel] = None
-        self.state_list: Optional[QListWidget] = None
+        self.state_table: Optional[QTableWidget] = None
         self.state_name_edit: Optional[QLineEdit] = None
         self.state_initial_combo: Optional[QComboBox] = None
-        self.transition_list: Optional[QListWidget] = None
+        self.transition_table: Optional[QTableWidget] = None
         self._saved_dock_state: Optional[QByteArray] = None
         self._channel_grid_cols = 2
         self._channel_columns: List[QVBoxLayout] = []
@@ -5974,24 +5974,31 @@ class MainWindow(QMainWindow):
         self.state_machine_status_label.setStyleSheet("color: #475569;")
         runner_controls.addWidget(self.state_machine_status_label)
         layout.addLayout(runner_controls)
-        splitter = QSplitter(Qt.Horizontal)
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
-        states_group = QGroupBox("States")
-        states_layout = QVBoxLayout(states_group)
-        self.state_list = QListWidget()
-        self.state_list.setAlternatingRowColors(True)
-        self.state_list.currentRowChanged.connect(self._on_state_selected)
-        self.state_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.state_list.setMinimumHeight(160)
+        tabs = QTabWidget()
+        tabs.setTabPosition(QTabWidget.North)
+
         list_style = (
-            "QListWidget { border: 1px solid #d8dee9; border-radius: 6px; padding: 4px; }"
-            " QListWidget::item { padding: 4px 6px; }"
+            "QTableWidget { border: 1px solid #d8dee9; border-radius: 6px; padding: 4px; }"
+            " QTableWidget::item { padding: 4px 6px; }"
         )
-        self.state_list.setStyleSheet(list_style)
-        states_layout.addWidget(self.state_list, 1)
+
+        states_tab = QWidget()
+        states_layout = QVBoxLayout(states_tab)
+        states_layout.setContentsMargins(4, 4, 4, 4)
+        states_layout.setSpacing(6)
+        self.state_table = QTableWidget()
+        self.state_table.setColumnCount(1)
+        self.state_table.setHorizontalHeaderLabels(["Name"])
+        self.state_table.horizontalHeader().setStretchLastSection(True)
+        self.state_table.verticalHeader().setVisible(False)
+        self.state_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.state_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.state_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.state_table.setAlternatingRowColors(True)
+        self.state_table.setMinimumHeight(200)
+        self.state_table.setStyleSheet(list_style)
+        self.state_table.itemSelectionChanged.connect(self._on_state_selected)
+        states_layout.addWidget(self.state_table, 1)
         state_buttons = QHBoxLayout()
         add_state_btn = QToolButton()
         add_state_btn.setText("Add")
@@ -6016,17 +6023,25 @@ class MainWindow(QMainWindow):
         self.state_initial_combo.currentIndexChanged.connect(self._on_initial_state_changed)
         state_form.addRow("Initial", self.state_initial_combo)
         states_layout.addLayout(state_form)
-        states_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        left_layout.addWidget(states_group)
-        transitions_group = QGroupBox("Transitions")
-        transitions_layout = QVBoxLayout(transitions_group)
-        self.transition_list = QListWidget()
-        self.transition_list.setAlternatingRowColors(True)
-        self.transition_list.currentRowChanged.connect(self._on_transition_selected)
-        self.transition_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.transition_list.setMinimumHeight(200)
-        self.transition_list.setStyleSheet(list_style)
-        transitions_layout.addWidget(self.transition_list, 1)
+        tabs.addTab(states_tab, "States")
+
+        transitions_tab = QWidget()
+        transitions_layout = QVBoxLayout(transitions_tab)
+        transitions_layout.setContentsMargins(4, 4, 4, 4)
+        transitions_layout.setSpacing(6)
+        self.transition_table = QTableWidget()
+        self.transition_table.setColumnCount(3)
+        self.transition_table.setHorizontalHeaderLabels(["Name", "Source", "Target"])
+        self.transition_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.transition_table.verticalHeader().setVisible(False)
+        self.transition_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.transition_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.transition_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.transition_table.setAlternatingRowColors(True)
+        self.transition_table.setMinimumHeight(240)
+        self.transition_table.setStyleSheet(list_style)
+        self.transition_table.itemSelectionChanged.connect(self._on_transition_selected)
+        transitions_layout.addWidget(self.transition_table, 1)
         transition_buttons = QHBoxLayout()
         add_transition_btn = QToolButton()
         add_transition_btn.setText("Add")
@@ -6045,19 +6060,9 @@ class MainWindow(QMainWindow):
         transition_buttons.addWidget(remove_transition_btn)
         transition_buttons.addStretch(1)
         transitions_layout.addLayout(transition_buttons)
-        transitions_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        left_layout.addWidget(transitions_group, 1)
-        splitter.addWidget(left_widget)
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-        self.state_machine_graph = StateMachineGraphView()
-        right_layout.addWidget(self.state_machine_graph, 1)
-        splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter, 1)
+        tabs.addTab(transitions_tab, "Transitions")
+
+        layout.addWidget(tabs, 1)
         dock = QDockWidget("State Machine", self)
         dock.setObjectName("Dock_StateMachine")
         dock.setFeatures(
@@ -6070,9 +6075,17 @@ class MainWindow(QMainWindow):
         self._set_state_machine_buttons()
 
     def _current_state_machine(self) -> Optional[StateMachineConfig]:
-        if not self._active_state_machine:
-            return None
-        return self._state_machine_configs.get(self._active_state_machine)
+        if self._active_state_machine:
+            config = self._state_machine_configs.get(self._active_state_machine)
+            if config:
+                return config
+        # Fallback to the first available config to avoid an empty editor when no
+        # active state machine is set (e.g., after loading YAML without an active
+        # value).
+        if self._state_machine_configs:
+            self._active_state_machine = next(iter(self._state_machine_configs))
+            return self._state_machine_configs.get(self._active_state_machine)
+        return None
 
     def _state_machine_signal_names(self) -> List[str]:
         names: Set[str] = set()
@@ -6121,21 +6134,23 @@ class MainWindow(QMainWindow):
 
     def _populate_state_machine_editor(self) -> None:
         config = self._current_state_machine()
-        if not self.state_list or not self.state_initial_combo or not self.transition_list:
+        if not self.state_table or not self.state_initial_combo or not self.transition_table:
             return
         self._updating_state_machine_ui = True
         try:
-            self.state_list.clear()
-            self.transition_list.clear()
+            self.state_table.setRowCount(0)
+            self.transition_table.setRowCount(0)
             self.state_initial_combo.clear()
             if self.state_name_edit:
                 self.state_name_edit.clear()
             if not config:
                 return
             for state in config.states:
-                self.state_list.addItem(state.name or "<unnamed>")
-            if self.state_list.count() and self.state_list.currentRow() < 0:
-                self.state_list.setCurrentRow(0)
+                row = self.state_table.rowCount()
+                self.state_table.insertRow(row)
+                self.state_table.setItem(row, 0, QTableWidgetItem(state.name or "<unnamed>"))
+            if self.state_table.rowCount() and not self.state_table.selectedItems():
+                self.state_table.selectRow(0)
             if self.state_initial_combo is not None:
                 self.state_initial_combo.addItems(config.state_names)
                 if config.initial_state:
@@ -6148,9 +6163,9 @@ class MainWindow(QMainWindow):
         self._update_state_machine_graph()
 
     def _populate_transition_list(self, config: StateMachineConfig) -> None:
-        if not self.transition_list:
+        if not self.transition_table:
             return
-        self.transition_list.clear()
+        self.transition_table.setRowCount(0)
         for transition in config.transitions:
             title_value = (transition.name or "").strip()
             if not title_value:
@@ -6160,10 +6175,13 @@ class MainWindow(QMainWindow):
                     title_value = f"{source} → {target}".strip()
                 else:
                     title_value = "Transition"
-            description = f"{title_value}: {transition.source} → {transition.target}"
-            self.transition_list.addItem(description)
-        if self.transition_list.count() and self.transition_list.currentRow() < 0:
-            self.transition_list.setCurrentRow(0)
+            row = self.transition_table.rowCount()
+            self.transition_table.insertRow(row)
+            self.transition_table.setItem(row, 0, QTableWidgetItem(title_value))
+            self.transition_table.setItem(row, 1, QTableWidgetItem(transition.source or ""))
+            self.transition_table.setItem(row, 2, QTableWidgetItem(transition.target or ""))
+        if self.transition_table.rowCount() and not self.transition_table.selectedItems():
+            self.transition_table.selectRow(0)
 
     def _update_state_machine_graph(self) -> None:
         if not self.state_machine_graph:
@@ -6279,15 +6297,15 @@ class MainWindow(QMainWindow):
         config.states.append(StateDefinition(name=name))
         config.ensure_initial_state()
         self._populate_state_machine_editor()
-        if self.state_list:
-            self.state_list.setCurrentRow(len(config.states) - 1)
+        if self.state_table:
+            self.state_table.selectRow(len(config.states) - 1)
         self._state_machine_changed()
 
     def _on_state_remove(self) -> None:
         config = self._current_state_machine()
-        if not config or not self.state_list:
+        if not config or not self.state_table:
             return
-        index = self.state_list.currentRow()
+        index = self._selected_state_index()
         if index < 0 or index >= len(config.states):
             return
         removed = config.states.pop(index).name
@@ -6300,10 +6318,17 @@ class MainWindow(QMainWindow):
         self._populate_state_machine_editor()
         self._state_machine_changed()
 
-    def _on_state_selected(self, index: int) -> None:
+    def _selected_state_index(self) -> int:
+        if not self.state_table or not self.state_table.selectionModel():
+            return -1
+        rows = self.state_table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def _on_state_selected(self) -> None:
         if self._updating_state_machine_ui or not self.state_name_edit:
             return
         config = self._current_state_machine()
+        index = self._selected_state_index()
         if not config or index < 0 or index >= len(config.states):
             self._updating_state_machine_ui = True
             try:
@@ -6318,12 +6343,12 @@ class MainWindow(QMainWindow):
             self._updating_state_machine_ui = False
 
     def _on_state_name_edited(self) -> None:
-        if self._updating_state_machine_ui or not self.state_list or not self.state_name_edit:
+        if self._updating_state_machine_ui or not self.state_table or not self.state_name_edit:
             return
         config = self._current_state_machine()
         if not config:
             return
-        index = self.state_list.currentRow()
+        index = self._selected_state_index()
         if index < 0 or index >= len(config.states):
             return
         new_name = self.state_name_edit.text().strip()
@@ -6367,8 +6392,14 @@ class MainWindow(QMainWindow):
             config.initial_state = name
             self._state_machine_changed()
 
-    def _on_transition_selected(self, index: int) -> None:
-        _ = index
+    def _selected_transition_index(self) -> int:
+        if not self.transition_table or not self.transition_table.selectionModel():
+            return -1
+        rows = self.transition_table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def _on_transition_selected(self) -> None:
+        return
 
     def _on_transition_add(self) -> None:
         config = self._current_state_machine()
@@ -6385,15 +6416,15 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted and dialog.result_transition:
             config.transitions.append(dialog.result_transition)
             self._populate_state_machine_editor()
-            if self.transition_list:
-                self.transition_list.setCurrentRow(len(config.transitions) - 1)
+            if self.transition_table:
+                self.transition_table.selectRow(len(config.transitions) - 1)
             self._state_machine_changed()
 
     def _on_transition_edit(self) -> None:
         config = self._current_state_machine()
-        if not config or not self.transition_list:
+        if not config or not self.transition_table:
             return
-        index = self.transition_list.currentRow()
+        index = self._selected_transition_index()
         if index < 0 or index >= len(config.transitions):
             return
         transition = config.transitions[index]
@@ -6409,14 +6440,15 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted and dialog.result_transition:
             config.transitions[index] = dialog.result_transition
             self._populate_state_machine_editor()
-            self.transition_list.setCurrentRow(index)
+            if self.transition_table:
+                self.transition_table.selectRow(index)
             self._state_machine_changed()
 
     def _on_transition_remove(self) -> None:
         config = self._current_state_machine()
-        if not config or not self.transition_list:
+        if not config or not self.transition_table:
             return
-        index = self.transition_list.currentRow()
+        index = self._selected_transition_index()
         if index < 0 or index >= len(config.transitions):
             return
         config.transitions.pop(index)
@@ -8420,8 +8452,10 @@ class MainWindow(QMainWindow):
         else:
             self._active_state_machine = next(iter(configs), None)
         self._refresh_state_machine_combo()
-        self._state_machine_runner.set_config(self._current_state_machine())
+        config = self._current_state_machine()
+        self._state_machine_runner.set_config(config)
         self._state_machine_runner.stop()
+        self._populate_state_machine_editor()
         self._set_state_machine_buttons()
 
     def _save_as_default(self) -> None:
