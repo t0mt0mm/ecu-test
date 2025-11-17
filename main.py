@@ -101,6 +101,7 @@ from PyQt5.QtWidgets import (
     QGraphicsScene,
     QGraphicsEllipseItem,
     QGraphicsPathItem,
+    QGraphicsRectItem,
     QGraphicsTextItem,
 )
 
@@ -2034,6 +2035,12 @@ class StateMachineGraphView(QGraphicsView):
         active_edge_pen = QPen(QColor("#6366f1"))
         active_edge_pen.setWidthF(2.5)
         arrow_highlight = QBrush(QColor("#6366f1"))
+        label_pen = QPen(QColor("#cbd5f5"))
+        label_pen.setWidthF(1.0)
+        label_brush = QBrush(QColor(255, 255, 255, 230))
+        transitions_by_source: Dict[str, List[StateTransition]] = {}
+        for transition in config.transitions:
+            transitions_by_source.setdefault(transition.source, []).append(transition)
         for transition in config.transitions:
             start = positions.get(transition.source)
             end = positions.get(transition.target)
@@ -2083,6 +2090,46 @@ class StateMachineGraphView(QGraphicsView):
             label.setDefaultTextColor(text_color if name != active_state else QColor("#1e293b"))
             rect = label.boundingRect()
             label.setPos(pos.x() - rect.width() / 2.0, pos.y() - rect.height() / 2.0)
+            source_transitions = transitions_by_source.get(name, [])
+            if not source_transitions:
+                continue
+            summary_lines: List[str] = []
+            for transition in source_transitions:
+                summary_lines.append(f"→ {transition.target or '…'}")
+                conditions = (
+                    ", ".join(
+                        f"{cond.signal} {cond.operator} {cond.value:g}" for cond in transition.conditions if cond.signal
+                    )
+                    if transition.conditions
+                    else "immer"
+                )
+                summary_lines.append(f"  wenn: {conditions}")
+                action_snippets: List[str] = []
+                for action in transition.actions:
+                    if action.type == "send_message":
+                        detail = action.message or "Nachricht"
+                        if action.fields:
+                            detail += f" ({len(action.fields)} Felder)"
+                        action_snippets.append(detail)
+                    elif action.type == "set_channel":
+                        field_info = ", ".join(f"{k}={v:g}" for k, v in action.command.items())
+                        action_snippets.append(f"{action.channel}: {field_info}" if action.channel else field_info)
+                    else:
+                        action_snippets.append(action.type)
+                summary_lines.append(f"  tue: {', '.join(action_snippets) if action_snippets else '—'}")
+                summary_lines.append("")
+            summary_text = "\n".join(line for line in summary_lines if line is not None)
+            summary_item = scene.addText(summary_text)
+            summary_font = summary_item.font()
+            summary_font.setPointSize(8)
+            summary_item.setFont(summary_font)
+            summary_item.setDefaultTextColor(QColor("#1f2937" if name == active_state else "#475569"))
+            summary_rect = summary_item.boundingRect().adjusted(-8.0, -6.0, 8.0, 6.0)
+            summary_item.setPos(pos.x() + node_radius + 12.0, pos.y() + node_radius * 0.25)
+            summary_rect.moveTo(summary_item.pos())
+            summary_bg = scene.addRect(summary_rect, label_pen, label_brush)
+            summary_bg.setZValue(0.5)
+            summary_item.setZValue(1.0)
         bounds = scene.itemsBoundingRect().adjusted(-40.0, -40.0, 40.0, 40.0)
         scene.setSceneRect(bounds)
         if not bounds.isNull():
@@ -6054,6 +6101,9 @@ class MainWindow(QMainWindow):
         self.state_machine_status_label.setStyleSheet("color: #475569;")
         runner_controls.addWidget(self.state_machine_status_label)
         layout.addLayout(runner_controls)
+
+        self.state_machine_graph = StateMachineGraphView()
+        layout.addWidget(self.state_machine_graph)
         tabs = QTabWidget()
         tabs.setTabPosition(QTabWidget.North)
 
