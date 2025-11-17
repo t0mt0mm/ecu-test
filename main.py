@@ -6075,9 +6075,17 @@ class MainWindow(QMainWindow):
         self._set_state_machine_buttons()
 
     def _current_state_machine(self) -> Optional[StateMachineConfig]:
-        if not self._active_state_machine:
-            return None
-        return self._state_machine_configs.get(self._active_state_machine)
+        if self._active_state_machine:
+            config = self._state_machine_configs.get(self._active_state_machine)
+            if config:
+                return config
+        # Fallback to the first available config to avoid an empty editor when no
+        # active state machine is set (e.g., after loading YAML without an active
+        # value).
+        if self._state_machine_configs:
+            self._active_state_machine = next(iter(self._state_machine_configs))
+            return self._state_machine_configs.get(self._active_state_machine)
+        return None
 
     def _state_machine_signal_names(self) -> List[str]:
         names: Set[str] = set()
@@ -8444,8 +8452,10 @@ class MainWindow(QMainWindow):
         else:
             self._active_state_machine = next(iter(configs), None)
         self._refresh_state_machine_combo()
-        self._state_machine_runner.set_config(self._current_state_machine())
+        config = self._current_state_machine()
+        self._state_machine_runner.set_config(config)
         self._state_machine_runner.stop()
+        self._populate_state_machine_editor()
         self._set_state_machine_buttons()
 
     def _save_as_default(self) -> None:
