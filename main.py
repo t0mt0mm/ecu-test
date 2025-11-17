@@ -2003,8 +2003,22 @@ class StateMachineGraphView(QGraphicsView):
         self.setScene(scene)
         self.setRenderHint(QPainter.Antialiasing)
         self.setStyleSheet("background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;")
-        self.setMinimumHeight(260)
+        self.setMinimumHeight(320)
+        self._zoom_percent = 120
         self._last_rect = QRectF()
+
+    def set_zoom_percent(self, percent: int) -> None:
+        self._zoom_percent = max(60, min(260, percent))
+        self._refresh_view()
+
+    def _refresh_view(self) -> None:
+        if self._last_rect.isNull():
+            return
+        self.resetTransform()
+        self.fitInView(self._last_rect, Qt.KeepAspectRatio)
+        scale_factor = self._zoom_percent / 100.0
+        if not math.isclose(scale_factor, 1.0, rel_tol=1e-3):
+            self.scale(scale_factor, scale_factor)
 
     def update_graph(self, config: Optional[StateMachineConfig], active_state: Optional[str]) -> None:
         scene = self.scene()
@@ -2035,6 +2049,7 @@ class StateMachineGraphView(QGraphicsView):
         active_edge_pen = QPen(QColor("#6366f1"))
         active_edge_pen.setWidthF(2.5)
         arrow_highlight = QBrush(QColor("#6366f1"))
+        label_offsets: Dict[str, int] = {}
         for transition in config.transitions:
             start = positions.get(transition.source)
             end = positions.get(transition.target)
@@ -2088,14 +2103,29 @@ class StateMachineGraphView(QGraphicsView):
                     if action.sequence_mode and action.sequence_mode != "none":
                         label_lines.append(f"  sequence={action.sequence_mode}")
             label_text = "\n".join(label_lines)
-            midpoint = QPointF(start.x() + dx * 0.5, start.y() + dy * 0.5)
             label_item = scene.addText(label_text)
             font = label_item.font()
             font.setPointSize(8)
             label_item.setFont(font)
             label_item.setDefaultTextColor(QColor("#1e293b" if is_active else "#334155"))
             raw_rect = label_item.boundingRect()
-            label_item.setPos(midpoint.x() - raw_rect.width() / 2.0, midpoint.y() - raw_rect.height() / 2.0)
+            label_index = label_offsets.get(transition.source, 0)
+            perp_index = (label_index // 2) + 1
+            perp_sign = -1.0 if label_index % 2 == 0 else 1.0
+            label_offsets[transition.source] = label_index + 1
+            label_distance = node_radius + 16.0
+            perp_spacing = 14.0 * perp_index
+            label_anchor = QPointF(
+                start.x() + ux * label_distance + (-uy) * perp_spacing * perp_sign,
+                start.y() + uy * label_distance + ux * perp_spacing * perp_sign,
+            )
+            label_item.setPos(label_anchor.x() - raw_rect.width() / 2.0, label_anchor.y() - raw_rect.height() / 2.0)
+            backdrop = scene.addRect(
+                label_item.boundingRect().translated(label_item.pos()).adjusted(-4.0, -2.0, 4.0, 2.0),
+                QPen(Qt.NoPen),
+                QBrush(QColor(255, 255, 255, 230)),
+            )
+            backdrop.setZValue(label_item.zValue() - 1)
         for name in states:
             pos = positions[name]
             scene.addEllipse(
@@ -2118,12 +2148,12 @@ class StateMachineGraphView(QGraphicsView):
         scene.setSceneRect(bounds)
         if not bounds.isNull():
             self._last_rect = bounds
-            self.fitInView(bounds, Qt.KeepAspectRatio)
+            self._refresh_view()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         if not self._last_rect.isNull():
-            self.fitInView(self._last_rect, Qt.KeepAspectRatio)
+            self._refresh_view()
 
 
 class StateMachineRunner(QObject):
@@ -6087,6 +6117,21 @@ class MainWindow(QMainWindow):
         layout.addLayout(runner_controls)
 
         self.state_machine_graph = StateMachineGraphView()
+        graph_controls = QHBoxLayout()
+        graph_controls.addWidget(QLabel("Visualization size"))
+        self.state_machine_zoom = QSlider(Qt.Horizontal)
+        self.state_machine_zoom.setRange(60, 260)
+        self.state_machine_zoom.setValue(120)
+        self.state_machine_zoom.setTickPosition(QSlider.TicksBelow)
+        self.state_machine_zoom.setTickInterval(20)
+        self.state_machine_zoom.valueChanged.connect(self.state_machine_graph.set_zoom_percent)
+        graph_controls.addWidget(self.state_machine_zoom, 1)
+        zoom_value = QLabel("120%")
+        zoom_value.setMinimumWidth(48)
+        self.state_machine_zoom.valueChanged.connect(lambda value: zoom_value.setText(f"{value}%"))
+        graph_controls.addWidget(zoom_value)
+        self.state_machine_graph.set_zoom_percent(self.state_machine_zoom.value())
+        layout.addLayout(graph_controls)
         layout.addWidget(self.state_machine_graph)
         tabs = QTabWidget()
         tabs.setTabPosition(QTabWidget.North)
