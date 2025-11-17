@@ -5386,6 +5386,7 @@ class MainWindow(QMainWindow):
         self._hardware_apply_required = False
         self._measurement_cursors_enabled = False
         self._updating_state_machine_ui = False
+        self._initializing_ui = True
         self.channels_dock: Optional[QDockWidget] = None
         self.signals_dock: Optional[QDockWidget] = None
         self.state_machine_dock: Optional[QDockWidget] = None
@@ -5427,17 +5428,21 @@ class MainWindow(QMainWindow):
         self._state_machine_runner.stopped.connect(self._on_state_machine_runner_stopped)
         self._state_machine_runner.error_occurred.connect(self._on_state_machine_error)
         self._restore_settings()
+        
         self._build_ui()
+        self._load_initial_setup()
         self._update_yaml_status(None)
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._on_timer)
         self._timer.start()
-        self._load_initial_setup()
+        
         self._load_initial_backend()
-
+        self._initializing_ui = False
+        #QTimer.singleShot(0, self._inject_demo_sm)
     # UI construction
     def _build_ui(self) -> None:
+        #self._initializing_ui = True
         self._build_menu()
         self.status_indicator = QLabel("●")
         self.status_indicator.setStyleSheet("color: red; font-size: 16pt;")
@@ -5475,13 +5480,88 @@ class MainWindow(QMainWindow):
         #self._apply_default_dock_layout()
         #if not self._restore_dock_layout():
         #    self._apply_default_dock_layout()
-        self._saved_dock_state = None   # zur Sicherheit
+        
+        self._saved_dock_state = None
         self._apply_default_dock_layout()
         self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
         self._update_central_stack_visibility()
         self._update_csv_status_label()
+        
+        #if not self._state_machine_configs:
+        #   QTimer.singleShot(0, self._inject_demo_sm)
+        #self._initializing_ui = False
+
+    def _clear_state_machine_tables_and_graph(self) -> None:
+        """Leert States/Transitions-Tabellen und den Graphen sauber."""
+        if getattr(self, "state_table", None):
+            self.state_table.setRowCount(0)
+        if getattr(self, "transition_table", None):
+            self.transition_table.setRowCount(0)
+        if getattr(self, "state_graph", None):
+            try:
+                self.state_graph.update_graph(None, None)
+            except Exception:
+                pass
+
+    def _ensure_state_machine_table_structure(self) -> None:
+        """Stellt sicher, dass beide Tabellen wenigstens 1 Spalte haben und vernünftig aussehen."""
+        from PyQt5.QtWidgets import QHeaderView
+        if getattr(self, "state_table", None):
+            if self.state_table.columnCount() < 1:
+                self.state_table.setColumnCount(1)
+            self.state_table.setHorizontalHeaderLabels(["State"])
+            self.state_table.verticalHeader().setVisible(False)
+            self.state_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+
+        if getattr(self, "transition_table", None):
+            # 3 Spalten sind für Name / Source / Target praktisch
+            if self.transition_table.columnCount() < 3:
+                self.transition_table.setColumnCount(3)
+            self.transition_table.setHorizontalHeaderLabels(["Transition", "Source", "Target"])
+            self.transition_table.verticalHeader().setVisible(False)
+            self.transition_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            self.transition_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            self.transition_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+    def _inject_demo_sm(self):
+        demo = StateMachineConfig.from_dict({
+            "name": "Injected",
+            "initial_state": "State 1",
+            "states": [{"name": "State 1"}, {"name": "State 2"}],
+            "transitions": [
+                {"name": "test", "source": "State 1", "target": "State 2", "conditions": [], "actions": []},
+            ],
+        })
+        self._state_machine_configs = {"Injected": demo}
+        self._active_state_machine = "Injected"
+
+        # Refresh auf "Injected" – ohne Signals
+        self.state_machine_combo.blockSignals(True)
+        try:
+            self._refresh_state_machine_combo()
+            idx = self.state_machine_combo.findText(self._active_state_machine)
+            if idx >= 0:
+                self.state_machine_combo.setCurrentIndex(idx)
+        finally:
+            self.state_machine_combo.blockSignals(False)
+
+        # Falls _refresh_* das Populate nicht schon gemacht hat:
+        self._populate_state_machine_editor()
+        
+
+        # Jetzt ist der Aufbau fertig
+        self._initializing_ui = False
+
+        # Debug
+        #print("SM names:", list(self._state_machine_configs.keys()))
+        cfg = self._state_machine_configs.get(self._active_state_machine)
+        #if cfg:
+          #  print("Active:", self._active_state_machine,
+            #    "States:", [s.name for s in cfg.states],
+            #    "Transitions:", [t.name for t in cfg.transitions])
+
+
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
@@ -6074,6 +6154,7 @@ class MainWindow(QMainWindow):
         self._refresh_state_machine_combo()
         self._set_state_machine_buttons()
 
+
     def _current_state_machine(self) -> Optional[StateMachineConfig]:
         if self._active_state_machine:
             config = self._state_machine_configs.get(self._active_state_machine)
@@ -6111,56 +6192,202 @@ class MainWindow(QMainWindow):
         return {message: sorted(names) for message, names in mapping.items()}
 
     def _refresh_state_machine_combo(self) -> None:
-        if not self.state_machine_combo:
+        if getattr(self, "_updating_state_machine_ui", False):
             return
+
         self._updating_state_machine_ui = True
         try:
-            current_name = self._active_state_machine or ""
-            self.state_machine_combo.clear()
-            for name in sorted(self._state_machine_configs.keys()):
-                self.state_machine_combo.addItem(name)
-            if current_name and current_name in self._state_machine_configs:
-                index = self.state_machine_combo.findText(current_name)
-                if index >= 0:
-                    self.state_machine_combo.setCurrentIndex(index)
-            elif self.state_machine_combo.count():
-                self.state_machine_combo.setCurrentIndex(0)
+            combo = getattr(self, "state_machine_combo", None)
+            if combo is None:
+                return
+
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                # Namen defensiv normalisieren (ohne führende/nachgestellte Spaces)
+                names = [str(n).strip() for n in self._state_machine_configs.keys()]
+                # Optional: stabil sortieren
+                names = sorted(names)
+                combo.addItems(names)
+
+                active = str(self._active_state_machine).strip() if self._active_state_machine else None
+                if not active or active not in names:
+                    active = names[0] if names else None
+                    self._active_state_machine = active
+
+                if active:
+                    # Versuche zuerst per findText
+                    idx = combo.findText(active)
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+                    else:
+                        # Falls der Combo editierbar ist oder Strings leicht differieren:
+                        combo.setCurrentText(active)
+            finally:
+                combo.blockSignals(False)
         finally:
             self._updating_state_machine_ui = False
+
+        # Editor bewusst (nicht via Signal) aktualisieren
         self._populate_state_machine_editor()
-        self._set_state_machine_buttons()
-        if not self._state_machine_runner.is_running:
-            self._update_state_machine_status("Idle")
+
 
     def _populate_state_machine_editor(self) -> None:
-        config = self._current_state_machine()
-        if not self.state_table or not self.state_initial_combo or not self.transition_table:
+        # --- Struktur / Widgets prüfen und vorbereiten ---
+        # Stelle sicher, dass Tabellen existieren und Spalten haben:
+        from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView
+        from PyQt5.QtCore import Qt
+
+        if not getattr(self, "state_table", None) or not getattr(self, "transition_table", None):
+            # Ohne Tabellen macht Populate keinen Sinn
+            print("Populate aborted: state/transition table missing")
             return
-        self._updating_state_machine_ui = True
-        try:
+
+        # Mindestens 1 Spalte für States
+        if self.state_table.columnCount() < 1:
+            self.state_table.setColumnCount(1)
+            self.state_table.setHorizontalHeaderLabels(["State"])
+            self.state_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            self.state_table.verticalHeader().setVisible(False)
+
+        # Mindestens 3 Spalten für Transitions (Name, Source, Target)
+        if self.transition_table.columnCount() < 3:
+            self.transition_table.setColumnCount(3)
+            self.transition_table.setHorizontalHeaderLabels(["Transition", "Source", "Target"])
+            header = self.transition_table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.Stretch)
+            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            self.transition_table.verticalHeader().setVisible(False)
+
+        # --- Aktive Konfiguration robust ermitteln (mit Fallback) ---
+        print("Populate SM editor for:", self._active_state_machine)
+        names = list(self._state_machine_configs.keys()) if hasattr(self, "_state_machine_configs") else []
+        config = self._current_state_machine()
+
+        # Fallback, wenn noch keine aktive SM oder ungültiger Name gesetzt ist
+        if not names:
+            # Nichts definiert → alles leeren und Graph zurücksetzen
             self.state_table.setRowCount(0)
             self.transition_table.setRowCount(0)
-            self.state_initial_combo.clear()
-            if self.state_name_edit:
+            if getattr(self, "state_initial_combo", None):
+                self.state_initial_combo.clear()
+            try:
+                self._update_state_machine_graph()  # falls diese Methode None/leer behandeln kann
+            except Exception:
+                pass
+            return
+
+        if config is None:
+            # auf erste Definition fallen und Combo lautlos anpassen
+            first = names[0]
+            self._active_state_machine = first
+            if getattr(self, "state_machine_combo", None):
+                self.state_machine_combo.blockSignals(True)
+                try:
+                    idx = self.state_machine_combo.findText(first)
+                    if idx >= 0:
+                        self.state_machine_combo.setCurrentIndex(idx)
+                finally:
+                    self.state_machine_combo.blockSignals(False)
+            config = self._current_state_machine()
+
+        # --- Ab hier: wir haben eine gültige config ---
+        self._updating_state_machine_ui = True
+        try:
+            # Tabellen leeren
+            self.state_table.setRowCount(0)
+            self.transition_table.setRowCount(0)
+            if getattr(self, "state_initial_combo", None):
+                self.state_initial_combo.blockSignals(True)
+                self.state_initial_combo.clear()
+                self.state_initial_combo.blockSignals(False)
+            if getattr(self, "state_name_edit", None):
+                self.state_name_edit.blockSignals(True)
                 self.state_name_edit.clear()
-            if not config:
-                return
+                self.state_name_edit.blockSignals(False)
+
+            # Initial state absichern, bevor wir die Combo setzen
+            try:
+                config.ensure_initial_state()
+            except Exception:
+                pass
+
+            # --- States füllen ---
             for state in config.states:
                 row = self.state_table.rowCount()
                 self.state_table.insertRow(row)
-                self.state_table.setItem(row, 0, QTableWidgetItem(state.name or "<unnamed>"))
+                item = QTableWidgetItem(state.name or "<unnamed>")
+                # Selektierbar und Enabled setzen (optional, aber UX-freundlich)
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self.state_table.setItem(row, 0, item)
+
+            # Erste Zeile selecten, falls noch nichts ausgewählt ist
             if self.state_table.rowCount() and not self.state_table.selectedItems():
                 self.state_table.selectRow(0)
-            if self.state_initial_combo is not None:
-                self.state_initial_combo.addItems(config.state_names)
-                if config.initial_state:
-                    idx = self.state_initial_combo.findText(config.initial_state)
-                    if idx >= 0:
-                        self.state_initial_combo.setCurrentIndex(idx)
+
+            # Initial-State-Combo füllen
+            if getattr(self, "state_initial_combo", None):
+                self.state_initial_combo.blockSignals(True)
+                try:
+                    self.state_initial_combo.clear()
+                    # 1) Items hinzufügen
+                    self.state_initial_combo.addItems(config.state_names)
+
+                    # 2) Zielzustand bestimmen: bevorzugt config.initial_state, sonst 1. State
+                    target = config.initial_state if config.initial_state in config.state_names else (
+                        config.state_names[0] if config.state_names else None
+                    )
+
+                    # 3) Index sicher setzen (und ggf. Model nachziehen)
+                    if target:
+                        idx = self.state_initial_combo.findText(target)
+                        if idx >= 0:
+                            self.state_initial_combo.setCurrentIndex(idx)
+                        else:
+                            # Fallback: auf den ersten Eintrag
+                            self.state_initial_combo.setCurrentIndex(0)
+                            target = self.state_initial_combo.currentText().strip()
+
+                        # Model (config.initial_state) mit dem tatsächlichen Combo-Wert synchronisieren,
+                        # falls ensure_initial_state() noch None gesetzt hatte oder Ziel nicht gefunden wurde.
+                        if config.initial_state != target:
+                            config.initial_state = target
+                            # optional: nicht jedes Mal speichern, aber Status/UI aktualisieren:
+                            # self._state_machine_changed()
+
+                    else:
+                        # Keine States → leer und deaktivieren
+                        self.state_initial_combo.setCurrentIndex(-1)
+                        self.state_initial_combo.setEnabled(False)
+                finally:
+                    self.state_initial_combo.blockSignals(False)
+
+            # --- Transitions füllen ---
+            # a) Wenn du deine separate Routine behalten willst (macht Sinn):
             self._populate_transition_list(config)
+
+            # b) Falls _populate_transition_list(config) die QTable nicht befüllt,
+            #    kannst du alternativ hier ein Fallback einbauen (auskommentiert lassen):
+            # self.transition_table.setRowCount(len(config.transitions))
+            # for row, tr in enumerate(config.transitions):
+            #     it_name = QTableWidgetItem(tr.name or f"{tr.source} → {tr.target}")
+            #     it_src  = QTableWidgetItem(tr.source or "")
+            #     it_tgt  = QTableWidgetItem(tr.target or "")
+            #     for it in (it_name, it_src, it_tgt):
+            #         it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            #     self.transition_table.setItem(row, 0, it_name)
+            #     self.transition_table.setItem(row, 1, it_src)
+            #     self.transition_table.setItem(row, 2, it_tgt)
+
         finally:
             self._updating_state_machine_ui = False
-        self._update_state_machine_graph()
+
+        # --- Graph aktualisieren (try/except, soll UI nie blockieren) ---
+        try:
+            self._update_state_machine_graph()
+        except Exception:
+            pass
 
     def _populate_transition_list(self, config: StateMachineConfig) -> None:
         if not self.transition_table:
@@ -6200,6 +6427,10 @@ class MainWindow(QMainWindow):
             self.state_machine_stop_button.setEnabled(running)
 
     def _on_state_machine_add(self) -> None:
+        
+        if getattr(self, "_initializing_ui", False):
+            return
+
         base = "State Machine"
         counter = 1
         name = base
@@ -6216,6 +6447,10 @@ class MainWindow(QMainWindow):
         self._state_machine_changed()
 
     def _on_state_machine_duplicate(self) -> None:
+        
+        if getattr(self, "_initializing_ui", False):
+            return
+
         config = self._current_state_machine()
         if not config:
             return
@@ -6235,6 +6470,10 @@ class MainWindow(QMainWindow):
         self._state_machine_changed()
 
     def _on_state_machine_rename(self) -> None:
+        
+        if getattr(self, "_initializing_ui", False):
+            return
+
         config = self._current_state_machine()
         if not config:
             return
@@ -6272,10 +6511,22 @@ class MainWindow(QMainWindow):
         self._state_machine_changed()
 
     def _on_state_machine_selected(self, index: int) -> None:
-        if self._updating_state_machine_ui or not self.state_machine_combo:
+        if getattr(self, "_initializing_ui", False):
             return
+        if getattr(self, "_updating_state_machine_ui", False):
+            return
+        if not self.state_machine_combo:
+            return
+
         name = self.state_machine_combo.itemText(index) if index >= 0 else ""
-        self._active_state_machine = name if name in self._state_machine_configs else None
+        if name not in self._state_machine_configs:
+            # Ungültige Auswahl – UI bleibt bei der bisherigen active
+            return
+        if name == self._active_state_machine:
+            # Nichts zu tun
+            return
+
+        self._active_state_machine = name
         config = self._current_state_machine()
         self._state_machine_runner.set_config(config)
         self._state_machine_runner.stop()
