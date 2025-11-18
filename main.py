@@ -16,7 +16,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, TYPE_CHECKING, Literal
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*sipPyTypeDict.*")
 
@@ -621,6 +621,7 @@ class StateTransition:
     target: str
     conditions: List[StateCondition] = field(default_factory=list)
     actions: List[StateAction] = field(default_factory=list)
+    condition_logic: Literal["AND", "OR"] = "AND"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StateTransition":
@@ -675,7 +676,16 @@ class StateTransition:
                     action_payload = dict(value)
                     action_payload.setdefault("type", key)
                     actions.append(StateAction.from_dict(action_payload))
-        return cls(name=name, source=source, target=target, conditions=conditions, actions=actions)
+        logic = str(data.get("logic", "AND")).upper()
+        logic_value: Literal["AND", "OR"] = "AND" if logic not in {"AND", "OR"} else logic  # type: ignore[assignment]
+        return cls(
+            name=name,
+            source=source,
+            target=target,
+            conditions=conditions,
+            actions=actions,
+            condition_logic=logic_value,
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -684,6 +694,7 @@ class StateTransition:
             "target": self.target,
             "conditions": [condition.to_dict() for condition in self.conditions],
             "actions": [action.to_dict() for action in self.actions],
+            "logic": self.condition_logic,
         }
 
 
@@ -726,6 +737,7 @@ class StateMachineConfig:
                         )
                         for action in transition.actions
                     ],
+                    condition_logic=transition.condition_logic,
                 )
                 for transition in self.transitions
             ],
@@ -1406,6 +1418,7 @@ class StateTransitionDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configure transition")
+        self.setMinimumWidth(760)
         self._states = list(states)
         self._signal_names = sorted({str(name).strip() for name in signal_names if str(name).strip()})
         self._message_names = sorted({str(name).strip() for name in message_names if str(name).strip()})
@@ -1435,6 +1448,18 @@ class StateTransitionDialog(QDialog):
         form.addRow("Source", self.source_combo)
         form.addRow("Target", self.target_combo)
         layout.addLayout(form)
+        logic_row = QHBoxLayout()
+        logic_row.addWidget(QLabel("Condition logic"))
+        self.condition_logic_combo = QComboBox()
+        self.condition_logic_combo.addItem("ALL (AND)", "AND")
+        self.condition_logic_combo.addItem("ANY (OR)", "OR")
+        if existing:
+            value = getattr(existing, "condition_logic", "AND")
+            index = max(0, self.condition_logic_combo.findData(value if value in {"AND", "OR"} else "AND"))
+            self.condition_logic_combo.setCurrentIndex(index)
+        logic_row.addWidget(self.condition_logic_combo)
+        logic_row.addStretch(1)
+        layout.addLayout(logic_row)
         self.condition_table = QTableWidget(0, 3)
         self.condition_table.setHorizontalHeaderLabels(["Signal", "Operator", "Value"])
         self.condition_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -1449,7 +1474,7 @@ class StateTransitionDialog(QDialog):
         condition_buttons = QHBoxLayout()
         add_condition = QToolButton()
         add_condition.setText("Add condition")
-        add_condition.clicked.connect(self._add_condition_row)
+        add_condition.clicked.connect(lambda: self._add_condition_row())
         remove_condition = QToolButton()
         remove_condition.setText("Remove condition")
         remove_condition.clicked.connect(self._remove_condition_row)
@@ -1473,7 +1498,7 @@ class StateTransitionDialog(QDialog):
         action_buttons = QHBoxLayout()
         add_action = QToolButton()
         add_action.setText("Add action")
-        add_action.clicked.connect(self._add_action_row)
+        add_action.clicked.connect(lambda: self._add_action_row())
         remove_action = QToolButton()
         remove_action.setText("Remove action")
         remove_action.clicked.connect(self._remove_action_row)
@@ -1504,12 +1529,8 @@ class StateTransitionDialog(QDialog):
         self.condition_table.insertRow(row)
         signal_combo = self._create_signal_combo(signal)
         self.condition_table.setCellWidget(row, 0, signal_combo)
-        combo = QComboBox()
-        combo.addItems([">", ">=", "<", "<=", "==", "!="])
-        if operator not in {">", ">=", "<", "<=", "==", "!="}:
-            operator = ">="
-        combo.setCurrentText(operator)
-        self.condition_table.setCellWidget(row, 1, combo)
+        operator_combo = self._create_operator_combo(operator)
+        self.condition_table.setCellWidget(row, 1, operator_combo)
         self.condition_table.setItem(row, 2, QTableWidgetItem(value))
 
     def _remove_condition_row(self) -> None:
@@ -1618,6 +1639,7 @@ class StateTransitionDialog(QDialog):
             return
         conditions: List[StateCondition] = []
         for row in range(self.condition_table.rowCount()):
+            self._finalize_condition_row(row)
             signal_widget = self.condition_table.cellWidget(row, 0)
             value_item = self.condition_table.item(row, 2)
             operator_widget = self.condition_table.cellWidget(row, 1)
@@ -1693,7 +1715,19 @@ class StateTransitionDialog(QDialog):
                         sequence_mode=sequence_mode,
                     )
                 )
-        self.result_transition = StateTransition(name=name, source=source, target=target, conditions=conditions, actions=actions)
+        logic_data = "AND"
+        if hasattr(self, "condition_logic_combo"):
+            data = self.condition_logic_combo.currentData()
+            if isinstance(data, str) and data in {"AND", "OR"}:
+                logic_data = data
+        self.result_transition = StateTransition(
+            name=name,
+            source=source,
+            target=target,
+            conditions=conditions,
+            actions=actions,
+            condition_logic=logic_data,
+        )
         super().accept()
 
     def _parse_pairs(self, text: str) -> Dict[str, float]:
@@ -1723,13 +1757,30 @@ class StateTransitionDialog(QDialog):
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         if self._signal_names:
             combo.addItems(self._signal_names)
-        if selected and selected not in self._signal_names:
-            combo.addItem(selected)
-        combo.setCurrentText(selected)
+        selected_text = selected if isinstance(selected, str) else str(selected or "")
+        if selected_text and selected_text not in self._signal_names:
+            combo.addItem(selected_text)
+        combo.setCurrentText(selected_text)
         completer = QCompleter(self._signal_names)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         combo.setCompleter(completer)
         return combo
+
+    def _create_operator_combo(self, selected: str) -> QComboBox:
+        combo = QComboBox()
+        operators = [">", ">=", "<", "<=", "==", "!="]
+        combo.addItems(operators)
+        if selected not in operators:
+            selected = ">="
+        combo.setCurrentText(selected)
+        return combo
+
+    def _finalize_condition_row(self, row: int) -> None:
+        value_item = self.condition_table.item(row, 2)
+        if value_item is None:
+            value_item = QTableWidgetItem("")
+            self.condition_table.setItem(row, 2, value_item)
+        self.condition_table.closePersistentEditor(value_item)
 
     def _create_target_editor(self, action_type: str, current: str) -> QComboBox:
         options: List[str] = []
@@ -2096,16 +2147,17 @@ class StateMachineGraphView(QGraphicsView):
             summary_lines: List[str] = []
             for transition in source_transitions:
                 summary_lines.append(f"➡️ {transition.target or '…'}")
-                conditions = (
-                    ", ".join(
+                if transition.conditions:
+                    separator = " AND " if transition.condition_logic != "OR" else " OR "
+                    conditions = separator.join(
                         f"{cond.signal} {cond.operator} {cond.value:g}"
                         for cond in transition.conditions
                         if cond.signal
                     )
-                    if transition.conditions
-                    else "always"
-                )
-                summary_lines.append(f"  if: {conditions}")
+                    prefix = "ALL" if transition.condition_logic != "OR" else "ANY"
+                    summary_lines.append(f"  if ({prefix}): {conditions}")
+                else:
+                    summary_lines.append("  if: always")
 
                 action_snippets: List[str] = []
 
@@ -2264,7 +2316,16 @@ class StateMachineRunner(QObject):
             self.stop()
             return
         for transition in transitions:
-            if not transition.conditions or all(condition.evaluate(values) for condition in transition.conditions):
+            should_trigger = False
+            if not transition.conditions:
+                should_trigger = True
+            else:
+                evaluations = [condition.evaluate(values) for condition in transition.conditions]
+                if transition.condition_logic == "OR":
+                    should_trigger = any(evaluations)
+                else:
+                    should_trigger = all(evaluations)
+            if should_trigger:
                 try:
                     self._execute_actions(transition.actions)
                 except BackendError as exc:
@@ -3631,7 +3692,7 @@ class MultiAxisPlotDock(QDockWidget):
             self.right_view.setGeometry(rect)
         self.right_view.linkedViewChanged(self.plot_item.vb, self.right_view.XAxis)
 
-    def add_signal(self, name: str, unit: str, side: Optional[str] = None) -> None:
+    def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
         side = (side or "left").lower()
         if side not in {"left", "right"}:
             side = "left"
@@ -3640,8 +3701,8 @@ class MultiAxisPlotDock(QDockWidget):
             if existing["side"] == side:
                 return
             self.remove_signal(name)
-        pen = pg.intColor(len(self._signals))
-        curve = pg.PlotDataItem(pen=pen)
+        color = pg.mkPen(pen if pen is not None else pg.intColor(len(self._signals)), width=2)
+        curve = pg.PlotDataItem(pen=color)
         curve.setZValue(len(self._signals) + 2)
         if hasattr(curve, "setCurveClickable"):
             curve.setCurveClickable(True)
@@ -5472,6 +5533,29 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = False
         self._show_dummy_advanced = False
         self._multi_plot_enabled = False
+        self._plot_color_map: Dict[str, QColor] = {}
+        self._plot_color_palette: List[QColor] = [
+            QColor("#1f77b4"),
+            QColor("#ff7f0e"),
+            QColor("#2ca02c"),
+            QColor("#d62728"),
+            QColor("#9467bd"),
+            QColor("#8c564b"),
+            QColor("#e377c2"),
+            QColor("#7f7f7f"),
+            QColor("#bcbd22"),
+            QColor("#17becf"),
+            QColor("#393b79"),
+            QColor("#637939"),
+            QColor("#8c6d31"),
+            QColor("#843c39"),
+            QColor("#7b4173"),
+            QColor("#3182bd"),
+            QColor("#9ecae1"),
+            QColor("#fd8d3c"),
+            QColor("#e6550d"),
+            QColor("#31a354"),
+        ]
         self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
         self._plot_assignments: Dict[str, Tuple[int, str]] = {}
         self._plot_counter = 0
@@ -5486,6 +5570,9 @@ class MainWindow(QMainWindow):
         self.channels_dock: Optional[QDockWidget] = None
         self.signals_dock: Optional[QDockWidget] = None
         self.state_machine_dock: Optional[QDockWidget] = None
+        self.state_machine_graph_dock: Optional[QDockWidget] = None
+        self.state_machine_states_dock: Optional[QDockWidget] = None
+        self.state_machine_transitions_dock: Optional[QDockWidget] = None
         self.state_machine_combo: Optional[QComboBox] = None
         self.state_machine_graph: Optional[StateMachineGraphView] = None
         self.state_machine_start_button: Optional[QPushButton] = None
@@ -5573,12 +5660,8 @@ class MainWindow(QMainWindow):
         self._build_channels_tab()
         self._build_signals_tab()
         self._build_state_machine_dock()
-        #self._apply_default_dock_layout()
-        #if not self._restore_dock_layout():
-        #    self._apply_default_dock_layout()
-        
-        self._saved_dock_state = None
-        self._apply_default_dock_layout()
+        if not self._restore_dock_layout():
+            self._apply_default_dock_layout()
         self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
@@ -6109,10 +6192,11 @@ class MainWindow(QMainWindow):
         self._apply_log_visibility()
 
     def _build_state_machine_dock(self) -> None:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        control_widget = QWidget()
+        control_layout = QVBoxLayout(control_widget)
+        control_layout.setContentsMargins(6, 6, 6, 6)
+        control_layout.setSpacing(6)
+
         top_controls = QHBoxLayout()
         top_controls.addWidget(QLabel("State Machine:"))
         self.state_machine_combo = QComboBox()
@@ -6136,7 +6220,8 @@ class MainWindow(QMainWindow):
         remove_btn.clicked.connect(self._on_state_machine_remove)
         for button in (new_btn, duplicate_btn, rename_btn, remove_btn):
             top_controls.addWidget(button)
-        layout.addLayout(top_controls)
+        control_layout.addLayout(top_controls)
+
         runner_controls = QHBoxLayout()
         self.state_machine_start_button = QPushButton("Start")
         self.state_machine_start_button.clicked.connect(self._on_state_machine_start)
@@ -6149,20 +6234,39 @@ class MainWindow(QMainWindow):
         self.state_machine_status_label = QLabel("Idle")
         self.state_machine_status_label.setStyleSheet("color: #475569;")
         runner_controls.addWidget(self.state_machine_status_label)
-        layout.addLayout(runner_controls)
+        control_layout.addLayout(runner_controls)
+
+        control_dock = QDockWidget("State Machine", self)
+        control_dock.setObjectName("Dock_StateMachine")
+        control_dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        control_dock.setWidget(control_widget)
+        self.state_machine_dock = control_dock
+        self.addDockWidget(Qt.RightDockWidgetArea, control_dock)
 
         self.state_machine_graph = StateMachineGraphView()
-        layout.addWidget(self.state_machine_graph)
-        tabs = QTabWidget()
-        tabs.setTabPosition(QTabWidget.North)
+        graph_widget = QWidget()
+        graph_layout = QVBoxLayout(graph_widget)
+        graph_layout.setContentsMargins(6, 6, 6, 6)
+        graph_layout.setSpacing(6)
+        graph_layout.addWidget(self.state_machine_graph)
+        graph_dock = QDockWidget("State Graph", self)
+        graph_dock.setObjectName("Dock_StateMachine_Graph")
+        graph_dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        graph_dock.setWidget(graph_widget)
+        self.state_machine_graph_dock = graph_dock
+        self.addDockWidget(Qt.RightDockWidgetArea, graph_dock)
 
         list_style = (
             "QTableWidget { border: 1px solid #d8dee9; border-radius: 6px; padding: 4px; }"
             " QTableWidget::item { padding: 4px 6px; }"
         )
 
-        states_tab = QWidget()
-        states_layout = QVBoxLayout(states_tab)
+        states_widget = QWidget()
+        states_layout = QVBoxLayout(states_widget)
         states_layout.setContentsMargins(4, 4, 4, 4)
         states_layout.setSpacing(6)
         self.state_table = QTableWidget()
@@ -6177,7 +6281,7 @@ class MainWindow(QMainWindow):
         self.state_table.setMinimumHeight(200)
         self.state_table.setStyleSheet(list_style)
         self.state_table.itemSelectionChanged.connect(self._on_state_selected)
-        states_layout.addWidget(self.state_table, 1)
+        states_layout.addWidget(self.state_table)
         state_buttons = QHBoxLayout()
         add_state_btn = QToolButton()
         add_state_btn.setText("Add")
@@ -6192,8 +6296,6 @@ class MainWindow(QMainWindow):
         state_buttons.addStretch(1)
         states_layout.addLayout(state_buttons)
         state_form = QFormLayout()
-        state_form.setContentsMargins(0, 0, 0, 0)
-        state_form.setSpacing(4)
         self.state_name_edit = QLineEdit()
         self.state_name_edit.setPlaceholderText("Rename selected state")
         self.state_name_edit.editingFinished.connect(self._on_state_name_edited)
@@ -6202,10 +6304,17 @@ class MainWindow(QMainWindow):
         self.state_initial_combo.currentIndexChanged.connect(self._on_initial_state_changed)
         state_form.addRow("Initial", self.state_initial_combo)
         states_layout.addLayout(state_form)
-        tabs.addTab(states_tab, "States")
+        states_dock = QDockWidget("States", self)
+        states_dock.setObjectName("Dock_StateMachine_States")
+        states_dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        states_dock.setWidget(states_widget)
+        self.state_machine_states_dock = states_dock
+        self.addDockWidget(Qt.RightDockWidgetArea, states_dock)
 
-        transitions_tab = QWidget()
-        transitions_layout = QVBoxLayout(transitions_tab)
+        transitions_widget = QWidget()
+        transitions_layout = QVBoxLayout(transitions_widget)
         transitions_layout.setContentsMargins(4, 4, 4, 4)
         transitions_layout.setSpacing(6)
         self.transition_table = QTableWidget()
@@ -6239,17 +6348,15 @@ class MainWindow(QMainWindow):
         transition_buttons.addWidget(remove_transition_btn)
         transition_buttons.addStretch(1)
         transitions_layout.addLayout(transition_buttons)
-        tabs.addTab(transitions_tab, "Transitions")
-
-        layout.addWidget(tabs, 1)
-        dock = QDockWidget("State Machine", self)
-        dock.setObjectName("Dock_StateMachine")
-        dock.setFeatures(
+        transitions_dock = QDockWidget("Transitions", self)
+        transitions_dock.setObjectName("Dock_StateMachine_Transitions")
+        transitions_dock.setFeatures(
             QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
         )
-        dock.setWidget(widget)
-        self.state_machine_dock = dock
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        transitions_dock.setWidget(transitions_widget)
+        self.state_machine_transitions_dock = transitions_dock
+        self.addDockWidget(Qt.RightDockWidgetArea, transitions_dock)
+
         self._refresh_state_machine_combo()
         self._set_state_machine_buttons()
 
@@ -6893,19 +7000,44 @@ class MainWindow(QMainWindow):
     def _apply_default_dock_layout(self) -> None:
         if not self.channels_dock or not self.signals_dock:
             return
-        for dock in (self.channels_dock, self.signals_dock):
-            dock.setFloating(False)
-            dock.show()
+        docks = [
+            self.channels_dock,
+            self.signals_dock,
+            self.state_machine_dock,
+            self.state_machine_graph_dock,
+            self.state_machine_states_dock,
+            self.state_machine_transitions_dock,
+        ]
+        for dock in docks:
+            if dock:
+                dock.setFloating(False)
+                dock.show()
         self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
-           # … und Signals daneben horizontal splitten (statt tabify)
         self.splitDockWidget(self.signals_dock, self.channels_dock, Qt.Horizontal)
         try:
             self.resizeDocks([self.signals_dock, self.channels_dock], [1000, 1000], Qt.Horizontal)
         except Exception:
             pass
-        #self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
-        #self.tabifyDockWidget(self.channels_dock, self.signals_dock)
-        #self.channels_dock.raise_()
+
+        right_anchor: Optional[QDockWidget] = None
+        if self.state_machine_dock:
+            self.addDockWidget(Qt.RightDockWidgetArea, self.state_machine_dock)
+            right_anchor = self.state_machine_dock
+        if self.state_machine_graph_dock:
+            self.addDockWidget(Qt.RightDockWidgetArea, self.state_machine_graph_dock)
+            if right_anchor:
+                self.splitDockWidget(right_anchor, self.state_machine_graph_dock, Qt.Vertical)
+            right_anchor = self.state_machine_graph_dock or right_anchor
+        if self.state_machine_states_dock:
+            self.addDockWidget(Qt.RightDockWidgetArea, self.state_machine_states_dock)
+            if right_anchor:
+                self.splitDockWidget(right_anchor, self.state_machine_states_dock, Qt.Horizontal)
+            right_anchor = self.state_machine_states_dock or right_anchor
+        if self.state_machine_transitions_dock:
+            self.addDockWidget(Qt.RightDockWidgetArea, self.state_machine_transitions_dock)
+            anchor = self.state_machine_states_dock or right_anchor
+            if anchor:
+                self.splitDockWidget(anchor, self.state_machine_transitions_dock, Qt.Horizontal)
 
     def _update_central_stack_visibility(self) -> None:
         if (
@@ -6943,6 +7075,8 @@ class MainWindow(QMainWindow):
             restored = bool(self.restoreState(self._saved_dock_state))
         except TypeError:
             return False
+        finally:
+            self._saved_dock_state = None
         return restored
 
     def _reset_layout(self) -> None:
@@ -7659,6 +7793,18 @@ class MainWindow(QMainWindow):
         if self._active_plot_id == identifier:
             self._active_plot_id = next(iter(self._plot_windows), None)
 
+    def _get_signal_color(self, name: str) -> QColor:
+        color = self._plot_color_map.get(name)
+        if color is not None:
+            return color
+        index = len(self._plot_color_map)
+        if index < len(self._plot_color_palette):
+            color = self._plot_color_palette[index]
+        else:
+            color = pg.intColor(index, hues=max(index + 1, len(self._plot_color_palette)))
+        self._plot_color_map[name] = color
+        return color
+
     def _assign_signal_via_dialog(self, name: str) -> None:
         if not self._plot_windows:
             created = self._create_plot_window()
@@ -7711,7 +7857,7 @@ class MainWindow(QMainWindow):
             prev_dock = self._plot_windows.get(prev_window)
             if prev_dock:
                 prev_dock.remove_signal(name)
-        dock.add_signal(name, self._watch_units.get(name, ""), side)
+        dock.add_signal(name, self._watch_units.get(name, ""), side, pen=self._get_signal_color(name))
         self._plot_assignments[name] = (window_id, side)
         self._active_plot_id = window_id
 
@@ -9103,7 +9249,7 @@ class MainWindow(QMainWindow):
             while buffer and buffer[0][0] < cutoff:
                 buffer.popleft()
             if name not in self._multi_plot_curves:
-                pen = pg.intColor(len(self._multi_plot_curves))
+                pen = pg.mkPen(self._get_signal_color(name), width=2)
                 curve = self.multi_plot_widget.plot(name=name, pen=pen)
                 self._multi_plot_curves[name] = curve
         if self._multi_plot_paused:
