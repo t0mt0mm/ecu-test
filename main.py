@@ -1418,6 +1418,7 @@ class StateTransitionDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configure transition")
+        self.setMinimumWidth(760)
         self._states = list(states)
         self._signal_names = sorted({str(name).strip() for name in signal_names if str(name).strip()})
         self._message_names = sorted({str(name).strip() for name in message_names if str(name).strip()})
@@ -1473,7 +1474,7 @@ class StateTransitionDialog(QDialog):
         condition_buttons = QHBoxLayout()
         add_condition = QToolButton()
         add_condition.setText("Add condition")
-        add_condition.clicked.connect(self._add_condition_row)
+        add_condition.clicked.connect(lambda: self._add_condition_row())
         remove_condition = QToolButton()
         remove_condition.setText("Remove condition")
         remove_condition.clicked.connect(self._remove_condition_row)
@@ -1497,7 +1498,7 @@ class StateTransitionDialog(QDialog):
         action_buttons = QHBoxLayout()
         add_action = QToolButton()
         add_action.setText("Add action")
-        add_action.clicked.connect(self._add_action_row)
+        add_action.clicked.connect(lambda: self._add_action_row())
         remove_action = QToolButton()
         remove_action.setText("Remove action")
         remove_action.clicked.connect(self._remove_action_row)
@@ -1528,12 +1529,8 @@ class StateTransitionDialog(QDialog):
         self.condition_table.insertRow(row)
         signal_combo = self._create_signal_combo(signal)
         self.condition_table.setCellWidget(row, 0, signal_combo)
-        combo = QComboBox()
-        combo.addItems([">", ">=", "<", "<=", "==", "!="])
-        if operator not in {">", ">=", "<", "<=", "==", "!="}:
-            operator = ">="
-        combo.setCurrentText(operator)
-        self.condition_table.setCellWidget(row, 1, combo)
+        operator_combo = self._create_operator_combo(operator)
+        self.condition_table.setCellWidget(row, 1, operator_combo)
         self.condition_table.setItem(row, 2, QTableWidgetItem(value))
 
     def _remove_condition_row(self) -> None:
@@ -1642,6 +1639,7 @@ class StateTransitionDialog(QDialog):
             return
         conditions: List[StateCondition] = []
         for row in range(self.condition_table.rowCount()):
+            self._finalize_condition_row(row)
             signal_widget = self.condition_table.cellWidget(row, 0)
             value_item = self.condition_table.item(row, 2)
             operator_widget = self.condition_table.cellWidget(row, 1)
@@ -1759,13 +1757,30 @@ class StateTransitionDialog(QDialog):
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         if self._signal_names:
             combo.addItems(self._signal_names)
-        if selected and selected not in self._signal_names:
-            combo.addItem(selected)
-        combo.setCurrentText(selected)
+        selected_text = selected if isinstance(selected, str) else str(selected or "")
+        if selected_text and selected_text not in self._signal_names:
+            combo.addItem(selected_text)
+        combo.setCurrentText(selected_text)
         completer = QCompleter(self._signal_names)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         combo.setCompleter(completer)
         return combo
+
+    def _create_operator_combo(self, selected: str) -> QComboBox:
+        combo = QComboBox()
+        operators = [">", ">=", "<", "<=", "==", "!="]
+        combo.addItems(operators)
+        if selected not in operators:
+            selected = ">="
+        combo.setCurrentText(selected)
+        return combo
+
+    def _finalize_condition_row(self, row: int) -> None:
+        value_item = self.condition_table.item(row, 2)
+        if value_item is None:
+            value_item = QTableWidgetItem("")
+            self.condition_table.setItem(row, 2, value_item)
+        self.condition_table.closePersistentEditor(value_item)
 
     def _create_target_editor(self, action_type: str, current: str) -> QComboBox:
         options: List[str] = []
@@ -3677,7 +3692,7 @@ class MultiAxisPlotDock(QDockWidget):
             self.right_view.setGeometry(rect)
         self.right_view.linkedViewChanged(self.plot_item.vb, self.right_view.XAxis)
 
-    def add_signal(self, name: str, unit: str, side: Optional[str] = None) -> None:
+    def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
         side = (side or "left").lower()
         if side not in {"left", "right"}:
             side = "left"
@@ -3686,8 +3701,8 @@ class MultiAxisPlotDock(QDockWidget):
             if existing["side"] == side:
                 return
             self.remove_signal(name)
-        pen = pg.intColor(len(self._signals))
-        curve = pg.PlotDataItem(pen=pen)
+        color = pg.mkPen(pen if pen is not None else pg.intColor(len(self._signals)), width=2)
+        curve = pg.PlotDataItem(pen=color)
         curve.setZValue(len(self._signals) + 2)
         if hasattr(curve, "setCurveClickable"):
             curve.setCurveClickable(True)
@@ -5518,6 +5533,29 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = False
         self._show_dummy_advanced = False
         self._multi_plot_enabled = False
+        self._plot_color_map: Dict[str, QColor] = {}
+        self._plot_color_palette: List[QColor] = [
+            QColor("#1f77b4"),
+            QColor("#ff7f0e"),
+            QColor("#2ca02c"),
+            QColor("#d62728"),
+            QColor("#9467bd"),
+            QColor("#8c564b"),
+            QColor("#e377c2"),
+            QColor("#7f7f7f"),
+            QColor("#bcbd22"),
+            QColor("#17becf"),
+            QColor("#393b79"),
+            QColor("#637939"),
+            QColor("#8c6d31"),
+            QColor("#843c39"),
+            QColor("#7b4173"),
+            QColor("#3182bd"),
+            QColor("#9ecae1"),
+            QColor("#fd8d3c"),
+            QColor("#e6550d"),
+            QColor("#31a354"),
+        ]
         self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
         self._plot_assignments: Dict[str, Tuple[int, str]] = {}
         self._plot_counter = 0
@@ -7755,6 +7793,18 @@ class MainWindow(QMainWindow):
         if self._active_plot_id == identifier:
             self._active_plot_id = next(iter(self._plot_windows), None)
 
+    def _get_signal_color(self, name: str) -> QColor:
+        color = self._plot_color_map.get(name)
+        if color is not None:
+            return color
+        index = len(self._plot_color_map)
+        if index < len(self._plot_color_palette):
+            color = self._plot_color_palette[index]
+        else:
+            color = pg.intColor(index, hues=max(index + 1, len(self._plot_color_palette)))
+        self._plot_color_map[name] = color
+        return color
+
     def _assign_signal_via_dialog(self, name: str) -> None:
         if not self._plot_windows:
             created = self._create_plot_window()
@@ -7807,7 +7857,7 @@ class MainWindow(QMainWindow):
             prev_dock = self._plot_windows.get(prev_window)
             if prev_dock:
                 prev_dock.remove_signal(name)
-        dock.add_signal(name, self._watch_units.get(name, ""), side)
+        dock.add_signal(name, self._watch_units.get(name, ""), side, pen=self._get_signal_color(name))
         self._plot_assignments[name] = (window_id, side)
         self._active_plot_id = window_id
 
@@ -9199,7 +9249,7 @@ class MainWindow(QMainWindow):
             while buffer and buffer[0][0] < cutoff:
                 buffer.popleft()
             if name not in self._multi_plot_curves:
-                pen = pg.intColor(len(self._multi_plot_curves))
+                pen = pg.mkPen(self._get_signal_color(name), width=2)
                 curve = self.multi_plot_widget.plot(name=name, pen=pen)
                 self._multi_plot_curves[name] = curve
         if self._multi_plot_paused:
