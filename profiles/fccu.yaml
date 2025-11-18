@@ -4,15 +4,15 @@ backend:
   device_id: PCAN_USBBUS1
 signals:
   watch:
-  - U_3V3
   - hs_out01_current
   - hs_out01_pwm
   - U_UB3
+  - U_3V3
   plot:
-  - U_3V3
   - hs_out01_current
   - hs_out01_pwm
   - U_UB3
+  - U_3V3
   multi_plot:
     enabled: true
     paused: false
@@ -22,12 +22,8 @@ signals:
         left:
         - hs_out01_current
         - hs_out01_pwm
-        right: []
-    - id: 1
-      axes:
-        left:
-        - U_3V3
         - U_UB3
+        - U_3V3
         right: []
 channels:
   profiles:
@@ -82,29 +78,80 @@ startup:
   - channel: HS1
     message: QM_High_side_output_init_01
     fields:
-      hs_out01_frequency: 2000.0
+      hs_out01_frequency: 1000.0
       hs_out01_pwm_min: 0.0
       hs_out01_pwm_max: 100.0
       hs_out01_Kp: 0.0
       hs_out01_Ki: 0.0
       hs_out01_Kd: 0.0
-      hs_out02_frequency: 1000.0
-      hs_out02_pwm_min: 0.0
-      hs_out02_pwm_max: 100.0
-      hs_out02_Kp: 0.0
-      hs_out02_Ki: 0.0
-      hs_out02_Kd: 0.0
-      hs_out03_frequency: 1000.0
-      hs_out03_pwm_min: 0.0
-      hs_out03_pwm_max: 100.0
-      hs_out03_Kp: 0.0
-      hs_out03_Ki: 0.0
-      hs_out03_Kd: 0.0
   teardown: []
   on_connect: false
   on_apply: false
-  delay_ms: 2
+  delay_ms: 0
   only_on_change: false
+state_machines:
+  active: State Machine
+  definitions:
+  - name: State Machine
+    states:
+    - name: State 1
+    - name: State 2
+    - name: State 3
+    transitions:
+    - name: bigger 21
+      source: State 1
+      target: State 2
+      conditions:
+      - signal: U_UB3
+        operator: '>='
+        value: 21000.0
+      actions:
+      - type: set_channel
+        channel: HS1
+        command: {}
+        sequence: start
+    - name: smaller 21
+      source: State 2
+      target: State 1
+      conditions:
+      - signal: U_UB3
+        operator: <
+        value: 21000.0
+      actions:
+      - type: send_message
+        message: QM_High_side_output_write
+        fields:
+          hs_out01_select: 0.0
+          hs_out01_value_pwm: 0.0
+      - type: set_channel
+        channel: HS1
+        command: {}
+        sequence: stop
+    - name: bigger 23
+      source: State 2
+      target: State 3
+      conditions:
+      - signal: U_UB3
+        operator: '>='
+        value: 23000.0
+      actions:
+      - type: set_channel
+        channel: HS1
+        command: {}
+        sequence: stop
+      - type: send_message
+        message: QM_High_side_output_write
+        fields:
+          hs_out01_value_pwm: 50.0
+    - name: smaller 20
+      source: State 3
+      target: State 1
+      conditions:
+      - signal: U_UB3
+        operator: <
+        value: 20000.0
+      actions: []
+    initial_state: State 1
 dummy:
   sim:
     ch_01_address:
@@ -249,7 +296,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9942234459677399
+        phase: 0.7907100227670933
     ch_02_status:
       message_name: QM_PT1000_status
       name: ch_02_status
@@ -264,7 +311,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.15856416786401106
+        phase: 0.41515522776025926
     ch_03_status:
       message_name: QM_PT1000_status
       name: ch_03_status
@@ -279,7 +326,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4239918619124341
+        phase: 0.6901708549441603
     ch_04_status:
       message_name: QM_PT1000_status
       name: ch_04_status
@@ -294,7 +341,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7071801781918364
+        phase: 0.8122384980654791
     ch_05_status:
       message_name: QM_PT1000_status
       name: ch_05_status
@@ -309,7 +356,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4793581408803542
+        phase: 0.7886053582577434
     ch_06_status:
       message_name: QM_PT1000_status
       name: ch_06_status
@@ -324,7 +371,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5480267762729208
+        phase: 0.8566841247392516
     ch_07_status:
       message_name: QM_PT1000_status
       name: ch_07_status
@@ -339,7 +386,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4230476490759041
+        phase: 0.4600353450599287
     ch_08_status:
       message_name: QM_PT1000_status
       name: ch_08_status
@@ -354,7 +401,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5875255218017155
+        phase: 0.9845075083119972
     ch_01_temp:
       message_name: QM_Board_Temp_status
       name: ch_01_temp
@@ -881,7 +928,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.0818940025651601
+        phase: 0.9304310087672771
     main_switch_ub2_enabled:
       message_name: QM_Ecu_status
       name: main_switch_ub2_enabled
@@ -896,7 +943,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2144087545674197
+        phase: 0.21390532737004864
     main_switch_ub3_enabled:
       message_name: QM_Ecu_status
       name: main_switch_ub3_enabled
@@ -911,7 +958,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.641344208033777
+        phase: 0.13691926533357146
     main_switch_actuator_enabled:
       message_name: QM_Ecu_status
       name: main_switch_actuator_enabled
@@ -926,7 +973,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8414697028143883
+        phase: 0.3798512148688491
     main_switch_sensor_enabled:
       message_name: QM_Ecu_status
       name: main_switch_sensor_enabled
@@ -941,7 +988,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.20364066211694776
+        phase: 0.5840520112348392
     main_switch_fault_ub1:
       message_name: QM_Ecu_status
       name: main_switch_fault_ub1
@@ -956,7 +1003,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.17280059922691193
+        phase: 0.6112499809637664
     main_switch_fault_ub2:
       message_name: QM_Ecu_status
       name: main_switch_fault_ub2
@@ -971,7 +1018,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9944111912409678
+        phase: 0.8268957253639839
     main_switch_fault_ub3:
       message_name: QM_Ecu_status
       name: main_switch_fault_ub3
@@ -986,7 +1033,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.42614049722690217
+        phase: 0.10366650974057812
     enable_ub1:
       message_name: QM_Main_switch_control
       name: enable_ub1
@@ -1001,7 +1048,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5596939085748326
+        phase: 0.9762706183573341
     enable_ub2:
       message_name: QM_Main_switch_control
       name: enable_ub2
@@ -1016,7 +1063,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7191701487889047
+        phase: 0.5189508525221688
     enable_ub3:
       message_name: QM_Main_switch_control
       name: enable_ub3
@@ -1031,7 +1078,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.08203500822640086
+        phase: 0.2717188561754392
     enable_actuator_supply:
       message_name: QM_Main_switch_control
       name: enable_actuator_supply
@@ -1046,7 +1093,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5810260289659126
+        phase: 0.22996585911556844
     enable_sensor_supply:
       message_name: QM_Main_switch_control
       name: enable_sensor_supply
@@ -1061,7 +1108,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.19752536374626395
+        phase: 0.9617904832069117
     device_01_status:
       message_name: QM_Port_Expander_status
       name: device_01_status
@@ -1076,7 +1123,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7925160407439258
+        phase: 0.9459895160095431
     device_02_status:
       message_name: QM_Port_Expander_status
       name: device_02_status
@@ -1091,7 +1138,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3528619161899833
+        phase: 0.6180270652866554
     device_03_status:
       message_name: QM_Port_Expander_status
       name: device_03_status
@@ -1106,7 +1153,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.26972814688987046
+        phase: 0.1548840277567355
     device_04_status:
       message_name: QM_Port_Expander_status
       name: device_04_status
@@ -1121,7 +1168,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.20271936101834087
+        phase: 0.411734034125365
     hs_out01_frequency:
       message_name: QM_High_side_output_init_01
       name: hs_out01_frequency
@@ -1904,7 +1951,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.37038985647584677
+        phase: 0.39184481464333776
     hs_out02_select:
       message_name: QM_High_side_output_write
       name: hs_out02_select
@@ -1919,7 +1966,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4100020338351812
+        phase: 0.06770211248436986
     hs_out03_select:
       message_name: QM_High_side_output_write
       name: hs_out03_select
@@ -1934,7 +1981,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2126746772620085
+        phase: 0.9955085918593723
     hs_out04_select:
       message_name: QM_High_side_output_write
       name: hs_out04_select
@@ -1949,7 +1996,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5322900287149118
+        phase: 0.7978919326453501
     hs_out05_select:
       message_name: QM_High_side_output_write
       name: hs_out05_select
@@ -1964,7 +2011,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9702671661538247
+        phase: 0.10305477407732566
     hs_out06_select:
       message_name: QM_High_side_output_write
       name: hs_out06_select
@@ -1979,7 +2026,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8022445136307557
+        phase: 0.01257575380349829
     hs_out07_select:
       message_name: QM_High_side_output_write
       name: hs_out07_select
@@ -1994,7 +2041,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.18282061613894496
+        phase: 0.31692183310166
     hs_out08_select:
       message_name: QM_High_side_output_write
       name: hs_out08_select
@@ -2009,7 +2056,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.32317351270412065
+        phase: 0.30853808946828876
     hs_out01_mode:
       message_name: QM_High_side_output_write
       name: hs_out01_mode
@@ -2024,7 +2071,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.24294308640792606
+        phase: 0.9614028367452919
     hs_out02_mode:
       message_name: QM_High_side_output_write
       name: hs_out02_mode
@@ -2039,7 +2086,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3766080155476065
+        phase: 0.01800016114463221
     hs_out03_mode:
       message_name: QM_High_side_output_write
       name: hs_out03_mode
@@ -2054,7 +2101,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.0433272674612033
+        phase: 0.8380311688803543
     hs_out04_mode:
       message_name: QM_High_side_output_write
       name: hs_out04_mode
@@ -2069,7 +2116,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.425873192706243
+        phase: 0.6465991797908347
     hs_out05_mode:
       message_name: QM_High_side_output_write
       name: hs_out05_mode
@@ -2084,7 +2131,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9511419135986559
+        phase: 0.6704968003356812
     hs_out06_mode:
       message_name: QM_High_side_output_write
       name: hs_out06_mode
@@ -2099,7 +2146,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5410272869236433
+        phase: 0.5365710414320009
     hs_out07_mode:
       message_name: QM_High_side_output_write
       name: hs_out07_mode
@@ -2114,7 +2161,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2925140114287963
+        phase: 0.8795267447898933
     hs_out08_mode:
       message_name: QM_High_side_output_write
       name: hs_out08_mode
@@ -2129,7 +2176,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.23102650259155433
+        phase: 0.43951723537585663
     hs_out01_value_pwm:
       message_name: QM_High_side_output_write
       name: hs_out01_value_pwm
@@ -2656,7 +2703,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7284314027172452
+        phase: 0.36334762339716653
     analog_out_02_select:
       message_name: QM_Analog_out_write
       name: analog_out_02_select
@@ -2671,7 +2718,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3349852020426556
+        phase: 0.15514333520217427
     analog_out_03_select:
       message_name: QM_Analog_out_write
       name: analog_out_03_select
@@ -2686,7 +2733,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9754525794798422
+        phase: 0.953808590837979
     analog_out_04_select:
       message_name: QM_Analog_out_write
       name: analog_out_04_select
@@ -2701,7 +2748,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.1292079371187569
+        phase: 0.06133697836052343
     analog_out_05_select:
       message_name: QM_Analog_out_write
       name: analog_out_05_select
@@ -2716,7 +2763,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.0492363007147083
+        phase: 0.40732762581531423
     analog_out_06_select:
       message_name: QM_Analog_out_write
       name: analog_out_06_select
@@ -2731,7 +2778,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.39526126756958335
+        phase: 0.8400571912751599
     analog_out_01_mode:
       message_name: QM_Analog_out_write
       name: analog_out_01_mode
@@ -2746,7 +2793,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.17046885809931112
+        phase: 0.9934635022203379
     analog_out_02_mode:
       message_name: QM_Analog_out_write
       name: analog_out_02_mode
@@ -2761,7 +2808,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6454562631207944
+        phase: 0.1310363148516548
     analog_out_03_mode:
       message_name: QM_Analog_out_write
       name: analog_out_03_mode
@@ -2776,7 +2823,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.41163898486532824
+        phase: 0.6479901971711937
     analog_out_04_mode:
       message_name: QM_Analog_out_write
       name: analog_out_04_mode
@@ -2791,7 +2838,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5072442379899051
+        phase: 0.758109838936445
     analog_out_01_value:
       message_name: QM_Analog_out_write
       name: analog_out_01_value
@@ -3094,7 +3141,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.12810780510926822
+        phase: 0.1710632229526291
     h_bridge_01_motor_polarity:
       message_name: QM_H_bridge_init_01
       name: h_bridge_01_motor_polarity
@@ -3109,7 +3156,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.23058550280325718
+        phase: 0.3206611696762254
     h_bridge_01_current_limit:
       message_name: QM_H_bridge_init_01
       name: h_bridge_01_current_limit
@@ -3124,7 +3171,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6780290923046866
+        phase: 0.044833330907249724
     h_bridge_01_slew_rate:
       message_name: QM_H_bridge_init_01
       name: h_bridge_01_slew_rate
@@ -3139,7 +3186,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8829332755069781
+        phase: 0.2660986602257538
     h_bridge_01_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_01
       name: h_bridge_01_pos_ctrl_input_no
@@ -3362,7 +3409,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5804773056743756
+        phase: 0.7576811196719201
     h_bridge_02_motor_polarity:
       message_name: QM_H_bridge_init_02
       name: h_bridge_02_motor_polarity
@@ -3377,7 +3424,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5897121448827547
+        phase: 0.15871317103341143
     h_bridge_02_current_limit:
       message_name: QM_H_bridge_init_02
       name: h_bridge_02_current_limit
@@ -3392,7 +3439,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.764775743961498
+        phase: 0.15751931021722376
     h_bridge_02_slew_rate:
       message_name: QM_H_bridge_init_02
       name: h_bridge_02_slew_rate
@@ -3407,7 +3454,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.00484089043335445
+        phase: 0.198386819182105
     h_bridge_02_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_02
       name: h_bridge_02_pos_ctrl_input_no
@@ -3630,7 +3677,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.0129173756838461
+        phase: 0.6634697723019797
     h_bridge_03_motor_polarity:
       message_name: QM_H_bridge_init_03
       name: h_bridge_03_motor_polarity
@@ -3645,7 +3692,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3344914743183969
+        phase: 0.6575841117380632
     h_bridge_03_current_limit:
       message_name: QM_H_bridge_init_03
       name: h_bridge_03_current_limit
@@ -3660,7 +3707,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4086662206660967
+        phase: 0.4234730592941547
     h_bridge_03_slew_rate:
       message_name: QM_H_bridge_init_03
       name: h_bridge_03_slew_rate
@@ -3675,7 +3722,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6290054357437964
+        phase: 0.35378349384336116
     h_bridge_03_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_03
       name: h_bridge_03_pos_ctrl_input_no
@@ -3898,7 +3945,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4652629785315715
+        phase: 0.7472889012069771
     h_bridge_04_motor_polarity:
       message_name: QM_H_bridge_init_04
       name: h_bridge_04_motor_polarity
@@ -3913,7 +3960,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6509157849872287
+        phase: 0.04677443556630523
     h_bridge_04_current_limit:
       message_name: QM_H_bridge_init_04
       name: h_bridge_04_current_limit
@@ -3928,7 +3975,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.07112582300955306
+        phase: 0.9666582092490006
     h_bridge_04_slew_rate:
       message_name: QM_H_bridge_init_04
       name: h_bridge_04_slew_rate
@@ -3943,7 +3990,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.1305644829098408
+        phase: 0.010326645332873863
     h_bridge_04_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_04
       name: h_bridge_04_pos_ctrl_input_no
@@ -4166,7 +4213,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9343949809099473
+        phase: 0.7486930007473854
     h_bridge_05_motor_polarity:
       message_name: QM_H_bridge_init_05
       name: h_bridge_05_motor_polarity
@@ -4181,7 +4228,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5539371519974172
+        phase: 0.4604188196854099
     h_bridge_05_current_limit:
       message_name: QM_H_bridge_init_05
       name: h_bridge_05_current_limit
@@ -4196,7 +4243,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2552754399932978
+        phase: 0.14333945956456973
     h_bridge_05_slew_rate:
       message_name: QM_H_bridge_init_05
       name: h_bridge_05_slew_rate
@@ -4211,7 +4258,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7621538494096944
+        phase: 0.6781994399581001
     h_bridge_05_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_05
       name: h_bridge_05_pos_ctrl_input_no
@@ -4434,7 +4481,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.05984901731043424
+        phase: 0.3151655139418078
     h_bridge_06_motor_polarity:
       message_name: QM_H_bridge_init_06
       name: h_bridge_06_motor_polarity
@@ -4449,7 +4496,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.041320642313598555
+        phase: 0.5850104948810332
     h_bridge_06_current_limit:
       message_name: QM_H_bridge_init_06
       name: h_bridge_06_current_limit
@@ -4464,7 +4511,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.04138277808974333
+        phase: 0.9761893350569378
     h_bridge_06_slew_rate:
       message_name: QM_H_bridge_init_06
       name: h_bridge_06_slew_rate
@@ -4479,7 +4526,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7640080303554103
+        phase: 0.9465911048111173
     h_bridge_06_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_06
       name: h_bridge_06_pos_ctrl_input_no
@@ -4702,7 +4749,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8447973752198277
+        phase: 0.30578962455966263
     h_bridge_07_motor_polarity:
       message_name: QM_H_bridge_init_07
       name: h_bridge_07_motor_polarity
@@ -4717,7 +4764,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7036214013038274
+        phase: 0.3559103744253417
     h_bridge_07_current_limit:
       message_name: QM_H_bridge_init_07
       name: h_bridge_07_current_limit
@@ -4732,7 +4779,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.759488449138932
+        phase: 0.7827570671451659
     h_bridge_07_slew_rate:
       message_name: QM_H_bridge_init_07
       name: h_bridge_07_slew_rate
@@ -4747,7 +4794,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4117288532623101
+        phase: 0.8318934963400921
     h_bridge_07_pos_ctrl_input_no:
       message_name: QM_H_bridge_init_07
       name: h_bridge_07_pos_ctrl_input_no
@@ -4778,7 +4825,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4353586345935102
+        phase: 0.7763122174901423
     bridge_01_disabled:
       message_name: QM_H_bridge_status
       name: bridge_01_disabled
@@ -4793,7 +4840,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.002491000806247423
+        phase: 0.6322147641960516
     bridge_01_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_01_vs_undervoltage
@@ -4808,7 +4855,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5803079470434227
+        phase: 0.391064005333045
     bridge_01_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_01_over_temperature
@@ -4823,7 +4870,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8695377484489353
+        phase: 0.4937563125308766
     bridge_01_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_01_current_limit_temp
@@ -4838,7 +4885,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.08958811564284441
+        phase: 0.8191494126498029
     bridge_01_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_01_current_limit
@@ -4853,7 +4900,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7063486943620804
+        phase: 0.3543346485067007
     bridge_01_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_01_open_load_out1
@@ -4868,7 +4915,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6362395455727409
+        phase: 0.3748002651990474
     bridge_01_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_01_open_load_out2
@@ -4883,7 +4930,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9373691520005801
+        phase: 0.46945359939756315
     bridge_01_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_01_actual_direction
@@ -4898,7 +4945,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9228906366357906
+        phase: 0.5581576963781117
     bridge_01_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_01_actual_duty
@@ -4945,7 +4992,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6553752111389411
+        phase: 0.6202333085445947
     bridge_02_communication_ok:
       message_name: QM_H_bridge_status
       name: bridge_02_communication_ok
@@ -4960,7 +5007,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6203268010021357
+        phase: 0.5382362194544608
     bridge_02_disabled:
       message_name: QM_H_bridge_status
       name: bridge_02_disabled
@@ -4975,7 +5022,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7613092312266799
+        phase: 0.3014420817625323
     bridge_02_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_02_vs_undervoltage
@@ -4990,7 +5037,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.07259319230107064
+        phase: 0.004838343786402577
     bridge_02_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_02_over_temperature
@@ -5005,7 +5052,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8726915158407386
+        phase: 0.7901767508400905
     bridge_02_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_02_current_limit_temp
@@ -5020,7 +5067,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.37309273577258306
+        phase: 0.27630517975517144
     bridge_02_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_02_current_limit
@@ -5035,7 +5082,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.27452640911796533
+        phase: 0.6971674056718382
     bridge_02_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_02_open_load_out1
@@ -5050,7 +5097,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8324206619546046
+        phase: 0.700521244768088
     bridge_02_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_02_open_load_out2
@@ -5065,7 +5112,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.33523159423747484
+        phase: 0.7681350330624658
     bridge_02_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_02_actual_direction
@@ -5080,7 +5127,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7655464722388083
+        phase: 0.565359436108465
     bridge_02_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_02_actual_duty
@@ -5127,7 +5174,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.28757648314462303
+        phase: 0.4717399811147416
     bridge_03_communication_ok:
       message_name: QM_H_bridge_status
       name: bridge_03_communication_ok
@@ -5142,7 +5189,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8209814144866566
+        phase: 0.9907228362389894
     bridge_03_disabled:
       message_name: QM_H_bridge_status
       name: bridge_03_disabled
@@ -5157,7 +5204,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6074862126243012
+        phase: 0.1568069494934301
     bridge_03_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_03_vs_undervoltage
@@ -5172,7 +5219,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.737734980871695
+        phase: 0.6624002410905282
     bridge_03_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_03_over_temperature
@@ -5187,7 +5234,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6929366632389538
+        phase: 0.8753676385306943
     bridge_03_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_03_current_limit_temp
@@ -5202,7 +5249,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.17152249039223233
+        phase: 0.27967025873012297
     bridge_03_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_03_current_limit
@@ -5217,7 +5264,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.634050904047466
+        phase: 0.17739199806934847
     bridge_03_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_03_open_load_out1
@@ -5232,7 +5279,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5317131103171812
+        phase: 0.7828483203979707
     bridge_03_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_03_open_load_out2
@@ -5247,7 +5294,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7772399941601503
+        phase: 0.10498551123761157
     bridge_03_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_03_actual_direction
@@ -5262,7 +5309,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9960029941793602
+        phase: 0.8671712888460459
     bridge_03_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_03_actual_duty
@@ -5309,7 +5356,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7903970508650724
+        phase: 0.23141112787011608
     bridge_04_communication_ok:
       message_name: QM_H_bridge_status
       name: bridge_04_communication_ok
@@ -5324,7 +5371,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.33138192809133327
+        phase: 0.01232983594998327
     bridge_04_disabled:
       message_name: QM_H_bridge_status
       name: bridge_04_disabled
@@ -5339,7 +5386,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.577389966308729
+        phase: 0.6362989594448384
     bridge_04_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_04_vs_undervoltage
@@ -5354,7 +5401,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8601693412650314
+        phase: 0.9223884386528165
     bridge_04_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_04_over_temperature
@@ -5369,7 +5416,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9374740695288891
+        phase: 0.14426717768873631
     bridge_04_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_04_current_limit_temp
@@ -5384,7 +5431,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7765037527864946
+        phase: 0.8323838135145115
     bridge_04_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_04_current_limit
@@ -5399,7 +5446,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.06541330360513764
+        phase: 0.7141912318058112
     bridge_04_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_04_open_load_out1
@@ -5414,7 +5461,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.0409595696736168
+        phase: 0.6927616244967526
     bridge_04_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_04_open_load_out2
@@ -5429,7 +5476,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7089733576834627
+        phase: 0.38839227000067544
     bridge_04_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_04_actual_direction
@@ -5444,7 +5491,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5543582022383262
+        phase: 0.8274252630037678
     bridge_04_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_04_actual_duty
@@ -5491,7 +5538,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.18455363996571428
+        phase: 0.5951117690670866
     bridge_05_communication_ok:
       message_name: QM_H_bridge_status
       name: bridge_05_communication_ok
@@ -5506,7 +5553,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.38531675685350497
+        phase: 0.9899427959622383
     bridge_05_disabled:
       message_name: QM_H_bridge_status
       name: bridge_05_disabled
@@ -5521,7 +5568,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9692259086318714
+        phase: 0.1289874796121726
     bridge_05_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_05_vs_undervoltage
@@ -5536,7 +5583,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4411975576874986
+        phase: 0.7256306052470967
     bridge_05_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_05_over_temperature
@@ -5551,7 +5598,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.505094790611277
+        phase: 0.406478340250487
     bridge_05_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_05_current_limit_temp
@@ -5566,7 +5613,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7979568048590546
+        phase: 0.33725642240157405
     bridge_05_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_05_current_limit
@@ -5581,7 +5628,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.94401448688047
+        phase: 0.5671115416461375
     bridge_05_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_05_open_load_out1
@@ -5596,7 +5643,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9579480230896956
+        phase: 0.750209336001348
     bridge_05_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_05_open_load_out2
@@ -5611,7 +5658,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3820176454358196
+        phase: 0.45886446024015737
     bridge_05_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_05_actual_direction
@@ -5626,7 +5673,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7932271706461289
+        phase: 0.5276374849280311
     bridge_05_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_05_actual_duty
@@ -5673,7 +5720,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.21717377155655393
+        phase: 0.8689321660925545
     bridge_06_communication_ok:
       message_name: QM_H_bridge_status
       name: bridge_06_communication_ok
@@ -5688,7 +5735,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8006053248885547
+        phase: 0.13568034584502653
     bridge_06_disabled:
       message_name: QM_H_bridge_status
       name: bridge_06_disabled
@@ -5703,7 +5750,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.28028553093909625
+        phase: 0.13689843544624658
     bridge_06_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_06_vs_undervoltage
@@ -5718,7 +5765,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9479399502331357
+        phase: 0.9602195482098107
     bridge_06_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_06_over_temperature
@@ -5733,7 +5780,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5179260744233388
+        phase: 0.7643071249031127
     bridge_06_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_06_current_limit_temp
@@ -5748,7 +5795,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9833300748266413
+        phase: 0.7311440243111123
     bridge_06_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_06_current_limit
@@ -5763,7 +5810,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.32948966236826704
+        phase: 0.5673264659943081
     bridge_06_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_06_open_load_out1
@@ -5778,7 +5825,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7142324968798096
+        phase: 0.16450523376789883
     bridge_06_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_06_open_load_out2
@@ -5793,7 +5840,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7777268145564379
+        phase: 0.08459026057411567
     bridge_06_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_06_actual_direction
@@ -5808,7 +5855,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.39350088406471695
+        phase: 0.7375951234052733
     bridge_06_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_06_actual_duty
@@ -5855,7 +5902,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8882307848017661
+        phase: 0.3448724389236193
     bridge_07_communication_ok:
       message_name: QM_H_bridge_status
       name: bridge_07_communication_ok
@@ -5870,7 +5917,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7615665699310274
+        phase: 0.1840687361176443
     bridge_07_disabled:
       message_name: QM_H_bridge_status
       name: bridge_07_disabled
@@ -5885,7 +5932,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.32398285654752546
+        phase: 0.9821384993430394
     bridge_07_vs_undervoltage:
       message_name: QM_H_bridge_status
       name: bridge_07_vs_undervoltage
@@ -5900,7 +5947,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7491088037280755
+        phase: 0.8725483609795079
     bridge_07_over_temperature:
       message_name: QM_H_bridge_status
       name: bridge_07_over_temperature
@@ -5915,7 +5962,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9701280984465454
+        phase: 0.8833895665044601
     bridge_07_current_limit_temp:
       message_name: QM_H_bridge_status
       name: bridge_07_current_limit_temp
@@ -5930,7 +5977,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3754953636550752
+        phase: 0.040882407724132874
     bridge_07_current_limit:
       message_name: QM_H_bridge_status
       name: bridge_07_current_limit
@@ -5945,7 +5992,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8684810018899334
+        phase: 0.5649310854438149
     bridge_07_open_load_out1:
       message_name: QM_H_bridge_status
       name: bridge_07_open_load_out1
@@ -5960,7 +6007,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2154030957148093
+        phase: 0.4213996825639601
     bridge_07_open_load_out2:
       message_name: QM_H_bridge_status
       name: bridge_07_open_load_out2
@@ -5975,7 +6022,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7487514557250231
+        phase: 0.21949539983887179
     bridge_07_actual_direction:
       message_name: QM_H_bridge_status
       name: bridge_07_actual_direction
@@ -5990,7 +6037,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.601597697351053
+        phase: 0.19346259156896894
     bridge_07_actual_duty:
       message_name: QM_H_bridge_status
       name: bridge_07_actual_duty
@@ -6037,7 +6084,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.18516150068549997
+        phase: 0.927346200389296
     fusa_hs_out01_frequency:
       message_name: FUSA_High_side_output_init_01
       name: fusa_hs_out01_frequency
@@ -6814,13 +6861,13 @@ dummy:
       maximum: 3276.7
       category: analog
       analog:
-        generator: sine
-        offset: -0.0500000000001819
-        amplitude: 1638.375
+        generator: ramp
+        offset: 0.95
+        amplitude: 1.1
         frequency: 0.02
         slope: 1.0
-        noise: 65.535
-        hold_value: -0.0500000000001819
+        noise: 0.0
+        hold_value: -0.05
         phase: 0.0
     ch_02_temperature:
       message_name: QM_PT1000_status
@@ -7204,7 +7251,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.47599776557576934
+        phase: 0.5421649422145836
     analog_input_02_mode:
       message_name: QM_analog_input_control
       name: analog_input_02_mode
@@ -7219,7 +7266,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.1646913860820134
+        phase: 0.9130226113159533
     analog_input_03_mode:
       message_name: QM_analog_input_control
       name: analog_input_03_mode
@@ -7234,7 +7281,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.07158773196465096
+        phase: 0.1446086987731242
     analog_input_04_mode:
       message_name: QM_analog_input_control
       name: analog_input_04_mode
@@ -7249,7 +7296,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.351450638134309
+        phase: 0.9741262503211774
     analog_input_05_mode:
       message_name: QM_analog_input_control
       name: analog_input_05_mode
@@ -7264,7 +7311,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.25433890799309866
+        phase: 0.7561847667751992
     analog_input_06_mode:
       message_name: QM_analog_input_control
       name: analog_input_06_mode
@@ -7279,7 +7326,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6469555548267666
+        phase: 0.6058473823780306
     analog_input_07_mode:
       message_name: QM_analog_input_control
       name: analog_input_07_mode
@@ -7294,7 +7341,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.12983490347167925
+        phase: 0.5218794907848183
     analog_input_08_mode:
       message_name: QM_analog_input_control
       name: analog_input_08_mode
@@ -7309,7 +7356,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7063092580509086
+        phase: 0.25544271990622125
     analog_input_09_mode:
       message_name: QM_analog_input_control
       name: analog_input_09_mode
@@ -7324,7 +7371,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3166071713186659
+        phase: 0.052108481200485945
     analog_input_10_mode:
       message_name: QM_analog_input_control
       name: analog_input_10_mode
@@ -7339,7 +7386,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.33219112607754075
+        phase: 0.8713608664602882
     analog_input_11_mode:
       message_name: QM_analog_input_control
       name: analog_input_11_mode
@@ -7354,7 +7401,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2839788356794284
+        phase: 0.5238836522518607
     analog_input_12_mode:
       message_name: QM_analog_input_control
       name: analog_input_12_mode
@@ -7369,7 +7416,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7510663034341537
+        phase: 0.4018108713347781
     analog_input_13_mode:
       message_name: QM_analog_input_control
       name: analog_input_13_mode
@@ -7384,7 +7431,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.1012131190716129
+        phase: 0.7744420874507785
     analog_input_14_mode:
       message_name: QM_analog_input_control
       name: analog_input_14_mode
@@ -7399,7 +7446,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7222581945139385
+        phase: 0.4983131890914997
     analog_input_15_mode:
       message_name: QM_analog_input_control
       name: analog_input_15_mode
@@ -7414,7 +7461,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9741585089942363
+        phase: 0.6531255522898609
     analog_input_16_mode:
       message_name: QM_analog_input_control
       name: analog_input_16_mode
@@ -7429,7 +7476,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.40959850415789834
+        phase: 0.7600246251551953
     flex_in_01_mode:
       message_name: QM_flex_input_status
       name: flex_in_01_mode
@@ -7444,7 +7491,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.600434015656787
+        phase: 0.296279909964722
     flex_in_01_status:
       message_name: QM_flex_input_status
       name: flex_in_01_status
@@ -7459,7 +7506,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.1514213741668783
+        phase: 0.17029315396684863
     flex_in_01_val:
       message_name: QM_flex_input_status
       name: flex_in_01_val
@@ -7490,7 +7537,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.39269230211695605
+        phase: 0.3006435803929538
     single_ch_02_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_02_status
@@ -7505,7 +7552,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6211330500418496
+        phase: 0.20264607644312238
     single_ch_03_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_03_status
@@ -7520,7 +7567,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.048951647997155234
+        phase: 0.6533831697399802
     single_ch_04_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_04_status
@@ -7535,7 +7582,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5660639315844783
+        phase: 0.8119009771666839
     single_ch_05_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_05_status
@@ -7550,7 +7597,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3608334555176579
+        phase: 0.6234062188919011
     single_ch_06_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_06_status
@@ -7565,7 +7612,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7705395609800043
+        phase: 0.17339709977794282
     single_ch_07_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_07_status
@@ -7580,7 +7627,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.863564651557946
+        phase: 0.9421282388093438
     single_ch_08_status:
       message_name: FUSA_PT_1000_Status
       name: single_ch_08_status
@@ -7595,7 +7642,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.9845147709075579
+        phase: 0.6306359266186737
     single_ch_01_temp:
       message_name: FUSA_PT_1000_Status
       name: single_ch_01_temp
@@ -7738,7 +7785,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.7667245046947976
+        phase: 0.4715229094200799
     redundant_ch_02_status:
       message_name: FUSA_PT_1000_Status
       name: redundant_ch_02_status
@@ -7753,7 +7800,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5085290485672982
+        phase: 0.48702217360320665
     redundant_ch_03_status:
       message_name: FUSA_PT_1000_Status
       name: redundant_ch_03_status
@@ -7768,7 +7815,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.10874079087460797
+        phase: 0.9121255219438956
     redundant_ch_04_status:
       message_name: FUSA_PT_1000_Status
       name: redundant_ch_04_status
@@ -7783,7 +7830,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6006125467858829
+        phase: 0.7411265555460915
     redundant_ch_01_temp:
       message_name: FUSA_PT_1000_Status
       name: redundant_ch_01_temp
@@ -8726,9 +8773,9 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.4464685753575348
+        phase: 0.8568893259485768
     status:
-      message_name: FUSA_ECU_Sensor_Supply_Status
+      message_name: can_peripheral_status
       name: status
       unit: ''
       minimum: 0
@@ -8741,7 +8788,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.6569609186753116
+        phase: 0.21960229276067778
     measure:
       message_name: FUSA_ECU_Sensor_Supply_Status
       name: measure
@@ -8772,7 +8819,7 @@ dummy:
         high_value: 1.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.13911435309001186
+        phase: 0.7680387504107422
     speed_setpoint0:
       message_name: can_peripheral_ctrl
       name: speed_setpoint0
@@ -8819,7 +8866,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.49577896155430745
+        phase: 0.33901327332931497
     baudrate_can_4:
       message_name: can_peripheral_init
       name: baudrate_can_4
@@ -8834,7 +8881,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.8725882515384598
+        phase: 0.8246696784865527
     baudrate_can_5:
       message_name: can_peripheral_init
       name: baudrate_can_5
@@ -8849,7 +8896,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.3961645114942993
+        phase: 0.6859880964125021
     baudrate_can_6:
       message_name: can_peripheral_init
       name: baudrate_can_6
@@ -8864,7 +8911,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.03982320757358904
+        phase: 0.06878087140543587
     mapping_pierburg_pump:
       message_name: can_peripheral_init
       name: mapping_pierburg_pump
@@ -8879,7 +8926,7 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.5781823835539093
+        phase: 0.09899852893463168
     mapping_trican:
       message_name: can_peripheral_init
       name: mapping_trican
@@ -8894,4 +8941,4 @@ dummy:
         high_value: 255.0
         low_value: 0.0
         manual_value: 0.0
-        phase: 0.2718733257655609
+        phase: 0.2122959584138604

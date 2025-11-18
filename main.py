@@ -2029,15 +2029,15 @@ class StateMachineGraphView(QGraphicsView):
         base_pen.setWidthF(2.0)
         highlight_pen = QPen(QColor("#2563eb"))
         highlight_pen.setWidthF(3.0)
-        text_color = QColor("#0f172a")
+        text_color = QColor("#0e1424")
         edge_pen = QPen(QColor("#cbd5f5"))
         edge_pen.setWidthF(2.0)
         active_edge_pen = QPen(QColor("#6366f1"))
         active_edge_pen.setWidthF(2.5)
         arrow_highlight = QBrush(QColor("#6366f1"))
-        label_pen = QPen(QColor("#cbd5f5"))
-        label_pen.setWidthF(1.0)
-        label_brush = QBrush(QColor(255, 255, 255, 230))
+        label_pen = QPen(Qt.NoPen)
+        #label_pen.setWidthF(1.0)
+        label_brush = QBrush(QColor(255, 255, 255, 50))
         transitions_by_source: Dict[str, List[StateTransition]] = {}
         for transition in config.transitions:
             transitions_by_source.setdefault(transition.source, []).append(transition)
@@ -2095,28 +2095,77 @@ class StateMachineGraphView(QGraphicsView):
                 continue
             summary_lines: List[str] = []
             for transition in source_transitions:
-                summary_lines.append(f"→ {transition.target or '…'}")
+                summary_lines.append(f"➡️ {transition.target or '…'}")
                 conditions = (
                     ", ".join(
-                        f"{cond.signal} {cond.operator} {cond.value:g}" for cond in transition.conditions if cond.signal
+                        f"{cond.signal} {cond.operator} {cond.value:g}"
+                        for cond in transition.conditions
+                        if cond.signal
                     )
                     if transition.conditions
-                    else "immer"
+                    else "always"
                 )
-                summary_lines.append(f"  wenn: {conditions}")
+                summary_lines.append(f"  if: {conditions}")
+
                 action_snippets: List[str] = []
+
                 for action in transition.actions:
                     if action.type == "send_message":
-                        detail = action.message or "Nachricht"
+                        # Nur die Signals, jede Zuweisung in einer eigenen Zeile,
+                        # BO/Message-Name absichtlich ignorieren.
                         if action.fields:
-                            detail += f" ({len(action.fields)} Felder)"
-                        action_snippets.append(detail)
+                            field_lines: List[str] = []
+                            for key, value in action.fields.items():
+                                try:
+                                    num = float(value)
+                                    field_lines.append(f"{key}={num:g}")
+                                except (TypeError, ValueError):
+                                    field_lines.append(f"{key}={value}")
+                            snippet = "\n".join(field_lines)
+                        else:
+                            snippet = "send_message"
+
+                        action_snippets.append(snippet)
+
                     elif action.type == "set_channel":
-                        field_info = ", ".join(f"{k}={v:g}" for k, v in action.command.items())
-                        action_snippets.append(f"{action.channel}: {field_info}" if action.channel else field_info)
+                        # Zeige Channel + gesetzte Parameter + Sequenz-Mode wie in der GUI
+                        if action.command:
+                            param_parts = [
+                                f"{key}={value:g}" for key, value in action.command.items()
+                            ]
+                            params_text = ", ".join(param_parts)
+                        else:
+                            params_text = ""
+
+                        seq_label_map = {
+                            "none": "",
+                            "start": "Start sequence",
+                            "stop": "Stop sequence",
+                            "reset": "Reset sequence",
+                        }
+                        seq_label = seq_label_map.get(action.sequence_mode or "none", "")
+                        seq_text = f" [{seq_label}]" if seq_label else ""
+
+                        channel_label = action.channel or "channel"
+
+                        if params_text:
+                            snippet = f"{channel_label}: {params_text}{seq_text}"
+                        else:
+                            snippet = f"{channel_label}{seq_text}"
+
+                        action_snippets.append(snippet)
+
                     else:
                         action_snippets.append(action.type)
-                summary_lines.append(f"  tue: {', '.join(action_snippets) if action_snippets else '—'}")
+
+                if action_snippets:
+                    action_text = "\n ".join(action_snippets)
+                else:
+                    action_text = "—"
+
+                summary_lines.append("────────────")
+                summary_lines.append(f"  action: {action_text}")
+
                 summary_lines.append("")
             summary_text = "\n".join(line for line in summary_lines if line is not None)
             summary_item = scene.addText(summary_text)

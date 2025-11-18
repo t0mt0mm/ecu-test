@@ -15,20 +15,3 @@
     tau: 0.5
     current_gain: 8.0
     noise: 0.1
-- name: HS2
-  type: HighSide
-  write:
-    message: QM_High_side_output_write
-    fields:
-      hs_out02_select: select
-      hs_out02_mode: mode
-      hs_out02_value_pwm: pwm
-  status:
-    message: QM_High_side_output_status
-    fields:
-      hs_out02_current: current
-      hs_out02_pwm: pwm_feedback
-  sim:
-    tau: 0.5
-    current_gain: 8.0
-    noise: 0.1
