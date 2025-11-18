@@ -3692,7 +3692,7 @@ class MultiAxisPlotDock(QDockWidget):
             self.right_view.setGeometry(rect)
         self.right_view.linkedViewChanged(self.plot_item.vb, self.right_view.XAxis)
 
-    def add_signal(self, name: str, unit: str, side: Optional[str] = None) -> None:
+    def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
         side = (side or "left").lower()
         if side not in {"left", "right"}:
             side = "left"
@@ -3701,8 +3701,8 @@ class MultiAxisPlotDock(QDockWidget):
             if existing["side"] == side:
                 return
             self.remove_signal(name)
-        pen = pg.intColor(len(self._signals))
-        curve = pg.PlotDataItem(pen=pen)
+        color = pg.mkPen(pen if pen is not None else pg.intColor(len(self._signals)), width=2)
+        curve = pg.PlotDataItem(pen=color)
         curve.setZValue(len(self._signals) + 2)
         if hasattr(curve, "setCurveClickable"):
             curve.setCurveClickable(True)
@@ -5533,6 +5533,29 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = False
         self._show_dummy_advanced = False
         self._multi_plot_enabled = False
+        self._plot_color_map: Dict[str, QColor] = {}
+        self._plot_color_palette: List[QColor] = [
+            QColor("#1f77b4"),
+            QColor("#ff7f0e"),
+            QColor("#2ca02c"),
+            QColor("#d62728"),
+            QColor("#9467bd"),
+            QColor("#8c564b"),
+            QColor("#e377c2"),
+            QColor("#7f7f7f"),
+            QColor("#bcbd22"),
+            QColor("#17becf"),
+            QColor("#393b79"),
+            QColor("#637939"),
+            QColor("#8c6d31"),
+            QColor("#843c39"),
+            QColor("#7b4173"),
+            QColor("#3182bd"),
+            QColor("#9ecae1"),
+            QColor("#fd8d3c"),
+            QColor("#e6550d"),
+            QColor("#31a354"),
+        ]
         self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
         self._plot_assignments: Dict[str, Tuple[int, str]] = {}
         self._plot_counter = 0
@@ -7770,6 +7793,18 @@ class MainWindow(QMainWindow):
         if self._active_plot_id == identifier:
             self._active_plot_id = next(iter(self._plot_windows), None)
 
+    def _get_signal_color(self, name: str) -> QColor:
+        color = self._plot_color_map.get(name)
+        if color is not None:
+            return color
+        index = len(self._plot_color_map)
+        if index < len(self._plot_color_palette):
+            color = self._plot_color_palette[index]
+        else:
+            color = pg.intColor(index, hues=max(index + 1, len(self._plot_color_palette)))
+        self._plot_color_map[name] = color
+        return color
+
     def _assign_signal_via_dialog(self, name: str) -> None:
         if not self._plot_windows:
             created = self._create_plot_window()
@@ -7822,7 +7857,7 @@ class MainWindow(QMainWindow):
             prev_dock = self._plot_windows.get(prev_window)
             if prev_dock:
                 prev_dock.remove_signal(name)
-        dock.add_signal(name, self._watch_units.get(name, ""), side)
+        dock.add_signal(name, self._watch_units.get(name, ""), side, pen=self._get_signal_color(name))
         self._plot_assignments[name] = (window_id, side)
         self._active_plot_id = window_id
 
@@ -9214,7 +9249,7 @@ class MainWindow(QMainWindow):
             while buffer and buffer[0][0] < cutoff:
                 buffer.popleft()
             if name not in self._multi_plot_curves:
-                pen = pg.intColor(len(self._multi_plot_curves))
+                pen = pg.mkPen(self._get_signal_color(name), width=2)
                 curve = self.multi_plot_widget.plot(name=name, pen=pen)
                 self._multi_plot_curves[name] = curve
         if self._multi_plot_paused:
