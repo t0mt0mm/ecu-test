@@ -1474,7 +1474,7 @@ class StateTransitionDialog(QDialog):
         condition_buttons = QHBoxLayout()
         add_condition = QToolButton()
         add_condition.setText("Add condition")
-        add_condition.clicked.connect(self._add_condition_row)
+        add_condition.clicked.connect(lambda: self._add_condition_row())
         remove_condition = QToolButton()
         remove_condition.setText("Remove condition")
         remove_condition.clicked.connect(self._remove_condition_row)
@@ -1498,7 +1498,7 @@ class StateTransitionDialog(QDialog):
         action_buttons = QHBoxLayout()
         add_action = QToolButton()
         add_action.setText("Add action")
-        add_action.clicked.connect(self._add_action_row)
+        add_action.clicked.connect(lambda: self._add_action_row())
         remove_action = QToolButton()
         remove_action.setText("Remove action")
         remove_action.clicked.connect(self._remove_action_row)
@@ -1757,9 +1757,10 @@ class StateTransitionDialog(QDialog):
         combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         if self._signal_names:
             combo.addItems(self._signal_names)
-        if selected and selected not in self._signal_names:
-            combo.addItem(selected)
-        combo.setCurrentText(selected)
+        selected_text = selected if isinstance(selected, str) else str(selected or "")
+        if selected_text and selected_text not in self._signal_names:
+            combo.addItem(selected_text)
+        combo.setCurrentText(selected_text)
         completer = QCompleter(self._signal_names)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         combo.setCompleter(completer)
