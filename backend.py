@@ -521,17 +521,16 @@ class RealBackend(QObject, BackendBase):
         except (OSError, cantools_errors.Error, cantools_errors.ParseError) as exc:
             raise BackendError(str(exc))
         try:
-            self._bus = can.interface.Bus(
-                interface="pcan",
-                channel=self._settings.channel if hasattr(self._settings, "channel") else "PCAN_USBBUS1",
-                state=can.bus.BusState.ACTIVE,
-                fd=True,
-                # Nominal phase (500k)
-                f_clock_mhz=80,
-                nom_brp=10, nom_tseg1=12, nom_tseg2=3, nom_sjw=1,
-                # Data phase (2M)
-                data_brp=4, data_tseg1=7, data_tseg2=2, data_sjw=1,
-            )
+            bustype = (self._settings.bustype or "socketcan").lower()
+            channel = self._settings.channel or "can0"
+            bitrate = int(self._settings.bitrate) if self._settings.bitrate else 500000
+            bus_kwargs: Dict[str, Any] = {"bustype": bustype, "channel": channel}
+            if bitrate:
+                bus_kwargs["bitrate"] = bitrate
+            # Prefer explicitly enabling CAN-FD only when the interface type supports it.
+            if bustype in {"pcan", "vector"} and bitrate and bitrate > 1000000:
+                bus_kwargs["fd"] = True
+            self._bus = can.interface.Bus(**bus_kwargs)
         except (can.CanError, OSError, ValueError) as exc:
             raise BackendError(str(exc))
 

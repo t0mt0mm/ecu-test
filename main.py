@@ -6161,6 +6161,7 @@ class MainWindow(QMainWindow):
         to_clear = [name for name, (win_id, _side) in self._plot_assignments.items() if win_id == identifier]
         for name in to_clear:
             self._plot_assignments.pop(name, None)
+            self._release_signal_color(name)
         if self._active_plot_id == identifier:
             self._active_plot_id = next(iter(self._plot_windows), None)
 
@@ -6175,6 +6176,15 @@ class MainWindow(QMainWindow):
             color = pg.intColor(index, hues=max(index + 1, len(self._plot_color_palette)))
         self._plot_color_map[name] = color
         return color
+
+    def _release_signal_color(self, name: str) -> None:
+        if name in self._plot_assignments:
+            return
+        if name in self._multi_plot_curves:
+            return
+        if name in getattr(self.watchlist_widget, "plot_signal_names", []):
+            return
+        self._plot_color_map.pop(name, None)
 
     def _assign_signal_via_dialog(self, name: str) -> None:
         if not self._plot_windows:
@@ -6762,6 +6772,11 @@ class MainWindow(QMainWindow):
                 dock = self._plot_windows.get(window_id)
                 if dock:
                     dock.remove_signal(name)
+            self._multi_plot_buffers.pop(name, None)
+            curve = self._multi_plot_curves.pop(name, None)
+            if curve and getattr(self, "multi_plot_widget", None):
+                self.multi_plot_widget.removeItem(curve)
+            self._release_signal_color(name)
         self._save_settings()
 
     def _apply_watchlist_plot_settings(self) -> None:
@@ -6782,6 +6797,7 @@ class MainWindow(QMainWindow):
                 curve = self._multi_plot_curves.pop(name, None)
                 if curve and getattr(self, "multi_plot_widget", None):
                     self.multi_plot_widget.removeItem(curve)
+                self._release_signal_color(name)
             return
         if enabled:
             self._assign_signal_via_dialog(name)
@@ -6798,6 +6814,7 @@ class MainWindow(QMainWindow):
             curve = self._multi_plot_curves.pop(name, None)
             if curve and getattr(self, "multi_plot_widget", None):
                 self.multi_plot_widget.removeItem(curve)
+            self._release_signal_color(name)
         self._save_settings()
 
     def _on_multi_plot_enable_changed(self, state: int) -> None:
@@ -6806,10 +6823,13 @@ class MainWindow(QMainWindow):
             self.multi_plot_widget.show()
         else:
             self.multi_plot_widget.hide()
+            removed_names = list(self._multi_plot_curves.keys())
             for curve in self._multi_plot_curves.values():
                 self.multi_plot_widget.removeItem(curve)
             self._multi_plot_curves.clear()
             self._multi_plot_buffers.clear()
+            for name in removed_names:
+                self._release_signal_color(name)
         self._save_settings()
 
     def _toggle_multi_plot_pause(self) -> None:

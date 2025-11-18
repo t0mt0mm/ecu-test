@@ -5,7 +5,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from backend import BackendBase, BackendError
-from models import StateAction, StateCondition, StateDefinition, StateMachineConfig, StateTransition
+from models import StateAction, StateCondition, StateMachineConfig, StateTransition
 
 
 class StateMachineRunner(QObject):
@@ -44,6 +44,10 @@ class StateMachineRunner(QObject):
 
     def start(self) -> bool:
         if not self._backend or not self._config:
+            return False
+        validation_error = self._validate_config()
+        if validation_error:
+            self.error_occurred.emit(validation_error)
             return False
         self._config.ensure_initial_state()
         initial = self._config.initial_state
@@ -98,9 +102,6 @@ class StateMachineRunner(QObject):
                     self.stop()
                     return
                 self._current_state = transition.target
-                if self._config and self._current_state not in self._config.state_names:
-                    self._config.states.append(StateDefinition(name=self._current_state))
-                    self._transitions_by_source.setdefault(self._current_state, [])
                 self.state_changed.emit(self._current_state)
                 return
 
@@ -137,3 +138,16 @@ class StateMachineRunner(QObject):
         for transition in config.transitions:
             mapping.setdefault(transition.source, []).append(transition)
         return mapping
+
+    def _validate_config(self) -> Optional[str]:
+        if not self._config:
+            return "State machine configuration is missing."
+        known_states: Set[str] = set(self._config.state_names)
+        missing_targets: Set[str] = set()
+        for transition in self._config.transitions:
+            if transition.target not in known_states:
+                missing_targets.add(transition.target)
+        if missing_targets:
+            missing_list = ", ".join(sorted(missing_targets))
+            return f"Undefined target state(s): {missing_list}. Add the missing states before starting."
+        return None
