@@ -1418,6 +1418,7 @@ class StateTransitionDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configure transition")
+        self.setMinimumWidth(760)
         self._states = list(states)
         self._signal_names = sorted({str(name).strip() for name in signal_names if str(name).strip()})
         self._message_names = sorted({str(name).strip() for name in message_names if str(name).strip()})
@@ -1528,12 +1529,8 @@ class StateTransitionDialog(QDialog):
         self.condition_table.insertRow(row)
         signal_combo = self._create_signal_combo(signal)
         self.condition_table.setCellWidget(row, 0, signal_combo)
-        combo = QComboBox()
-        combo.addItems([">", ">=", "<", "<=", "==", "!="])
-        if operator not in {">", ">=", "<", "<=", "==", "!="}:
-            operator = ">="
-        combo.setCurrentText(operator)
-        self.condition_table.setCellWidget(row, 1, combo)
+        operator_combo = self._create_operator_combo(operator)
+        self.condition_table.setCellWidget(row, 1, operator_combo)
         self.condition_table.setItem(row, 2, QTableWidgetItem(value))
 
     def _remove_condition_row(self) -> None:
@@ -1642,6 +1639,7 @@ class StateTransitionDialog(QDialog):
             return
         conditions: List[StateCondition] = []
         for row in range(self.condition_table.rowCount()):
+            self._finalize_condition_row(row)
             signal_widget = self.condition_table.cellWidget(row, 0)
             value_item = self.condition_table.item(row, 2)
             operator_widget = self.condition_table.cellWidget(row, 1)
@@ -1766,6 +1764,22 @@ class StateTransitionDialog(QDialog):
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         combo.setCompleter(completer)
         return combo
+
+    def _create_operator_combo(self, selected: str) -> QComboBox:
+        combo = QComboBox()
+        operators = [">", ">=", "<", "<=", "==", "!="]
+        combo.addItems(operators)
+        if selected not in operators:
+            selected = ">="
+        combo.setCurrentText(selected)
+        return combo
+
+    def _finalize_condition_row(self, row: int) -> None:
+        value_item = self.condition_table.item(row, 2)
+        if value_item is None:
+            value_item = QTableWidgetItem("")
+            self.condition_table.setItem(row, 2, value_item)
+        self.condition_table.closePersistentEditor(value_item)
 
     def _create_target_editor(self, action_type: str, current: str) -> QComboBox:
         options: List[str] = []
