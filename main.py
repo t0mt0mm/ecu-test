@@ -2616,7 +2616,10 @@ class MultiAxisPlotDock(QDockWidget):
             layout_item.addItem(left_axis, 1, 0)
         layout_item.addItem(self.plot_item.vb, 1, 1)
         if right_axis:
+            self.plot_item.showAxis("right", show=True)
             layout_item.addItem(right_axis, 1, 2)
+        else:
+            self.plot_item.showAxis("right", show=False)
         layout_item.setColumnStretchFactor(1, 1)
         layout_item.addItem(self.top_axis, 0, 1)
         layout_item.addItem(self.bottom_axis, 2, 1)
@@ -2814,15 +2817,44 @@ class MultiAxisPlotDock(QDockWidget):
                 self.plot_item.vb.setXRange(0.0, global_x_max, padding=0.02)
             except Exception:
                 pass
-        for view_info in self.axis_registry.values():
-            view_box = view_info["view"]
-            try:
-                view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-                view_box.autoRange(axis=pg.ViewBox.YAxis)
-            except Exception:
-                pass
+        self._apply_axis_autorange()
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
+
+    def _apply_axis_autorange(self) -> None:
+        for axis_id, view_info in self.axis_registry.items():
+            view_box = view_info["view"]
+            y_min: Optional[float] = None
+            y_max: Optional[float] = None
+            for signal_name in self._axis_assignments.get(axis_id, []):
+                info = self._signals.get(signal_name)
+                if not info:
+                    continue
+                bounds = info["curve"].dataBounds(1)
+                if bounds is None:
+                    continue
+                ymin, ymax = bounds
+                if ymin is None or ymax is None or not math.isfinite(ymin) or not math.isfinite(ymax):
+                    continue
+                y_min = ymin if y_min is None else min(y_min, ymin)
+                y_max = ymax if y_max is None else max(y_max, ymax)
+            if y_min is None or y_max is None or y_min == y_max:
+                try:
+                    view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                    view_box.autoRange(axis=pg.ViewBox.YAxis)
+                except Exception:
+                    pass
+                continue
+            span = y_max - y_min
+            padding = span * 0.05 if span > 0 else 1.0
+            try:
+                view_box.setYRange(y_min - padding, y_max + padding, padding=0.0, update=True)
+            except Exception:
+                try:
+                    view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                    view_box.autoRange(axis=pg.ViewBox.YAxis)
+                except Exception:
+                    pass
 
     def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
         return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
