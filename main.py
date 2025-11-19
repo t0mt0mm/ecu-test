@@ -2465,7 +2465,7 @@ class MultiAxisPlotDock(QDockWidget):
         self._axis_counts = {"left": 0, "right": 0}
         self._left_axis_ids: List[str] = []
         self._right_axis_ids: List[str] = []
-        self._extra_views: List[pg.ViewBox] = []
+        self._overlay_views: List[pg.ViewBox] = []
         self._create_initial_axes()
         self.plot_item.vb.sigResized.connect(self._update_views)
         self._update_views()
@@ -2537,8 +2537,9 @@ class MultiAxisPlotDock(QDockWidget):
         view_box = view or pg.ViewBox()
         if view is None:
             self.plot_item.scene().addItem(view_box)
-            self._extra_views.append(view_box)
+            self._overlay_views.append(view_box)
             view_box.setXLink(self.plot_item.vb)
+            view_box.setMouseEnabled(x=False, y=True)
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
         try:
             view_box.autoRange(axis=pg.ViewBox.YAxis)
@@ -2587,7 +2588,7 @@ class MultiAxisPlotDock(QDockWidget):
             pass
         if view is not self.plot_item.vb and view.scene() is not None:
             view.scene().removeItem(view)
-            self._extra_views = [vb for vb in self._extra_views if vb is not view]
+            self._overlay_views = [vb for vb in self._overlay_views if vb is not view]
         if target_side == "left":
             self._left_axis_ids = [aid for aid in self._left_axis_ids if aid != axis_id]
         else:
@@ -2654,6 +2655,7 @@ class MultiAxisPlotDock(QDockWidget):
             column += 1
         layout_item.addItem(self.top_axis, 0, view_column)
         layout_item.addItem(self.bottom_axis, 2, view_column)
+        self._update_views()
 
     def _fallback_axis(self, exclude: Optional[str] = None) -> str:
         candidates = [aid for aid in self._left_axis_ids if aid != exclude]
@@ -2676,12 +2678,15 @@ class MultiAxisPlotDock(QDockWidget):
 
     def _update_views(self) -> None:
         rect = self.plot_item.vb.sceneBoundingRect()
-        if rect:
+        mapped_rect = self.plot_item.vb.mapRectToScene(self.plot_item.vb.boundingRect())
+        target = mapped_rect if mapped_rect.isValid() else rect
+        if target:
             for axis_id, info in self.axis_registry.items():
                 view = info["view"]
-                view.setGeometry(rect)
+                view.setGeometry(target)
                 if view is not self.plot_item.vb:
                     view.linkedViewChanged(self.plot_item.vb, view.XAxis)
+                    view.update()
 
     def _normalize_axis_id(self, axis_id: Optional[str]) -> str:
         normalized = (axis_id or "left1").lower()
@@ -2856,7 +2861,12 @@ class MultiAxisPlotDock(QDockWidget):
             curve = info["curve"]
             curve.setData(times, samples)
         for info in self.axis_registry.values():
-            info["view"].enableAutoRange(axis=pg.ViewBox.YAxis)
+            view_box = info["view"]
+            view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            try:
+                view_box.autoRange(axis=pg.ViewBox.YAxis)
+            except Exception:
+                pass
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
 
@@ -4599,6 +4609,10 @@ class MainWindow(QMainWindow):
         self._active_state_machine: Optional[str] = None
         self._state_machine_runner = StateMachineRunner(self)
         self._state_machine_runner.set_sequence_controller(self._state_machine_sequence_control)
+        self._state_watch_name = "state_machine_state"
+        self._state_value_map: Dict[str, float] = {}
+        self._state_machine_state_value: Optional[float] = None
+        self._watch_units[self._state_watch_name] = "state"
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -5338,6 +5352,11 @@ class MainWindow(QMainWindow):
         self.state_machine_stop_button.setEnabled(False)
         runner_controls.addWidget(self.state_machine_start_button)
         runner_controls.addWidget(self.state_machine_stop_button)
+        add_state_watch_btn = QToolButton()
+        add_state_watch_btn.setText("Watch state")
+        add_state_watch_btn.setAutoRaise(True)
+        add_state_watch_btn.clicked.connect(self._on_add_state_to_watchlist)
+        runner_controls.addWidget(add_state_watch_btn)
         runner_controls.addStretch(1)
         self.state_machine_status_label = QLabel("Idle")
         self.state_machine_status_label.setStyleSheet("color: #475569;")
@@ -5844,6 +5863,7 @@ class MainWindow(QMainWindow):
         config = self._current_state_machine()
         self._state_machine_runner.set_config(config)
         self._state_machine_runner.stop()
+        self._update_state_value_map()
         self._populate_state_machine_editor()
         self._set_state_machine_buttons()
         self._update_state_machine_status("Idle")
@@ -6024,6 +6044,7 @@ class MainWindow(QMainWindow):
         self._state_machine_runner.stop()
         config = self._current_state_machine()
         self._state_machine_runner.set_config(config)
+        self._update_state_value_map()
         self._set_state_machine_buttons()
         self._update_state_machine_graph()
         self._set_hardware_pending(True, "State machine updated. Save to persist changes.")
@@ -6089,13 +6110,41 @@ class MainWindow(QMainWindow):
     def _on_state_machine_state_changed(self, state: str) -> None:
         self._set_state_machine_buttons()
         self._update_state_machine_status(f"Active: {state}")
+        self._update_state_value_map()
+        self._state_machine_state_value = self._state_value_map.get(state, float(len(self._state_value_map)))
         self._update_state_machine_graph()
         self._populate_state_machine_editor()
+        if self._state_watch_name in self.watchlist_widget.signal_names:
+            self.watchlist_widget.update_values({self._state_watch_name: self._state_machine_state_value})
+            self._update_multi_plot(time.monotonic(), {self._state_watch_name: self._state_machine_state_value})
+            for dock in self._plot_windows.values():
+                dock.update(time.monotonic(), {self._state_watch_name: self._state_machine_state_value})
 
     def _on_state_machine_runner_stopped(self) -> None:
         self._set_state_machine_buttons()
         self._update_state_machine_status("Idle")
+        self._state_machine_state_value = None
         self._update_state_machine_graph()
+
+    def _update_state_value_map(self) -> None:
+        config = self._current_state_machine()
+        names = config.state_names if config else []
+        self._state_value_map = {name: float(index) for index, name in enumerate(names)}
+        self._watch_units[self._state_watch_name] = "state"
+        if getattr(self, "watchlist_widget", None):
+            self.watchlist_widget.set_units(self._watch_units)
+
+    def _on_add_state_to_watchlist(self) -> None:
+        if self._state_watch_name not in self.watchlist_widget.signal_names:
+            self.watchlist_widget.add_signals([self._state_watch_name])
+            self.watchlist_widget.set_plot_enabled(self._state_watch_name, True)
+        self._pending_watchlist = self.watchlist_widget.signal_names
+        self._update_state_value_map()
+        self._state_machine_state_value = self._state_value_map.get(
+            self._state_machine_runner.current_state or "", None
+        )
+        if self._state_machine_state_value is not None:
+            self.watchlist_widget.update_values({self._state_watch_name: self._state_machine_state_value})
 
     def _on_state_machine_error(self, message: str) -> None:
         self._show_error(message)
@@ -8393,7 +8442,7 @@ class MainWindow(QMainWindow):
         requested: set[str] = set()
         for profile in self._channel_profiles.values():
             requested.update(profile.status.fields.values())
-        requested.update(self.watchlist_widget.signal_names)
+        requested.update(name for name in self.watchlist_widget.signal_names if name != self._state_watch_name)
         requested.update(self._gauge_cards.keys())
         if self.logger.is_running():
             requested.update(self.logger.signal_names)
@@ -8411,6 +8460,8 @@ class MainWindow(QMainWindow):
                 feedback_value = self._extract_feedback_value(profile, status)
                 card.record_sample(timestamp, command_value, feedback_value)
         watch_values = {name: values.get(name) for name in self.watchlist_widget.signal_names}
+        if self._state_watch_name in watch_values:
+            watch_values[self._state_watch_name] = self._state_machine_state_value
         gauge_values = {name: values.get(name) for name in self._gauge_cards}
         self.watchlist_widget.update_values(watch_values)
         self._pending_watchlist = self.watchlist_widget.signal_names
@@ -8432,6 +8483,8 @@ class MainWindow(QMainWindow):
         if not self.backend:
             return
         values = self.backend.read_signal_values(signals)
+        if self._state_watch_name in signals:
+            values[self._state_watch_name] = self._state_machine_state_value
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
         self.logger.log_row(timestamp, values)
 
