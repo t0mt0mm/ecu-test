@@ -2462,10 +2462,6 @@ class MultiAxisPlotDock(QDockWidget):
         layout_item.removeItem(self.plot_item.vb)
         self.axis_registry: Dict[str, Dict[str, Any]] = {}
         self._axis_assignments: Dict[str, List[str]] = {}
-        self._axis_counts = {"left": 0, "right": 0}
-        self._left_axis_ids: List[str] = []
-        self._right_axis_ids: List[str] = []
-        self._overlay_views: List[pg.ViewBox] = []
         self._create_initial_axes()
         self.plot_item.vb.sigResized.connect(self._update_views)
         self._update_views()
@@ -2506,18 +2502,7 @@ class MultiAxisPlotDock(QDockWidget):
 
     def _create_initial_axes(self) -> None:
         self.add_axis("left", axis_id="left1", view=self.plot_item.vb, axis_item=self.plot_item.getAxis("left"))
-        self.add_axis("right", axis_id="right1", axis_item=self.plot_item.getAxis("right"))
         self._rebuild_axis_layout()
-
-    def _new_axis_id(self, side: str, desired: Optional[str] = None) -> str:
-        if desired and desired not in self.axis_registry:
-            return desired
-        self._axis_counts[side] += 1
-        candidate = f"{side}{self._axis_counts[side]}"
-        while candidate in self.axis_registry:
-            self._axis_counts[side] += 1
-            candidate = f"{side}{self._axis_counts[side]}"
-        return candidate
 
     def add_axis(
         self,
@@ -2528,38 +2513,30 @@ class MultiAxisPlotDock(QDockWidget):
         axis_item: Optional[pg.AxisItem] = None,
     ) -> str:
         normalized_side = "left" if str(side).lower().startswith("l") else "right"
-        axis_identifier = self._new_axis_id(normalized_side, desired=axis_id)
+        default_id = f"{normalized_side}1"
+        axis_identifier = (axis_id or default_id).lower()
+        if normalized_side == "left":
+            axis_identifier = "left1"
+            if axis_identifier in self.axis_registry:
+                return axis_identifier
+        elif normalized_side == "right":
+            axis_identifier = "right1"
+            if axis_identifier in self.axis_registry:
+                return axis_identifier
         if axis_identifier in self.axis_registry:
             return axis_identifier
-        suffix = axis_identifier[len(normalized_side) :]
-        if suffix.isdigit():
-            self._axis_counts[normalized_side] = max(self._axis_counts[normalized_side], int(suffix))
         view_box = view or pg.ViewBox()
         if view is None:
             self.plot_item.scene().addItem(view_box)
-            self._overlay_views.append(view_box)
             view_box.setXLink(self.plot_item.vb)
             view_box.setMouseEnabled(x=False, y=True)
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-        try:
-            view_box.autoRange(axis=pg.ViewBox.YAxis)
-        except Exception:
-            pass
-        try:
-            y_min, y_max = self.plot_item.vb.viewRange()[1]
-            view_box.setYRange(y_min, y_max, padding=0.05)
-        except Exception:
-            pass
         axis = axis_item or pg.AxisItem(normalized_side)
         axis.show()
-        axis.setWidth(max(axis.width(), 56))
+        axis.setWidth(max(axis.width(), 60))
         axis.linkToView(view_box)
         self.axis_registry[axis_identifier] = {"axis": axis, "view": view_box, "side": normalized_side}
         self._axis_assignments.setdefault(axis_identifier, [])
-        if normalized_side == "left":
-            self._left_axis_ids.append(axis_identifier)
-        else:
-            self._right_axis_ids.append(axis_identifier)
         self._rebuild_axis_layout()
         self._refresh_axis_style(axis_identifier)
         self._build_axis_menu()
@@ -2574,9 +2551,8 @@ class MultiAxisPlotDock(QDockWidget):
     def remove_axis(self, axis_id: str) -> None:
         if axis_id not in self.axis_registry:
             return
-        if len(self.axis_registry) <= 1:
+        if axis_id == "left1":
             return
-        target_side = self.axis_registry[axis_id]["side"]
         fallback = self._fallback_axis(axis_id)
         for name in list(self._axis_assignments.get(axis_id, [])):
             self._move_signal_to_axis(name, fallback)
@@ -2590,11 +2566,6 @@ class MultiAxisPlotDock(QDockWidget):
             pass
         if view is not self.plot_item.vb and view.scene() is not None:
             view.scene().removeItem(view)
-            self._overlay_views = [vb for vb in self._overlay_views if vb is not view]
-        if target_side == "left":
-            self._left_axis_ids = [aid for aid in self._left_axis_ids if aid != axis_id]
-        else:
-            self._right_axis_ids = [aid for aid in self._right_axis_ids if aid != axis_id]
         self._axis_assignments.pop(axis_id, None)
         self._rebuild_axis_layout()
         self._build_axis_menu()
@@ -2608,19 +2579,15 @@ class MultiAxisPlotDock(QDockWidget):
 
     def axis_label(self, axis_id: str) -> str:
         side = self.axis_side(axis_id)
-        return f"{axis_id} ({'Left' if side == 'left' else 'Right'})"
+        return "Left" if side == "left" else "Right"
 
     def _build_axis_menu(self) -> None:
         self.axis_menu.clear()
-        add_left = self.axis_menu.addAction("Add left axis", lambda: self.add_axis("left"))
-        add_right = self.axis_menu.addAction("Add right axis", lambda: self.add_axis("right"))
-        remove_menu = self.axis_menu.addMenu("Remove axis")
-        removable = [axis_id for axis_id in self.axis_registry if len(self.axis_registry) > 1]
-        for axis_id in removable:
-            action = remove_menu.addAction(self.axis_label(axis_id))
-            action.triggered.connect(lambda _=False, aid=axis_id: self.remove_axis(aid))
-        if not removable:
-            remove_menu.setEnabled(False)
+        if "right1" not in self.axis_registry:
+            self.axis_menu.addAction("Add right axis", lambda: self.add_axis("right"))
+        else:
+            action = self.axis_menu.addAction("Remove right axis", lambda: self.remove_axis("right1"))
+            action.setEnabled(len(self.axis_registry) > 1)
 
     def _show_axis_menu(self, pos) -> None:
         sender = self.sender()
@@ -2629,9 +2596,9 @@ class MultiAxisPlotDock(QDockWidget):
 
     def _rebuild_axis_layout(self) -> None:
         layout_item = self.plot_item.layout
-        for axis_id, info in self.axis_registry.items():
+        for axis_info in self.axis_registry.values():
             try:
-                layout_item.removeItem(info["axis"])
+                layout_item.removeItem(axis_info["axis"])
             except Exception:
                 pass
         try:
@@ -2643,30 +2610,20 @@ class MultiAxisPlotDock(QDockWidget):
                 layout_item.removeItem(static_axis)
             except Exception:
                 pass
-        column = 0
-        for axis_id in self._left_axis_ids:
-            axis = self.axis_registry[axis_id]["axis"]
-            layout_item.addItem(axis, 1, column)
-            column += 1
-        view_column = column
-        layout_item.addItem(self.plot_item.vb, 1, view_column)
-        column = view_column + 1
-        for axis_id in self._right_axis_ids:
-            axis = self.axis_registry[axis_id]["axis"]
-            layout_item.addItem(axis, 1, column)
-            column += 1
-        layout_item.setColumnStretchFactor(view_column, 1)
-        layout_item.addItem(self.top_axis, 0, view_column)
-        layout_item.addItem(self.bottom_axis, 2, view_column)
+        left_axis = self.axis_registry.get("left1", {}).get("axis")
+        right_axis = self.axis_registry.get("right1", {}).get("axis")
+        if left_axis:
+            layout_item.addItem(left_axis, 1, 0)
+        layout_item.addItem(self.plot_item.vb, 1, 1)
+        if right_axis:
+            layout_item.addItem(right_axis, 1, 2)
+        layout_item.setColumnStretchFactor(1, 1)
+        layout_item.addItem(self.top_axis, 0, 1)
+        layout_item.addItem(self.bottom_axis, 2, 1)
         self._update_views()
 
     def _fallback_axis(self, exclude: Optional[str] = None) -> str:
-        candidates = [aid for aid in self._left_axis_ids if aid != exclude]
-        if not candidates:
-            candidates = [aid for aid in self._right_axis_ids if aid != exclude]
-        if candidates:
-            return candidates[0]
-        return self.add_axis("left")
+        return "left1"
 
     def _toggle_pause(self) -> None:
         self._paused = not self._paused
@@ -2693,13 +2650,11 @@ class MultiAxisPlotDock(QDockWidget):
         
     def _normalize_axis_id(self, axis_id: Optional[str]) -> str:
         normalized = (axis_id or "left1").lower()
-        if normalized in {"left", "l"}:
-            candidates = self._left_axis_ids or None
-            return candidates[0] if candidates else self.add_axis("left", axis_id="left1")
-        if normalized in {"right", "r"}:
-            candidates = self._right_axis_ids or None
-            if candidates:
-                return candidates[0]
+        if normalized in {"left", "l", "left1"}:
+            if "left1" not in self.axis_registry:
+                self.add_axis("left", axis_id="left1")
+            return "left1"
+        if normalized in {"right", "r", "right1"}:
             return self.add_axis("right", axis_id="right1")
         if normalized not in self.axis_registry:
             return self._fallback_axis()
@@ -2709,24 +2664,9 @@ class MultiAxisPlotDock(QDockWidget):
         axis = self.axis_registry.get(axis_id, {}).get("axis")
         if axis is None:
             return
-        signals = [name for name in self._axis_assignments.get(axis_id, []) if name in self._signals]
-        if not signals:
-            axis.setLabel("")
-            axis.setPen(pg.mkPen(QColor("#94a3b8")))
-            axis.setTextPen(pg.mkPen(QColor("#94a3b8")))
-            return
-        ref_name = signals[0]
-        sig_info = self._signals.get(ref_name, {})
-        unit = sig_info.get("unit", "")
-        color = sig_info.get("color", QColor("#2563eb"))
-        text = f"[{unit}]" if unit else "[ ]"
-        axis.setLabel(text, color=color)
-        try:
-            axis.label.setAngle(90)
-        except Exception:
-            pass
-        axis.setPen(pg.mkPen(color))
-        axis.setTextPen(pg.mkPen(color))
+        axis.setLabel("")
+        axis.setPen(pg.mkPen(QColor("#475569")))
+        axis.setTextPen(pg.mkPen(QColor("#475569")))
 
     def _move_signal_to_axis(self, name: str, axis_id: str) -> None:
         if axis_id not in self.axis_registry:
@@ -2863,24 +2803,6 @@ class MultiAxisPlotDock(QDockWidget):
                 times, samples = dec_times, dec_samples
             curve = info["curve"]
             curve.setData(times, samples)
-        axis_ranges: Dict[str, Tuple[float, float]] = {}
-        for name, info in self._signals.items():
-            buffer = info["buffer"]
-            if not buffer:
-                continue
-            axis_id = info.get("side")
-            if axis_id not in self.axis_registry:
-                continue
-            values_only = [sample for _, sample in buffer]
-            if not values_only:
-                continue
-            current_min = min(values_only)
-            current_max = max(values_only)
-            if axis_id not in axis_ranges:
-                axis_ranges[axis_id] = (current_min, current_max)
-            else:
-                prev_min, prev_max = axis_ranges[axis_id]
-                axis_ranges[axis_id] = (min(prev_min, current_min), max(prev_max, current_max))
         global_x_max = 0.0
         for buffer in (info["buffer"] for info in self._signals.values() if info["buffer"]):
             if buffer:
@@ -2892,15 +2814,13 @@ class MultiAxisPlotDock(QDockWidget):
                 self.plot_item.vb.setXRange(0.0, global_x_max, padding=0.02)
             except Exception:
                 pass
-        for axis_id, (y_min, y_max) in axis_ranges.items():
-            view_box = self.axis_registry[axis_id]["view"]
-            span = max(1e-6, y_max - y_min)
-            padding = max(span * 0.08, 0.05)
+        for view_info in self.axis_registry.values():
+            view_box = view_info["view"]
             try:
-                view_box.setYRange(y_min - padding, y_max + padding, padding=0.0)
+                view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                view_box.autoRange(axis=pg.ViewBox.YAxis)
             except Exception:
                 pass
-            view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
 
