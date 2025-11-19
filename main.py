@@ -1952,8 +1952,10 @@ class StatusBar(QWidget):
         self._progress = 0.0
         self._active = False
         self._animation = QPropertyAnimation(self, b"progress")
-        self._animation.setDuration(280)
+        self._animation.setDuration(900)
         self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._last_pulse = 0.0
+        self._cooldown = 0.45
         self.setMinimumHeight(14)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
@@ -1962,17 +1964,20 @@ class StatusBar(QWidget):
         self._animation.stop()
         self.progress = 0.0
 
-    def set_active(self) -> None:
-        self._active = True
-        if self._animation.state() == QPropertyAnimation.Running:
-            return
-        self.progress = 1.0
-
-    def pulse(self) -> None:
+    def set_active(self, level: float = 0.28) -> None:
         self._active = True
         self._animation.stop()
-        self._animation.setStartValue(0.0)
-        self._animation.setEndValue(1.0)
+        self.progress = max(0.12, min(1.0, level))
+
+    def pulse(self) -> None:
+        now = time.monotonic()
+        if now - self._last_pulse < self._cooldown:
+            return
+        self._last_pulse = now
+        self._active = True
+        self._animation.stop()
+        self._animation.setStartValue(0.18)
+        self._animation.setEndValue(0.82)
         self._animation.start()
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
@@ -1982,7 +1987,8 @@ class StatusBar(QWidget):
             painter.end()
             return
         rect = self.rect().adjusted(1, 3, -1, -3)
-        fill_width = rect.width() * max(0.0, min(1.0, self._progress))
+        eased = max(0.0, min(1.0, self._progress))
+        fill_width = rect.width() * (0.12 + 0.7 * eased)
         bar_rect = QRectF(rect.x(), rect.y(), fill_width, rect.height())
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#22c55e"))
@@ -2113,12 +2119,10 @@ class WatchlistWidget(QWidget):
                 if value is None or value == 0.0:
                     status_bar.set_idle()
                 else:
-                    changed = previous is None or not math.isclose(previous, value, rel_tol=1e-9, abs_tol=1e-12)
-                    status_bar.set_active()
+                    changed = previous is None or abs(value - previous) > max(1e-4, abs(previous) * 1e-3)
+                    status_bar.set_active(0.28 if not changed else 0.35)
                     if changed:
                         status_bar.pulse()
-                    else:
-                        status_bar.progress = 1.0
             if value is None:
                 self._last_values.pop(name, None)
             else:
@@ -2461,6 +2465,7 @@ class MultiAxisPlotDock(QDockWidget):
         self._axis_counts = {"left": 0, "right": 0}
         self._left_axis_ids: List[str] = []
         self._right_axis_ids: List[str] = []
+        self._extra_views: List[pg.ViewBox] = []
         self._create_initial_axes()
         self.plot_item.vb.sigResized.connect(self._update_views)
         self._update_views()
@@ -2532,7 +2537,18 @@ class MultiAxisPlotDock(QDockWidget):
         view_box = view or pg.ViewBox()
         if view is None:
             self.plot_item.scene().addItem(view_box)
+            self._extra_views.append(view_box)
             view_box.setXLink(self.plot_item.vb)
+        view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        try:
+            view_box.autoRange(axis=pg.ViewBox.YAxis)
+        except Exception:
+            pass
+        try:
+            y_min, y_max = self.plot_item.vb.viewRange()[1]
+            view_box.setYRange(y_min, y_max, padding=0.05)
+        except Exception:
+            pass
         axis = axis_item or pg.AxisItem(normalized_side)
         axis.linkToView(view_box)
         self.axis_registry[axis_identifier] = {"axis": axis, "view": view_box, "side": normalized_side}
@@ -2571,6 +2587,7 @@ class MultiAxisPlotDock(QDockWidget):
             pass
         if view is not self.plot_item.vb and view.scene() is not None:
             view.scene().removeItem(view)
+            self._extra_views = [vb for vb in self._extra_views if vb is not view]
         if target_side == "left":
             self._left_axis_ids = [aid for aid in self._left_axis_ids if aid != axis_id]
         else:
@@ -2721,6 +2738,11 @@ class MultiAxisPlotDock(QDockWidget):
             self._axis_assignments[previous_axis] = [n for n in self._axis_assignments.get(previous_axis, []) if n != name]
             self._refresh_axis_style(previous_axis)
         target_view.addItem(info["curve"])
+        target_view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        try:
+            target_view.autoRange(axis=pg.ViewBox.YAxis)
+        except Exception:
+            pass
         info["side"] = axis_id
         self._axis_assignments.setdefault(axis_id, []).append(name)
         self._refresh_axis_style(axis_id)
@@ -2745,6 +2767,11 @@ class MultiAxisPlotDock(QDockWidget):
         curve.sigClicked.connect(self._on_curve_clicked)
         view = self.axis_registry.get(axis_key, {}).get("view", self.plot_item.vb)
         view.addItem(curve)
+        view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        try:
+            view.autoRange(axis=pg.ViewBox.YAxis)
+        except Exception:
+            pass
         if self._legend:
             self._legend.addItem(curve, name)
         self._signals[name] = {
