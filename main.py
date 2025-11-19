@@ -1957,9 +1957,13 @@ class WatchlistWidget(QWidget):
         self._last_update: Dict[str, datetime.datetime] = {}
         self._plot_checkboxes: Dict[str, QCheckBox] = {}
         self._gauge_checkboxes: Dict[str, QCheckBox] = {}
+        self._keepalive_widgets: Dict[str, QFrame] = {}
+        self._keepalive_timer = QTimer(self)
+        self._keepalive_timer.setInterval(1_000)
+        self._keepalive_timer.timeout.connect(self._refresh_keepalive)
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot", "Gauge"])
+        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Keep-alive", "Plot", "Gauge"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         header = self.table.horizontalHeader()
@@ -1978,6 +1982,7 @@ class WatchlistWidget(QWidget):
         button_layout.addStretch(1)
         button_layout.addWidget(remove_button)
         layout.addLayout(button_layout)
+        self._keepalive_timer.start()
 
     def set_units(self, units: Dict[str, str]) -> None:
         self._units = dict(units)
@@ -1995,7 +2000,12 @@ class WatchlistWidget(QWidget):
             self._update_cell(row, 0, name)
             self._update_cell(row, 1, "0.0000")
             self._update_cell(row, 2, self._units.get(name, ""))
-            self._update_cell(row, 3, "-")
+            keepalive = QFrame()
+            keepalive.setFixedHeight(12)
+            keepalive.setMinimumWidth(70)
+            keepalive.setStyleSheet("QFrame { background: #e2e8f0; border-radius: 5px; }")
+            self.table.setCellWidget(row, 3, keepalive)
+            self._keepalive_widgets[name] = keepalive
             checkbox = QCheckBox()
             checkbox.stateChanged.connect(lambda state, signal=name: self._on_plot_toggle(signal, state))
             self.table.setCellWidget(row, 4, checkbox)
@@ -2038,6 +2048,9 @@ class WatchlistWidget(QWidget):
             gauge_checkbox = self._gauge_checkboxes.pop(name, None)
             if gauge_checkbox:
                 gauge_checkbox.deleteLater()
+            keepalive = self._keepalive_widgets.pop(name, None)
+            if keepalive:
+                keepalive.deleteLater()
 
     def update_values(self, values: Dict[str, float]) -> None:
         now = datetime.datetime.now()
@@ -2047,7 +2060,8 @@ class WatchlistWidget(QWidget):
             self._update_cell(row, 1, display)
             if value is not None:
                 self._last_update[name] = now
-                self._update_cell(row, 3, now.isoformat(timespec="seconds"))
+                self._apply_keepalive_style(name, 0.0)
+        self._refresh_keepalive()
 
     def selected_signal_names(self) -> List[str]:
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
@@ -2072,6 +2086,30 @@ class WatchlistWidget(QWidget):
     def _on_gauge_toggle(self, name: str, state: int) -> None:
         if state == Qt.Checked:
             self.gauge_requested.emit(name)
+
+    def _refresh_keepalive(self) -> None:
+        now = datetime.datetime.now()
+        for name in self._order:
+            last = self._last_update.get(name)
+            if last is None:
+                self._apply_keepalive_style(name, None)
+                continue
+            age = (now - last).total_seconds()
+            self._apply_keepalive_style(name, age)
+
+    def _apply_keepalive_style(self, name: str, age: Optional[float]) -> None:
+        bar = self._keepalive_widgets.get(name)
+        if not bar:
+            return
+        if age is None:
+            color = "#e2e8f0"
+        elif age < 2.0:
+            color = "#16a34a"
+        elif age < 5.0:
+            color = "#f59e0b"
+        else:
+            color = "#dc2626"
+        bar.setStyleSheet(f"QFrame {{ background: {color}; border-radius: 5px; }}")
 
     @property
     def signal_names(self) -> List[str]:
@@ -2410,6 +2448,7 @@ class MultiAxisPlotDock(QDockWidget):
         self.plot_item.vb.sigResized.connect(self._update_views)
         self._axis_assignments: Dict[str, List[str]] = {key: [] for key in self.axis_views}
         self._update_views()
+        self._update_axis_visibility()
         self._measurement_cursors_enabled = False
         self._cursor_lines: Dict[str, pg.InfiniteLine] = {}
         self._cursor_labels: Dict[str, Any] = {}
@@ -2483,6 +2522,7 @@ class MultiAxisPlotDock(QDockWidget):
             axis.setLabel("")
             axis.setPen(pg.mkPen(QColor("#94a3b8")))
             axis.setTextPen(pg.mkPen(QColor("#94a3b8")))
+            self._update_axis_visibility()
             return
         ref_name = signals[0]
         sig_info = self._signals.get(ref_name, {})
@@ -2496,6 +2536,17 @@ class MultiAxisPlotDock(QDockWidget):
             pass
         axis.setPen(pg.mkPen(color))
         axis.setTextPen(pg.mkPen(color))
+        self._update_axis_visibility()
+
+    def _update_axis_visibility(self) -> None:
+        for side, axis in {**self.left_axes, **self.right_axes}.items():
+            if side == "left1":
+                axis.setVisible(True)
+            else:
+                axis.setVisible(bool(self._axis_assignments.get(side)))
+
+    def signal_count(self) -> int:
+        return len(self._signals)
 
     def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
         axis_key = self._normalize_axis_side(side)
@@ -2514,6 +2565,7 @@ class MultiAxisPlotDock(QDockWidget):
         curve.sigClicked.connect(self._on_curve_clicked)
         view = self.axis_views.get(axis_key, self.plot_item.vb)
         view.addItem(curve)
+        view.enableAutoRange(axis=pg.ViewBox.YAxis)
         if self._legend:
             self._legend.addItem(curve, name)
         self._signals[name] = {
@@ -6641,7 +6693,10 @@ class MainWindow(QMainWindow):
             return
         window_ids = sorted(self._plot_windows.keys())
         default_window = self._active_plot_id if self._active_plot_id in self._plot_windows else window_ids[0]
-        suggested_side = self._suggest_axis_side(default_window, name)
+        target_dock = self._plot_windows.get(default_window)
+        if target_dock and target_dock.signal_count() == 0:
+            self._assign_signal_to_plot(name, target_dock.identifier, "left1")
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Assign Plot – {name}")
         dialog_layout = QVBoxLayout(dialog)
@@ -6654,23 +6709,43 @@ class MainWindow(QMainWindow):
         window_combo.setCurrentIndex(window_ids.index(default_window))
         form.addRow("Window", window_combo)
         axis_combo = QComboBox()
-        axis_combo.addItems(["Left 1", "Left 2", "Right 1", "Right 2"])
-        axis_options = ["left1", "left2", "right1", "right2"]
-        try:
-            axis_combo.setCurrentIndex(axis_options.index(suggested_side))
-        except ValueError:
-            axis_combo.setCurrentIndex(0)
+        axis_options: List[Tuple[str, str]] = self._axis_choices_for_dock(target_dock) if target_dock else []
+        for label, key in axis_options:
+            axis_combo.addItem(label, key)
         form.addRow("Axis", axis_combo)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         dialog_layout.addWidget(buttons)
+        def _refresh_axes_for_selection(index: int) -> None:
+            wid = window_combo.itemData(index)
+            dock = self._plot_windows.get(wid)
+            axis_combo.clear()
+            options = self._axis_choices_for_dock(dock)
+            for label, key in options:
+                axis_combo.addItem(label, key)
+        window_combo.currentIndexChanged.connect(_refresh_axes_for_selection)
         if dialog.exec_() != QDialog.Accepted:
             self.watchlist_widget.set_plot_enabled(name, False)
             return
         window_id = window_combo.currentData()
-        axis_side = axis_options[axis_combo.currentIndex()]
-        self._assign_signal_to_plot(name, int(window_id), axis_side)
+        axis_side = axis_combo.currentData()
+        if axis_side is None and axis_combo.count() > 0:
+            axis_side = axis_combo.itemData(0)
+        if axis_side is None:
+            self.watchlist_widget.set_plot_enabled(name, False)
+            return
+        self._assign_signal_to_plot(name, int(window_id), str(axis_side))
+
+    def _axis_choices_for_dock(self, dock: Optional[MultiAxisPlotDock]) -> List[Tuple[str, str]]:
+        if dock is None:
+            return [("Left", "left1")]
+        count = dock.signal_count()
+        if count == 0:
+            return [("Left", "left1")]
+        if count == 1:
+            return [("Left", "left1"), ("Right", "right1")]
+        return [("Left 1", "left1"), ("Left 2", "left2"), ("Right 1", "right1"), ("Right 2", "right2")]
 
     def _assign_signal_to_plot(self, name: str, window_id: int, side: str) -> None:
         dock = self._plot_windows.get(window_id)
