@@ -2551,7 +2551,8 @@ class MultiAxisPlotDock(QDockWidget):
         except Exception:
             pass
         axis = axis_item or pg.AxisItem(normalized_side)
-        axis.setWidth(max(axis.width(), 48))
+        axis.show()
+        axis.setWidth(max(axis.width(), 56))
         axis.linkToView(view_box)
         self.axis_registry[axis_identifier] = {"axis": axis, "view": view_box, "side": normalized_side}
         self._axis_assignments.setdefault(axis_identifier, [])
@@ -2633,11 +2634,6 @@ class MultiAxisPlotDock(QDockWidget):
                 layout_item.removeItem(info["axis"])
             except Exception:
                 pass
-        for overlay in self._overlay_views:
-            try:
-                layout_item.removeItem(overlay)
-            except Exception:
-                pass
         try:
             layout_item.removeItem(self.plot_item.vb)
         except Exception:
@@ -2662,11 +2658,6 @@ class MultiAxisPlotDock(QDockWidget):
         layout_item.setColumnStretchFactor(view_column, 1)
         layout_item.addItem(self.top_axis, 0, view_column)
         layout_item.addItem(self.bottom_axis, 2, view_column)
-        for overlay in self._overlay_views:
-            try:
-                layout_item.addItem(overlay, 1, view_column)
-            except Exception:
-                pass
         self._update_views()
 
     def _fallback_axis(self, exclude: Optional[str] = None) -> str:
