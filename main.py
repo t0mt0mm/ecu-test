@@ -163,10 +163,11 @@ QMainWindow::separator { background: #e2e8f0; width: 2px; height: 2px; }
 /* Tables / Trees */
 QHeaderView::section {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8fafc, stop:1 #eef2f7);
-    padding: 8px;
+    padding: 7px;
     border: 1px solid #e2e8f0;
     color: #1e293b;
     font-weight: 600;
+    font-size: 12px;
 }
 QTableView, QTreeView {
     background: #ffffff;
@@ -177,7 +178,7 @@ QTableView, QTreeView {
     border: 1px solid #e2e8f0;
     border-radius: 8px;
 }
-QTableView::item { padding: 6px; }
+QTableView::item { padding: 5px; }
 
 /* Inputs */
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit, QTimeEdit {
@@ -185,33 +186,34 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDate
     border: 1px solid #cbd5e1;
     border-radius: 8px;
     padding: 6px 8px;
-    selection-background-color: #2563eb;
-    selection-color: #ffffff;
+    selection-background-color: #60a5fa;
+    selection-color: #0f172a;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus, QTimeEdit:focus {
-    border: 1px solid #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    border: 1px solid #93c5fd;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35);
 }
 
 /* Buttons */
 QPushButton {
-    background: #2563eb;
-    color: #ffffff;
-    border: none;
+    background: rgba(37, 99, 235, 0.12);
+    color: #0f172a;
+    border: 1px solid #bfdbfe;
     border-radius: 10px;
-    padding: 8px 14px;
+    padding: 7px 12px;
     font-weight: 600;
 }
-QPushButton:hover { background: #1d4ed8; }
-QPushButton:pressed { background: #1e40af; }
+QPushButton:hover { background: rgba(37, 99, 235, 0.18); }
+QPushButton:pressed { background: rgba(37, 99, 235, 0.24); }
 QPushButton:disabled { background: #e2e8f0; color: #94a3b8; }
 QToolButton {
     background: #e2e8f0;
     color: #0f172a;
     border: 1px solid #cbd5e1;
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 4px 8px;
+    font-size: 12px;
 }
 QToolButton:hover { background: #e5edf7; }
 QToolButton:pressed { background: #d9e3f5; }
@@ -223,9 +225,10 @@ QTabBar::tab {
     color: #475569;
     border: 1px solid #e2e8f0;
     border-radius: 8px 8px 0 0;
-    padding: 8px 12px;
+    padding: 6px 10px;
     margin-right: 2px;
     font-weight: 600;
+    font-size: 12px;
 }
 QTabBar::tab:selected { background: #ffffff; color: #0f172a; border-bottom-color: #ffffff; }
 
@@ -1953,7 +1956,7 @@ class WatchlistWidget(QWidget):
         self._units: Dict[str, str] = {}
         self._last_update: Dict[str, datetime.datetime] = {}
         self._plot_checkboxes: Dict[str, QCheckBox] = {}
-        self._gauge_buttons: Dict[str, QPushButton] = {}
+        self._gauge_checkboxes: Dict[str, QCheckBox] = {}
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot", "Gauge"])
@@ -1997,11 +2000,12 @@ class WatchlistWidget(QWidget):
             checkbox.stateChanged.connect(lambda state, signal=name: self._on_plot_toggle(signal, state))
             self.table.setCellWidget(row, 4, checkbox)
             self._plot_checkboxes[name] = checkbox
-            gauge_button = QPushButton("Add to gauge")
-            gauge_button.setMinimumWidth(110)
-            gauge_button.clicked.connect(lambda _checked=False, signal=name: self.gauge_requested.emit(signal))
-            self.table.setCellWidget(row, 5, gauge_button)
-            self._gauge_buttons[name] = gauge_button
+            gauge_checkbox = QCheckBox()
+            gauge_checkbox.stateChanged.connect(
+                lambda state, signal=name: self._on_gauge_toggle(signal, state)
+            )
+            self.table.setCellWidget(row, 5, gauge_checkbox)
+            self._gauge_checkboxes[name] = gauge_checkbox
             self._order.append(name)
             added.append(name)
         return added
@@ -2012,11 +2016,14 @@ class WatchlistWidget(QWidget):
             checkbox.setChecked(enabled)
 
     def set_gauge_assigned(self, name: str, assigned: bool) -> None:
-        button = self._gauge_buttons.get(name)
-        if not button:
+        checkbox = self._gauge_checkboxes.get(name)
+        if not checkbox:
             return
-        button.setText("In gauges" if assigned else "Add to gauge")
-        button.setEnabled(not assigned)
+        checkbox.blockSignals(True)
+        checkbox.setChecked(assigned)
+        checkbox.setEnabled(not assigned)
+        checkbox.setToolTip("In gauges" if assigned else "Add to gauges")
+        checkbox.blockSignals(False)
 
     def remove_signals(self, names: Iterable[str]) -> None:
         to_remove = {name for name in names}
@@ -2028,7 +2035,9 @@ class WatchlistWidget(QWidget):
             checkbox = self._plot_checkboxes.pop(name, None)
             if checkbox:
                 checkbox.deleteLater()
-            self._gauge_buttons.pop(name, None)
+            gauge_checkbox = self._gauge_checkboxes.pop(name, None)
+            if gauge_checkbox:
+                gauge_checkbox.deleteLater()
 
     def update_values(self, values: Dict[str, float]) -> None:
         now = datetime.datetime.now()
@@ -2060,6 +2069,10 @@ class WatchlistWidget(QWidget):
     def _on_plot_toggle(self, name: str, state: int) -> None:
         self.plot_toggled.emit(name, state == Qt.Checked)
 
+    def _on_gauge_toggle(self, name: str, state: int) -> None:
+        if state == Qt.Checked:
+            self.gauge_requested.emit(name)
+
     @property
     def signal_names(self) -> List[str]:
         return list(self._order)
@@ -2079,7 +2092,7 @@ class GaugeDialWidget(QWidget):
         self._value = 0.0
         self._unit = ""
         self._accent = QColor("#2563eb")
-        self.setMinimumHeight(140)
+        self.setMinimumSize(240, 240)
 
     def set_unit(self, unit: str) -> None:
         self._unit = unit
@@ -2120,8 +2133,25 @@ class GaugeDialWidget(QWidget):
         nominal_end_ratio = (self._nominal_high - self._min) / norm_span
         nominal_start_angle = start_angle + span_angle * nominal_start_ratio
         nominal_end_angle = start_angle + span_angle * nominal_end_ratio
+        def draw_band(start_ratio: float, end_ratio: float, color: QColor) -> None:
+            start_a = start_angle + span_angle * start_ratio
+            end_a = start_angle + span_angle * end_ratio
+            painter.setPen(QPen(color, 12, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(centered, int(start_a * 16), int((end_a - start_a) * 16))
+
+        warning_ratio = min(0.1, (self._nominal_low - self._min) / norm_span)
+        overload_ratio = min(0.1, (self._max - self._nominal_high) / norm_span)
+        # Left side
+        if warning_ratio > 0:
+            draw_band(0.0, warning_ratio, QColor("#ef4444"))
+        draw_band(warning_ratio, nominal_start_ratio, QColor("#f97316"))
+        # Nominal
         painter.setPen(QPen(QColor("#22c55e"), 12, Qt.SolidLine, Qt.RoundCap))
         painter.drawArc(centered, int(nominal_start_angle * 16), int((nominal_end_angle - nominal_start_angle) * 16))
+        # Right side
+        draw_band(nominal_end_ratio, 1.0 - overload_ratio, QColor("#f97316"))
+        if overload_ratio > 0:
+            draw_band(1.0 - overload_ratio, 1.0, QColor("#ef4444"))
 
         ratio = (self._value - self._min) / norm_span
         ratio = min(max(ratio, 0.0), 1.0)
@@ -2175,6 +2205,7 @@ class GaugeCardWidget(QFrame):
         layout.addLayout(header)
 
         self.gauge = GaugeDialWidget()
+        self.gauge.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.gauge.set_accent(color)
         self.gauge.set_ranges(
             config.get("min", 0.0),
@@ -2182,7 +2213,7 @@ class GaugeCardWidget(QFrame):
             config.get("nominal_low", 25.0),
             config.get("nominal_high", 75.0),
         )
-        layout.addWidget(self.gauge)
+        layout.addWidget(self.gauge, 1)
 
         controls = QGridLayout()
         controls.setHorizontalSpacing(6)
@@ -2208,10 +2239,24 @@ class GaugeCardWidget(QFrame):
         controls.addWidget(self.max_spin, 1, 1)
         controls.addWidget(QLabel("Nominal max"), 1, 2)
         controls.addWidget(self.nominal_high_spin, 1, 3)
-        layout.addLayout(controls)
+        controls_widget = QWidget()
+        controls_widget.setLayout(controls)
+        controls_widget.setVisible(False)
+        layout.addWidget(controls_widget)
+        self._controls_widget = controls_widget
 
         for spin in (self.min_spin, self.max_spin, self.nominal_low_spin, self.nominal_high_spin):
             spin.valueChanged.connect(self._on_range_changed)
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit ranges…")
+        toggle_controls = menu.addAction("Show inline controls" if not self._controls_widget.isVisible() else "Hide inline controls")
+        chosen = menu.exec_(event.globalPos())
+        if chosen == edit_action:
+            self._open_edit_dialog()
+        elif chosen == toggle_controls:
+            self._controls_widget.setVisible(not self._controls_widget.isVisible())
 
     def _on_range_changed(self) -> None:
         self._config = {
@@ -2227,6 +2272,37 @@ class GaugeCardWidget(QFrame):
             self._config["nominal_high"],
         )
         self.config_changed.emit(self.signal_name, dict(self._config))
+
+    def _open_edit_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Edit ranges – {self.signal_name}")
+        layout = QFormLayout(dialog)
+        min_field = QDoubleSpinBox(dialog)
+        min_field.setRange(-1e6, 1e6)
+        min_field.setValue(self.min_spin.value())
+        max_field = QDoubleSpinBox(dialog)
+        max_field.setRange(-1e6, 1e6)
+        max_field.setValue(self.max_spin.value())
+        nominal_low_field = QDoubleSpinBox(dialog)
+        nominal_low_field.setRange(-1e6, 1e6)
+        nominal_low_field.setValue(self.nominal_low_spin.value())
+        nominal_high_field = QDoubleSpinBox(dialog)
+        nominal_high_field.setRange(-1e6, 1e6)
+        nominal_high_field.setValue(self.nominal_high_spin.value())
+        layout.addRow("Min", min_field)
+        layout.addRow("Max", max_field)
+        layout.addRow("Nominal min", nominal_low_field)
+        layout.addRow("Nominal max", nominal_high_field)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec_() == QDialog.Accepted:
+            self.min_spin.setValue(min_field.value())
+            self.max_spin.setValue(max_field.value())
+            self.nominal_low_spin.setValue(nominal_low_field.value())
+            self.nominal_high_spin.setValue(nominal_high_field.value())
+            self._on_range_changed()
 
     def set_unit(self, unit: str) -> None:
         self._unit = unit
@@ -4170,6 +4246,7 @@ class MainWindow(QMainWindow):
         self._multi_plot_buffers: Dict[str, deque[Tuple[float, float]]] = {}
         self._multi_plot_curves: Dict[str, pg.PlotDataItem] = {}
         self._multi_plot_paused = False
+        self._latest_values: Dict[str, Optional[float]] = {}
         self._show_dummy_advanced = False
         self._multi_plot_enabled = False
         self._plot_color_map: Dict[str, QColor] = {}
@@ -4840,6 +4917,7 @@ class MainWindow(QMainWindow):
         outer_layout.setSpacing(6)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setMinimumWidth(360)
         content = QWidget()
         self._gauge_list_layout = QVBoxLayout(content)
         self._gauge_list_layout.setContentsMargins(2, 2, 2, 2)
@@ -4852,6 +4930,7 @@ class MainWindow(QMainWindow):
         dock.setFeatures(
             QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
         )
+        dock.setMinimumWidth(400)
         dock.setWidget(container)
         self.gauge_dock = dock
         for signal, cfg in list(self._pending_gauge_configs.items()):
@@ -7079,6 +7158,17 @@ class MainWindow(QMainWindow):
             self.watchlist_widget.set_gauge_assigned(name, True)
             return
         defaults = {"min": 0.0, "max": 100.0, "nominal_low": 25.0, "nominal_high": 75.0}
+        current_value = None
+        if self._latest_values:
+            current_value = self._latest_values.get(name)
+        if isinstance(current_value, (int, float)):
+            span = max(abs(float(current_value)) * 0.4, 1.0)
+            defaults = {
+                "min": float(current_value) - span,
+                "max": float(current_value) + span,
+                "nominal_low": float(current_value) - span * 0.2,
+                "nominal_high": float(current_value) + span * 0.2,
+            }
         cfg = dict(defaults)
         if config:
             try:
@@ -7922,6 +8012,7 @@ class MainWindow(QMainWindow):
         if self.logger.is_running():
             requested.update(self.logger.signal_names)
         values = self.backend.read_signal_values(requested)
+        self._latest_values = dict(values)
         timestamp = time.monotonic()
         for channel, profile in self._channel_profiles.items():
             status = {semantic: values.get(signal, 0.0) for semantic, signal in profile.status.fields.items()}
