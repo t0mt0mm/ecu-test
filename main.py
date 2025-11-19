@@ -77,6 +77,7 @@ from PyQt5.QtCore import (
     QRectF,
     pyqtSignal,
     pyqtSlot,
+    pyqtProperty,
 )
 from PyQt5.QtGui import QColor, QPalette, QPen, QBrush, QPainterPath, QPolygonF, QPainter, QFont
 from PyQt5.QtWidgets import (
@@ -1945,6 +1946,62 @@ class SignalBrowserWidget(QWidget):
         self._allow_simulation = enabled
 
 
+class StatusBar(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._progress = 0.0
+        self._active = False
+        self._animation = QPropertyAnimation(self, b"progress")
+        self._animation.setDuration(280)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.setMinimumHeight(14)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def set_idle(self) -> None:
+        self._active = False
+        self._animation.stop()
+        self.progress = 0.0
+
+    def set_active(self) -> None:
+        self._active = True
+        if self._animation.state() == QPropertyAnimation.Running:
+            return
+        self.progress = 1.0
+
+    def pulse(self) -> None:
+        self._active = True
+        self._animation.stop()
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.start()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if not self._active or self._progress <= 0.0:
+            painter.end()
+            return
+        rect = self.rect().adjusted(1, 3, -1, -3)
+        fill_width = rect.width() * max(0.0, min(1.0, self._progress))
+        bar_rect = QRectF(rect.x(), rect.y(), fill_width, rect.height())
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#22c55e"))
+        painter.drawRoundedRect(bar_rect, 6, 6)
+        painter.end()
+
+    def _get_progress(self) -> float:
+        return self._progress
+
+    def _set_progress(self, value: float) -> None:
+        clamped = max(0.0, min(1.0, float(value)))
+        if math.isclose(self._progress, clamped, abs_tol=1e-4):
+            return
+        self._progress = clamped
+        self.update()
+
+    progress = pyqtProperty(float, fget=_get_progress, fset=_set_progress)
+
+
 class WatchlistWidget(QWidget):
     remove_requested = pyqtSignal(list)
     plot_toggled = pyqtSignal(str, bool)
@@ -1954,12 +2011,13 @@ class WatchlistWidget(QWidget):
         super().__init__()
         self._order: List[str] = []
         self._units: Dict[str, str] = {}
-        self._last_update: Dict[str, datetime.datetime] = {}
+        self._last_values: Dict[str, Optional[float]] = {}
         self._plot_checkboxes: Dict[str, QCheckBox] = {}
         self._gauge_checkboxes: Dict[str, QCheckBox] = {}
+        self._status_bars: Dict[str, StatusBar] = {}
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot", "Gauge"])
+        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Status", "Plot", "Gauge"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         header = self.table.horizontalHeader()
@@ -1995,7 +2053,9 @@ class WatchlistWidget(QWidget):
             self._update_cell(row, 0, name)
             self._update_cell(row, 1, "0.0000")
             self._update_cell(row, 2, self._units.get(name, ""))
-            self._update_cell(row, 3, "-")
+            status_bar = StatusBar()
+            self.table.setCellWidget(row, 3, status_bar)
+            self._status_bars[name] = status_bar
             checkbox = QCheckBox()
             checkbox.stateChanged.connect(lambda state, signal=name: self._on_plot_toggle(signal, state))
             self.table.setCellWidget(row, 4, checkbox)
@@ -2031,23 +2091,38 @@ class WatchlistWidget(QWidget):
         for row in reversed(rows):
             name = self._order.pop(row)
             self.table.removeRow(row)
-            self._last_update.pop(name, None)
+            self._last_values.pop(name, None)
             checkbox = self._plot_checkboxes.pop(name, None)
             if checkbox:
                 checkbox.deleteLater()
             gauge_checkbox = self._gauge_checkboxes.pop(name, None)
             if gauge_checkbox:
                 gauge_checkbox.deleteLater()
+            status_bar = self._status_bars.pop(name, None)
+            if status_bar:
+                status_bar.deleteLater()
 
     def update_values(self, values: Dict[str, float]) -> None:
-        now = datetime.datetime.now()
         for row, name in enumerate(self._order):
             value = values.get(name)
             display = "n/a" if value is None else f"{value:.4f}"
             self._update_cell(row, 1, display)
-            if value is not None:
-                self._last_update[name] = now
-                self._update_cell(row, 3, now.isoformat(timespec="seconds"))
+            status_bar = self._status_bars.get(name)
+            previous = self._last_values.get(name)
+            if status_bar:
+                if value is None or value == 0.0:
+                    status_bar.set_idle()
+                else:
+                    changed = previous is None or not math.isclose(previous, value, rel_tol=1e-9, abs_tol=1e-12)
+                    status_bar.set_active()
+                    if changed:
+                        status_bar.pulse()
+                    else:
+                        status_bar.progress = 1.0
+            if value is None:
+                self._last_values.pop(name, None)
+            else:
+                self._last_values[name] = value
 
     def selected_signal_names(self) -> List[str]:
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
