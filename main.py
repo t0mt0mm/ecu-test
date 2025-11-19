@@ -2333,6 +2333,65 @@ class GaugeCardWidget(QFrame):
         payload = dict(self._config)
         payload["signal"] = self.signal_name
         return payload
+
+
+def update_time_series_plot(
+    timestamp: float,
+    values: Dict[str, Optional[float]],
+    active_names: Iterable[str],
+    buffers: Dict[str, deque[Tuple[float, float]]],
+    curves: Dict[str, pg.PlotDataItem],
+    plot_widget: pg.PlotWidget,
+    paused: bool,
+    create_curve: Callable[[str], Optional[pg.PlotDataItem]],
+    remove_curve: Callable[[str, pg.PlotDataItem], None],
+) -> None:
+    active = set(active_names)
+    for name in list(buffers.keys()):
+        if name not in active:
+            buffers.pop(name, None)
+            curve = curves.pop(name, None)
+            if curve is not None:
+                remove_curve(name, curve)
+    for name in active:
+        value = values.get(name)
+        if value is None:
+            continue
+        buffer = buffers.setdefault(name, deque())
+        buffer.append((timestamp, float(value)))
+        cutoff = timestamp - 60.0
+        while buffer and buffer[0][0] < cutoff:
+            buffer.popleft()
+        if name not in curves:
+            curve = create_curve(name)
+            if curve is not None:
+                curves[name] = curve
+    if paused:
+        return
+    if not buffers:
+        return
+    base_time = min((entries[0] for buffer in buffers.values() for entries in buffer), default=None)
+    if base_time is None:
+        return
+    for name, buffer in buffers.items():
+        if not buffer:
+            continue
+        times = [entry[0] - base_time for entry in buffer]
+        samples = [entry[1] for entry in buffer]
+        if len(times) > 5_000:
+            step = max(1, math.ceil(len(times) / 5_000))
+            dec_times = times[::step]
+            dec_samples = samples[::step]
+            if dec_times[-1] != times[-1]:
+                dec_times.append(times[-1])
+                dec_samples.append(samples[-1])
+            times, samples = dec_times, dec_samples
+        curve = curves.get(name)
+        if curve:
+            curve.setData(times, samples)
+    plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+
 class MultiAxisPlotDock(QDockWidget):
     closed = pyqtSignal(int)
 
@@ -2360,56 +2419,20 @@ class MultiAxisPlotDock(QDockWidget):
         self.clear_button.clicked.connect(self.clear_all)
         controls_layout.addWidget(self.clear_button)
         layout.addLayout(controls_layout)
+        self._buffers: Dict[str, deque[Tuple[float, float]]] = {}
+        self._curves: Dict[str, pg.PlotDataItem] = {}
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setMinimumHeight(220)
         self._legend = self.plot_widget.addLegend()
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.setMenuEnabled(False)
         self.plot_item = self.plot_widget.getPlotItem()
-        self.plot_item.showAxis('right')
-        layout_item = self.plot_item.layout
-        left_axis = self.plot_item.getAxis('left')
-        right_axis = self.plot_item.getAxis('right')
-        top_axis = self.plot_item.getAxis('top')
-        bottom_axis = self.plot_item.getAxis('bottom')
-        layout_item.removeItem(left_axis)
-        layout_item.removeItem(right_axis)
-        layout_item.removeItem(top_axis)
-        layout_item.removeItem(bottom_axis)
-        layout_item.removeItem(self.plot_item.vb)
-        self.left_axes: Dict[str, pg.AxisItem] = {
-            "left1": left_axis,
-            "left2": pg.AxisItem("left"),
-        }
-        self.right_axes: Dict[str, pg.AxisItem] = {
-            "right1": right_axis,
-            "right2": pg.AxisItem("right"),
-        }
-        self.axis_views: Dict[str, pg.ViewBox] = {
-            "left1": self.plot_item.vb,
-            "left2": pg.ViewBox(),
-            "right1": pg.ViewBox(),
-            "right2": pg.ViewBox(),
-        }
-        for key, view in self.axis_views.items():
-            if key == "left1":
-                continue
-            self.plot_item.scene().addItem(view)
-            view.setXLink(self.plot_item.vb)
-        self.left_axes["left1"].linkToView(self.axis_views["left1"])
-        self.left_axes["left2"].linkToView(self.axis_views["left2"])
-        self.right_axes["right1"].linkToView(self.axis_views["right1"])
-        self.right_axes["right2"].linkToView(self.axis_views["right2"])
-        layout_item.addItem(self.left_axes["left2"], 1, 0)
-        layout_item.addItem(self.left_axes["left1"], 1, 1)
-        layout_item.addItem(self.plot_item.vb, 1, 2)
-        layout_item.addItem(self.right_axes["right1"], 1, 3)
-        layout_item.addItem(self.right_axes["right2"], 1, 4)
-        layout_item.addItem(top_axis, 0, 2)
-        layout_item.addItem(bottom_axis, 2, 2)
-        self.plot_item.vb.sigResized.connect(self._update_views)
-        self._axis_assignments: Dict[str, List[str]] = {key: [] for key in self.axis_views}
-        self._update_views()
+        self.plot_item.showAxis('right', False)
+        self.plot_item.getAxis('left').setLabel("")
+        self.plot_item.getAxis('right').setLabel("")
+        self._axis_assignments: Dict[str, List[str]] = {"left": [], "right": []}
+        self._right_view: Optional[pg.ViewBox] = None
+        self._right_axis_enabled = False
         self._measurement_cursors_enabled = False
         self._cursor_lines: Dict[str, pg.InfiniteLine] = {}
         self._cursor_labels: Dict[str, Any] = {}
@@ -2423,6 +2446,7 @@ class MultiAxisPlotDock(QDockWidget):
         self._cursor_release_timer.timeout.connect(self._on_cursor_released)
         self._active_curve: Optional[pg.PlotDataItem] = None
         self.plot_item.vb.sigRangeChanged.connect(self._update_hud_position)
+        self._right_axis_action: Optional[QAction] = None
         self._cursor_menu_action: Optional[QAction] = None
         self._swap_cursor_action: Optional[QAction] = None
         if hasattr(self.plot_item, "vb") and hasattr(self.plot_item.vb, "menu"):
@@ -2430,6 +2454,10 @@ class MultiAxisPlotDock(QDockWidget):
         else:
             menu = None
         if menu is not None:
+            self._right_axis_action = QAction("Show right axis", menu)
+            self._right_axis_action.setCheckable(True)
+            self._right_axis_action.toggled.connect(self._toggle_right_axis)
+            menu.addAction(self._right_axis_action)
             self._cursor_menu_action = QAction("Measurement cursors", menu)
             self._cursor_menu_action.setCheckable(True)
             self._cursor_menu_action.toggled.connect(self._on_cursor_menu_toggled)
@@ -2452,56 +2480,123 @@ class MultiAxisPlotDock(QDockWidget):
         pixmap = self.plot_widget.grab()
         pixmap.save(path, "PNG")
 
-    def _update_views(self) -> None:
+    def _toggle_right_axis(self, enabled: bool) -> None:
+        self._set_right_axis_enabled(enabled)
+
+    def _set_right_axis_enabled(self, enabled: bool) -> None:
+        if self._right_axis_enabled == enabled and ((self._right_view is not None) == enabled):
+            return
+        self._right_axis_enabled = enabled
+        if self._right_axis_action is not None:
+            self._right_axis_action.blockSignals(True)
+            self._right_axis_action.setChecked(enabled)
+            self._right_axis_action.blockSignals(False)
+        if enabled:
+            self._ensure_right_view()
+        else:
+            self._teardown_right_view()
+        self._apply_curve_views()
+
+    def _ensure_right_view(self) -> None:
+        if self._right_view is not None:
+            return
+        self._right_view = pg.ViewBox()
+        self._right_view.setXLink(self.plot_item.vb)
+        self.plot_item.scene().addItem(self._right_view)
+        self.plot_item.getAxis("right").linkToView(self._right_view)
+        self.plot_item.showAxis("right", True)
+        self._sync_right_view()
+        self.plot_item.vb.sigResized.connect(self._sync_right_view)
+
+    def _teardown_right_view(self) -> None:
+        if self._right_view is None:
+            return
+        try:
+            self.plot_item.vb.sigResized.disconnect(self._sync_right_view)
+        except TypeError:
+            pass
+        self.plot_item.scene().removeItem(self._right_view)
+        self._right_view = None
+        self.plot_item.showAxis("right", False)
+
+    def _sync_right_view(self, _view: Optional[pg.ViewBox] = None) -> None:
+        if self._right_view is None:
+            return
         rect = self.plot_item.vb.sceneBoundingRect()
         if rect:
-            for key, view in self.axis_views.items():
-                if key == "left1":
-                    continue
-                view.setGeometry(rect)
-                view.linkedViewChanged(self.plot_item.vb, view.XAxis)
+            self._right_view.setGeometry(rect)
+            self._right_view.linkedViewChanged(self.plot_item.vb, self._right_view.XAxis)
 
     def _normalize_axis_side(self, side: Optional[str]) -> str:
-        normalized = (side or "left1").lower()
-        if normalized in {"left", "l"}:
-            return "left1"
-        if normalized in {"right", "r"}:
-            return "right1"
-        if normalized not in {"left1", "left2", "right1", "right2"}:
-            return "left1"
-        return normalized
+        normalized = (side or "left").lower()
+        if normalized in {"left", "l", "left1", "left2"}:
+            return "left"
+        if normalized in {"right", "r", "right1", "right2"}:
+            return "right"
+        return "left"
 
-    def _axis_for_side(self, side: str) -> pg.AxisItem:
-        if side in self.left_axes:
-            return self.left_axes[side]
-        return self.right_axes.get(side, self.left_axes["left1"])
+    def _apply_curve_views(self) -> None:
+        for info in self._signals.values():
+            curve = info.get("curve")
+            if curve is None:
+                continue
+            self._remove_curve_from_views(curve)
+            target_side = info.get("side", "left")
+            if target_side == "right" and self._right_view is not None:
+                self._right_view.addItem(curve)
+            else:
+                self.plot_item.addItem(curve)
 
-    def _refresh_axis_style(self, side: str) -> None:
-        axis = self._axis_for_side(side)
-        signals = [name for name in self._axis_assignments.get(side, []) if name in self._signals]
-        if not signals:
-            axis.setLabel("")
-            axis.setPen(pg.mkPen(QColor("#94a3b8")))
-            axis.setTextPen(pg.mkPen(QColor("#94a3b8")))
-            return
-        ref_name = signals[0]
-        sig_info = self._signals.get(ref_name, {})
-        unit = sig_info.get("unit", "")
-        color = sig_info.get("color", QColor("#2563eb"))
-        text = f"[{unit}]" if unit else "[ ]"
-        axis.setLabel(text, color=color)
+    def _remove_curve_from_views(self, curve: pg.PlotDataItem) -> None:
         try:
-            axis.label.setAngle(90)
+            self.plot_item.removeItem(curve)
         except Exception:
             pass
-        axis.setPen(pg.mkPen(color))
-        axis.setTextPen(pg.mkPen(color))
+        if self._right_view is not None:
+            try:
+                self._right_view.removeItem(curve)
+            except Exception:
+                pass
+
+    def _create_curve(self, name: str) -> Optional[pg.PlotDataItem]:
+        info = self._signals.get(name)
+        if info is None:
+            return None
+        curve = info.get("curve")
+        if curve is None:
+            pen_color = pg.mkPen(info["color"], width=2)
+            curve = pg.PlotDataItem(pen=pen_color)
+            curve.setZValue(len(self._signals) + 2)
+            if hasattr(curve, "setCurveClickable"):
+                curve.setCurveClickable(True)
+            elif hasattr(curve, "setClickable"):
+                curve.setClickable(True)
+            curve.sigClicked.connect(self._on_curve_clicked)
+            info["curve"] = curve
+            self._curves[name] = curve
+            self._apply_curve_views()
+            if self._legend:
+                self._legend.addItem(curve, name)
+        return curve
+
+    def _remove_curve(self, name: str, curve: pg.PlotDataItem) -> None:
+        self._remove_curve_from_views(curve)
+        try:
+            curve.sigClicked.disconnect(self._on_curve_clicked)
+        except Exception:
+            pass
+        if self._legend:
+            try:
+                self._legend.removeItem(curve)
+            except Exception:
+                pass
+        self._curves.pop(name, None)
 
     def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
         axis_key = self._normalize_axis_side(side)
         existing = self._signals.get(name)
         if existing:
-            if existing["side"] == axis_key:
+            if existing.get("side") == axis_key:
                 return
             self.remove_signal(name)
         pen_color = pg.mkPen(pen if pen is not None else pg.intColor(len(self._signals)), width=2)
@@ -2512,19 +2607,21 @@ class MultiAxisPlotDock(QDockWidget):
         elif hasattr(curve, "setClickable"):
             curve.setClickable(True)
         curve.sigClicked.connect(self._on_curve_clicked)
-        view = self.axis_views.get(axis_key, self.plot_item.vb)
-        view.addItem(curve)
+        self._buffers[name] = deque()
+        self._curves[name] = curve
         if self._legend:
             self._legend.addItem(curve, name)
         self._signals[name] = {
-            "buffer": deque(),
+            "buffer": self._buffers[name],
             "curve": curve,
             "side": axis_key,
             "unit": unit or "",
             "color": pen_color.color() if hasattr(pen_color, "color") else QColor(pen) if pen else QColor("#2563eb"),
         }
         self._axis_assignments.setdefault(axis_key, []).append(name)
-        self._refresh_axis_style(axis_key)
+        if axis_key == "right":
+            self._set_right_axis_enabled(True)
+        self._apply_curve_views()
         if self._active_curve is None:
             self._active_curve = curve
         self._update_cursor_info()
@@ -2538,17 +2635,19 @@ class MultiAxisPlotDock(QDockWidget):
             curve.sigClicked.disconnect(self._on_curve_clicked)
         except Exception:
             pass
-        for view in self.axis_views.values():
-            view.removeItem(curve)
+        self._remove_curve_from_views(curve)
         if self._legend:
             try:
                 self._legend.removeItem(curve)
             except Exception:
                 pass
+        self._curves.pop(name, None)
+        self._buffers.pop(name, None)
         axis_key = info.get("side")
         if axis_key in self._axis_assignments and name in self._axis_assignments[axis_key]:
             self._axis_assignments[axis_key] = [n for n in self._axis_assignments[axis_key] if n != name]
-            self._refresh_axis_style(axis_key)
+        if axis_key == "right" and not self._axis_assignments.get("right"):
+            self._set_right_axis_enabled(False)
         if self._active_curve is curve:
             self._active_curve = self._select_fallback_curve()
         self._update_cursor_info()
@@ -2562,40 +2661,19 @@ class MultiAxisPlotDock(QDockWidget):
     def update(self, timestamp: float, values: Dict[str, Optional[float]]) -> None:
         if not self._signals:
             return
-        cutoff = timestamp - 60.0
-        base_time: Optional[float] = None
-        for name, info in self._signals.items():
-            buffer: deque = info["buffer"]
-            value = values.get(name)
-            if value is not None:
-                buffer.append((timestamp, float(value)))
-            while buffer and buffer[0][0] < cutoff:
-                buffer.popleft()
-            if buffer:
-                if base_time is None or buffer[0][0] < base_time:
-                    base_time = buffer[0][0]
-        if base_time is None:
-            return
-        if self._paused:
-            return
-        for name, info in self._signals.items():
-            buffer: deque = info["buffer"]
-            if not buffer:
-                continue
-            times = [entry[0] - base_time for entry in buffer]
-            samples = [entry[1] for entry in buffer]
-            if len(times) > 5_000:
-                step = max(1, math.ceil(len(times) / 5_000))
-                dec_times = times[::step]
-                dec_samples = samples[::step]
-                if dec_times[-1] != times[-1]:
-                    dec_times.append(times[-1])
-                    dec_samples.append(samples[-1])
-                times, samples = dec_times, dec_samples
-            curve = info["curve"]
-            curve.setData(times, samples)
-        for view in self.axis_views.values():
-            view.enableAutoRange(axis=pg.ViewBox.YAxis)
+        update_time_series_plot(
+            timestamp,
+            values,
+            self._signals.keys(),
+            self._buffers,
+            self._curves,
+            self.plot_widget,
+            self._paused,
+            self._create_curve,
+            self._remove_curve,
+        )
+        if self._right_view is not None:
+            self._right_view.enableAutoRange(axis=pg.ViewBox.YAxis)
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
 
@@ -6654,8 +6732,8 @@ class MainWindow(QMainWindow):
         window_combo.setCurrentIndex(window_ids.index(default_window))
         form.addRow("Window", window_combo)
         axis_combo = QComboBox()
-        axis_combo.addItems(["Left 1", "Left 2", "Right 1", "Right 2"])
-        axis_options = ["left1", "left2", "right1", "right2"]
+        axis_combo.addItems(["Left", "Right"])
+        axis_options = ["left", "right"]
         try:
             axis_combo.setCurrentIndex(axis_options.index(suggested_side))
         except ValueError:
@@ -6676,32 +6754,34 @@ class MainWindow(QMainWindow):
         dock = self._plot_windows.get(window_id)
         if not dock:
             return
+        normalized_side = dock._normalize_axis_side(side)
         previous = self._plot_assignments.get(name)
-        if previous and previous == (window_id, side):
+        if previous and previous == (window_id, normalized_side):
             return
         if previous:
             prev_window, _prev_side = previous
             prev_dock = self._plot_windows.get(prev_window)
             if prev_dock:
                 prev_dock.remove_signal(name)
-        dock.add_signal(name, self._watch_units.get(name, ""), side, pen=self._get_signal_color(name))
-        self._plot_assignments[name] = (window_id, side)
+        dock.add_signal(name, self._watch_units.get(name, ""), normalized_side, pen=self._get_signal_color(name))
+        self._plot_assignments[name] = (window_id, normalized_side)
         self._active_plot_id = window_id
 
     def _suggest_axis_side(self, window_id: int, name: str) -> str:
         unit = (self._watch_units.get(name) or "").strip()
-        side_counts: Dict[str, int] = {"left1": 0, "left2": 0, "right1": 0, "right2": 0}
+        side_counts: Dict[str, int] = {"left": 0, "right": 0}
         for other, (win_id, side) in self._plot_assignments.items():
             if win_id != window_id:
                 continue
             other_unit = (self._watch_units.get(other) or "").strip()
-            side_counts[side] = side_counts.get(side, 0) + 1
+            normalized_side = "right" if side.startswith("right") else "left"
+            side_counts[normalized_side] = side_counts.get(normalized_side, 0) + 1
             if unit and other_unit == unit:
-                return side
-        for candidate in ("left1", "right1", "left2", "right2"):
+                return normalized_side
+        for candidate in ("left", "right"):
             if side_counts.get(candidate, 0) == 0:
                 return candidate
-        return "left1"
+        return "left"
 
     def _build_dummy_tab(self) -> None:
         self.dummy_tab = QWidget()
@@ -7406,14 +7486,12 @@ class MainWindow(QMainWindow):
         ]
         windows: List[dict] = []
         if inline_signals:
-            windows.append({"id": 0, "axes": {"left": inline_signals, "right": [], "left2": [], "right2": []}})
+            windows.append({"id": 0, "axes": {"left": inline_signals, "right": []}})
         for identifier, dock in sorted(self._plot_windows.items()):
             assigned = dock.assigned_signals()
-            left = sorted([name for name, (_unit, side) in assigned.items() if side == "left1"])
-            right = sorted([name for name, (_unit, side) in assigned.items() if side == "right1"])
-            left2 = sorted([name for name, (_unit, side) in assigned.items() if side == "left2"])
-            right2 = sorted([name for name, (_unit, side) in assigned.items() if side == "right2"])
-            windows.append({"id": int(identifier), "axes": {"left": left, "right": right, "left2": left2, "right2": right2}})
+            left = sorted([name for name, (_unit, side) in assigned.items() if side == "left"])
+            right = sorted([name for name, (_unit, side) in assigned.items() if side == "right"])
+            windows.append({"id": int(identifier), "axes": {"left": left, "right": right}})
         dummy_profiles: Dict[str, dict] = {}
         if isinstance(self.backend, DummyBackend):
             for name, config in self.backend.simulation_profiles().items():
@@ -7675,20 +7753,20 @@ class MainWindow(QMainWindow):
             axes = entry.get("axes", {}) if isinstance(entry.get("axes", {}), dict) else {}
             left_signals = [str(name) for name in axes.get("left", [])]
             right_signals = [str(name) for name in axes.get("right", [])]
-            left2_signals = [str(name) for name in axes.get("left2", [])]
-            right2_signals = [str(name) for name in axes.get("right2", [])]
+            legacy_left = [str(name) for name in axes.get("left2", [])]
+            legacy_right = [str(name) for name in axes.get("right2", [])]
             for name in left_signals:
                 if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "left1")
+                    self._assign_signal_to_plot(name, new_id, "left")
             for name in right_signals:
                 if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "right1")
-            for name in left2_signals:
+                    self._assign_signal_to_plot(name, new_id, "right")
+            for name in legacy_left:
                 if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "left2")
-            for name in right2_signals:
+                    self._assign_signal_to_plot(name, new_id, "left")
+            for name in legacy_right:
                 if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "right2")
+                    self._assign_signal_to_plot(name, new_id, "right")
 
     def _apply_channels_setup(self, data: dict) -> None:
         profiles_section = data.get("profiles", []) if isinstance(data, dict) else []
@@ -8149,49 +8227,30 @@ class MainWindow(QMainWindow):
         if not self._multi_plot_enabled:
             return
         active = set(self.watchlist_widget.plot_signal_names)
-        for name in list(self._multi_plot_buffers.keys()):
-            if name not in active:
-                self._multi_plot_buffers.pop(name, None)
-                curve = self._multi_plot_curves.pop(name, None)
-                if curve:
-                    self.multi_plot_widget.removeItem(curve)
-        for name in active:
-            value = values.get(name)
-            if value is None:
-                continue
-            buffer = self._multi_plot_buffers.setdefault(name, deque())
-            buffer.append((timestamp, float(value)))
-            cutoff = timestamp - 60.0
-            while buffer and buffer[0][0] < cutoff:
-                buffer.popleft()
-            if name not in self._multi_plot_curves:
-                pen = pg.mkPen(self._get_signal_color(name), width=2)
-                curve = self.multi_plot_widget.plot(name=name, pen=pen)
-                self._multi_plot_curves[name] = curve
-        if self._multi_plot_paused:
-            return
-        if not self._multi_plot_buffers:
-            return
-        base_time = min((entries[0] for buffer in self._multi_plot_buffers.values() for entries in buffer), default=None)
-        if base_time is None:
-            return
-        for name, buffer in self._multi_plot_buffers.items():
-            if not buffer:
-                continue
-            times = [entry[0] - base_time for entry in buffer]
-            samples = [entry[1] for entry in buffer]
-            if len(times) > 5_000:
-                step = max(1, math.ceil(len(times) / 5_000))
-                dec_times = times[::step]
-                dec_samples = samples[::step]
-                if dec_times[-1] != times[-1]:
-                    dec_times.append(times[-1])
-                    dec_samples.append(samples[-1])
-                times, samples = dec_times, dec_samples
-            curve = self._multi_plot_curves.get(name)
-            if curve:
-                curve.setData(times, samples)
-        self.multi_plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+        def create_curve(signal_name: str) -> Optional[pg.PlotDataItem]:
+            if signal_name in self._multi_plot_curves:
+                return self._multi_plot_curves[signal_name]
+            pen = pg.mkPen(self._get_signal_color(signal_name), width=2)
+            curve = self.multi_plot_widget.plot(name=signal_name, pen=pen)
+            self._multi_plot_curves[signal_name] = curve
+            return curve
+
+        def remove_curve(signal_name: str, curve: pg.PlotDataItem) -> None:
+            self.multi_plot_widget.removeItem(curve)
+            self._multi_plot_curves.pop(signal_name, None)
+
+        update_time_series_plot(
+            timestamp,
+            values,
+            active,
+            self._multi_plot_buffers,
+            self._multi_plot_curves,
+            self.multi_plot_widget,
+            self._multi_plot_paused,
+            create_curve,
+            remove_curve,
+        )
 
     # Helpers
     def _set_hardware_pending(self, pending: bool, message: Optional[str] = None) -> None:
