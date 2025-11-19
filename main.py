@@ -78,7 +78,7 @@ from PyQt5.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt5.QtGui import QColor, QPalette, QPen, QBrush, QPainterPath, QPolygonF, QPainter
+from PyQt5.QtGui import QColor, QPalette, QPen, QBrush, QPainterPath, QPolygonF, QPainter, QFont
 from PyQt5.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -2092,7 +2092,7 @@ class GaugeDialWidget(QWidget):
         self._value = 0.0
         self._unit = ""
         self._accent = QColor("#2563eb")
-        self.setMinimumSize(240, 240)
+        self.setMinimumSize(280, 280)
 
     def set_unit(self, unit: str) -> None:
         self._unit = unit
@@ -2117,7 +2117,7 @@ class GaugeDialWidget(QWidget):
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(12, 12, -12, -12)
+        rect = self.rect().adjusted(16, 16, -16, -16)
         radius = min(rect.width(), rect.height())
         side = QSize(radius, radius)
         centered = QRectF(0, 0, side.width(), side.height())
@@ -2156,26 +2156,58 @@ class GaugeDialWidget(QWidget):
         ratio = (self._value - self._min) / norm_span
         ratio = min(max(ratio, 0.0), 1.0)
         value_angle = start_angle + span_angle * ratio
-        painter.setPen(QPen(self._accent, 12, Qt.SolidLine, Qt.RoundCap))
-        painter.drawArc(centered, start_angle * 16, int((value_angle - start_angle) * 16))
 
-        indicator_radius = centered.width() * 0.35
+        indicator_radius = centered.width() * 0.42
         center = centered.center()
-        angle_rad = math.radians(90 - value_angle)
+        angle_rad = math.radians(value_angle)
         end_point = QPointF(
             center.x() + indicator_radius * math.cos(angle_rad),
             center.y() - indicator_radius * math.sin(angle_rad),
         )
         painter.setPen(QPen(self._accent.darker(110), 4, Qt.SolidLine, Qt.RoundCap))
         painter.drawLine(center, end_point)
-        painter.setBrush(QBrush(QColor("#0f172a")))
+
+        marker_radius = centered.width() * 0.48
+        marker_point = QPointF(
+            center.x() + marker_radius * math.cos(angle_rad),
+            center.y() - marker_radius * math.sin(angle_rad),
+        )
+        painter.setBrush(QBrush(self._accent))
         painter.setPen(Qt.NoPen)
+        painter.drawEllipse(marker_point, 6, 6)
+
+        painter.setBrush(QBrush(QColor("#0f172a")))
         painter.drawEllipse(center, 6, 6)
 
         painter.setPen(QPen(QColor("#0f172a")))
+        font = self.font()
+        painter.setFont(font)
         value_text = f"{self._value:.2f} {self._unit}".strip()
-        painter.setFont(self.font())
-        painter.drawText(centered, Qt.AlignCenter, value_text)
+        value_rect = QRectF(centered)
+        value_rect.setTop(center.y())
+        painter.drawText(value_rect, Qt.AlignHCenter | Qt.AlignVCenter, value_text)
+
+        label_font = QFont(font)
+        label_font.setPointSize(max(font.pointSize() - 1, 9))
+        painter.setFont(label_font)
+        min_point = QPointF(
+            center.x() + (centered.width() * 0.55) * math.cos(math.radians(start_angle)),
+            center.y() - (centered.width() * 0.55) * math.sin(math.radians(start_angle)),
+        )
+        max_point = QPointF(
+            center.x() + (centered.width() * 0.55) * math.cos(math.radians(start_angle + span_angle)),
+            center.y() - (centered.width() * 0.55) * math.sin(math.radians(start_angle + span_angle)),
+        )
+        painter.drawText(QRectF(min_point.x() - 50, min_point.y() - 14, 100, 20), Qt.AlignLeft, f"{self._min:.1f}")
+        painter.drawText(QRectF(max_point.x() - 50, max_point.y() - 14, 100, 20), Qt.AlignRight, f"{self._max:.1f}")
+
+        nominal_label_rect = QRectF(centered)
+        nominal_label_rect.setBottom(center.y() - centered.height() * 0.35)
+        painter.drawText(
+            nominal_label_rect,
+            Qt.AlignHCenter | Qt.AlignBottom,
+            f"{self._nominal_low:.1f} – {self._nominal_high:.1f}",
+        )
 
 
 class GaugeCardWidget(QFrame):
