@@ -2551,6 +2551,7 @@ class MultiAxisPlotDock(QDockWidget):
         except Exception:
             pass
         axis = axis_item or pg.AxisItem(normalized_side)
+        axis.setWidth(max(axis.width(), 48))
         axis.linkToView(view_box)
         self.axis_registry[axis_identifier] = {"axis": axis, "view": view_box, "side": normalized_side}
         self._axis_assignments.setdefault(axis_identifier, [])
@@ -2632,6 +2633,11 @@ class MultiAxisPlotDock(QDockWidget):
                 layout_item.removeItem(info["axis"])
             except Exception:
                 pass
+        for overlay in self._overlay_views:
+            try:
+                layout_item.removeItem(overlay)
+            except Exception:
+                pass
         try:
             layout_item.removeItem(self.plot_item.vb)
         except Exception:
@@ -2653,8 +2659,14 @@ class MultiAxisPlotDock(QDockWidget):
             axis = self.axis_registry[axis_id]["axis"]
             layout_item.addItem(axis, 1, column)
             column += 1
+        layout_item.setColumnStretchFactor(view_column, 1)
         layout_item.addItem(self.top_axis, 0, view_column)
         layout_item.addItem(self.bottom_axis, 2, view_column)
+        for overlay in self._overlay_views:
+            try:
+                layout_item.addItem(overlay, 1, view_column)
+            except Exception:
+                pass
         self._update_views()
 
     def _fallback_axis(self, exclude: Optional[str] = None) -> str:
@@ -2687,7 +2699,7 @@ class MultiAxisPlotDock(QDockWidget):
                 if view is not self.plot_item.vb:
                     view.linkedViewChanged(self.plot_item.vb, view.XAxis)
                     view.update()
-
+        
     def _normalize_axis_id(self, axis_id: Optional[str]) -> str:
         normalized = (axis_id or "left1").lower()
         if normalized in {"left", "l"}:
@@ -2860,13 +2872,44 @@ class MultiAxisPlotDock(QDockWidget):
                 times, samples = dec_times, dec_samples
             curve = info["curve"]
             curve.setData(times, samples)
-        for info in self.axis_registry.values():
-            view_box = info["view"]
-            view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        axis_ranges: Dict[str, Tuple[float, float]] = {}
+        for name, info in self._signals.items():
+            buffer = info["buffer"]
+            if not buffer:
+                continue
+            axis_id = info.get("side")
+            if axis_id not in self.axis_registry:
+                continue
+            values_only = [sample for _, sample in buffer]
+            if not values_only:
+                continue
+            current_min = min(values_only)
+            current_max = max(values_only)
+            if axis_id not in axis_ranges:
+                axis_ranges[axis_id] = (current_min, current_max)
+            else:
+                prev_min, prev_max = axis_ranges[axis_id]
+                axis_ranges[axis_id] = (min(prev_min, current_min), max(prev_max, current_max))
+        global_x_max = 0.0
+        for buffer in (info["buffer"] for info in self._signals.values() if info["buffer"]):
+            if buffer:
+                rel_time = buffer[-1][0] - base_time
+                if rel_time > global_x_max:
+                    global_x_max = rel_time
+        if global_x_max > 0:
             try:
-                view_box.autoRange(axis=pg.ViewBox.YAxis)
+                self.plot_item.vb.setXRange(0.0, global_x_max, padding=0.02)
             except Exception:
                 pass
+        for axis_id, (y_min, y_max) in axis_ranges.items():
+            view_box = self.axis_registry[axis_id]["view"]
+            span = max(1e-6, y_max - y_min)
+            padding = max(span * 0.08, 0.05)
+            try:
+                view_box.setYRange(y_min - padding, y_max + padding, padding=0.0)
+            except Exception:
+                pass
+            view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
 
@@ -6111,7 +6154,7 @@ class MainWindow(QMainWindow):
         self._set_state_machine_buttons()
         self._update_state_machine_status(f"Active: {state}")
         self._update_state_value_map()
-        self._state_machine_state_value = self._state_value_map.get(state, float(len(self._state_value_map)))
+        self._state_machine_state_value = self._state_value_map.get(state, float(len(self._state_value_map) + 1))
         self._update_state_machine_graph()
         self._populate_state_machine_editor()
         if self._state_watch_name in self.watchlist_widget.signal_names:
@@ -6129,7 +6172,7 @@ class MainWindow(QMainWindow):
     def _update_state_value_map(self) -> None:
         config = self._current_state_machine()
         names = config.state_names if config else []
-        self._state_value_map = {name: float(index) for index, name in enumerate(names)}
+        self._state_value_map = {name: float(index) for index, name in enumerate(names, start=1)}
         self._watch_units[self._state_watch_name] = "state"
         if getattr(self, "watchlist_widget", None):
             self.watchlist_widget.set_units(self._watch_units)
