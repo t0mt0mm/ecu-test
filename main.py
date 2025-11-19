@@ -135,46 +135,124 @@ from PyQt5.QtWidgets import (
 )
 
 APP_QSS = """
-/* Global */
-QMainWindow, QDialog, QWidget { background: #ffffff; color: #1f1f1f; }
-QAbstractScrollArea,
-QAbstractScrollArea > QWidget#qt_scrollarea_viewport { background: #ffffff; }
+/* Modern light theme */
+QWidget { font-family: "Inter", "Segoe UI", "Roboto", sans-serif; font-size: 13px; color: #0f172a; }
+QMainWindow, QDialog, QWidget { background: #f8fafc; }
+QStatusBar, QToolBar, QMenuBar { background: #ffffff; border: none; }
+QToolBar { padding: 6px 8px; spacing: 6px; }
+QStatusBar { border-top: 1px solid #e2e8f0; }
+
+/* Cards / Panels */
+QGroupBox, QDockWidget > QWidget, QFrame#Card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 6px;
+    color: #334155;
+    background: transparent;
+    font-weight: 600;
+}
+QDockWidget::title { padding: 6px 8px; background: #ffffff; border: none; color: #0f172a; }
+QDockWidget { titlebar-close-icon: url(); titlebar-normal-icon: url(); }
+QMainWindow::separator { background: #e2e8f0; width: 2px; height: 2px; }
 
 /* Tables / Trees */
-QHeaderView::section { background: #f5f5f7; padding: 6px; border: 1px solid #e6e6e6; }
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8fafc, stop:1 #eef2f7);
+    padding: 8px;
+    border: 1px solid #e2e8f0;
+    color: #1e293b;
+    font-weight: 600;
+}
 QTableView, QTreeView {
     background: #ffffff;
-    alternate-background-color: #f7f7f9;
-    gridline-color: #e0e0e0;
-    selection-background-color: #e6f2ff;
-    selection-color: #1f1f1f;
+    alternate-background-color: #f8fafc;
+    gridline-color: #e2e8f0;
+    selection-background-color: #e0f2fe;
+    selection-color: #0f172a;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
 }
+QTableView::item { padding: 6px; }
 
 /* Inputs */
-QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit {
-    background: #ffffff; border: 1px solid #d0d0d0; border-radius: 4px; padding: 4px 6px;
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit, QTimeEdit {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 6px 8px;
+    selection-background-color: #2563eb;
+    selection-color: #ffffff;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
-QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
-    border-color: #4096ff;
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus, QTimeEdit:focus {
+    border: 1px solid #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 /* Buttons */
-QPushButton { background: #f7f7f8; border: 1px solid #d0d0d0; border-radius: 6px; padding: 6px 10px; }
-QPushButton:hover { background: #fbfbfc; }
-QPushButton:pressed { background: #ededee; }
-QPushButton:disabled { color: #9aa0a6; background: #f3f4f6; border-color: #e5e7eb; }
+QPushButton {
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-weight: 600;
+}
+QPushButton:hover { background: #1d4ed8; }
+QPushButton:pressed { background: #1e40af; }
+QPushButton:disabled { background: #e2e8f0; color: #94a3b8; }
+QToolButton {
+    background: #e2e8f0;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+QToolButton:hover { background: #e5edf7; }
+QToolButton:pressed { background: #d9e3f5; }
 
-/* Gruppen / Tabs / Docks */
-QGroupBox { margin-top: 14px; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; top: 0px; padding: 0 4px; background: transparent; }
-QTabWidget::pane { border: 1px solid #e0e0e0; }
-QTabBar::tab { background: #eef1f5; border: 1px solid #e0e0e0; padding: 6px 10px; margin: 1px; }
-QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
-QMainWindow::separator { background: #d0d0d0; width: 2px; height: 2px; }
-QDockWidget { border: 1px solid #d0d0d0; }
-QDockWidget::title { padding: 4px 6px; }
-QStatusBar, QToolBar, QMenuBar { background: #ffffff; }
+/* Tabs */
+QTabWidget::pane { border: 1px solid #e2e8f0; border-radius: 10px; }
+QTabBar::tab {
+    background: #e2e8f0;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px 8px 0 0;
+    padding: 8px 12px;
+    margin-right: 2px;
+    font-weight: 600;
+}
+QTabBar::tab:selected { background: #ffffff; color: #0f172a; border-bottom-color: #ffffff; }
+
+/* Scrollbars */
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #f1f5f9;
+    border: none;
+    border-radius: 8px;
+    margin: 4px;
+}
+QScrollBar::handle {
+    background: #cbd5e1;
+    border-radius: 8px;
+    min-height: 24px;
+}
+QScrollBar::handle:hover { background: #94a3b8; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
+
+/* Badges */
+QLabel#StatusBadge {
+    background: #e0f2fe;
+    color: #0369a1;
+    border: 1px solid #bae6fd;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-weight: 600;
+}
 """
 
 
@@ -1867,6 +1945,7 @@ class SignalBrowserWidget(QWidget):
 class WatchlistWidget(QWidget):
     remove_requested = pyqtSignal(list)
     plot_toggled = pyqtSignal(str, bool)
+    gauge_requested = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -1874,9 +1953,10 @@ class WatchlistWidget(QWidget):
         self._units: Dict[str, str] = {}
         self._last_update: Dict[str, datetime.datetime] = {}
         self._plot_checkboxes: Dict[str, QCheckBox] = {}
+        self._gauge_buttons: Dict[str, QPushButton] = {}
         layout = QVBoxLayout(self)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot", "Gauge"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         header = self.table.horizontalHeader()
@@ -1886,6 +1966,7 @@ class WatchlistWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
         button_layout = QHBoxLayout()
@@ -1916,6 +1997,11 @@ class WatchlistWidget(QWidget):
             checkbox.stateChanged.connect(lambda state, signal=name: self._on_plot_toggle(signal, state))
             self.table.setCellWidget(row, 4, checkbox)
             self._plot_checkboxes[name] = checkbox
+            gauge_button = QPushButton("Add to gauge")
+            gauge_button.setMinimumWidth(110)
+            gauge_button.clicked.connect(lambda _checked=False, signal=name: self.gauge_requested.emit(signal))
+            self.table.setCellWidget(row, 5, gauge_button)
+            self._gauge_buttons[name] = gauge_button
             self._order.append(name)
             added.append(name)
         return added
@@ -1924,6 +2010,13 @@ class WatchlistWidget(QWidget):
         checkbox = self._plot_checkboxes.get(name)
         if checkbox:
             checkbox.setChecked(enabled)
+
+    def set_gauge_assigned(self, name: str, assigned: bool) -> None:
+        button = self._gauge_buttons.get(name)
+        if not button:
+            return
+        button.setText("In gauges" if assigned else "Add to gauge")
+        button.setEnabled(not assigned)
 
     def remove_signals(self, names: Iterable[str]) -> None:
         to_remove = {name for name in names}
@@ -1935,6 +2028,7 @@ class WatchlistWidget(QWidget):
             checkbox = self._plot_checkboxes.pop(name, None)
             if checkbox:
                 checkbox.deleteLater()
+            self._gauge_buttons.pop(name, None)
 
     def update_values(self, values: Dict[str, float]) -> None:
         now = datetime.datetime.now()
@@ -1975,6 +2069,178 @@ class WatchlistWidget(QWidget):
         return [name for name, checkbox in self._plot_checkboxes.items() if checkbox.isChecked()]
 
 
+class GaugeDialWidget(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._min = 0.0
+        self._max = 100.0
+        self._nominal_low = 25.0
+        self._nominal_high = 75.0
+        self._value = 0.0
+        self._unit = ""
+        self._accent = QColor("#2563eb")
+        self.setMinimumHeight(140)
+
+    def set_unit(self, unit: str) -> None:
+        self._unit = unit
+        self.update()
+
+    def set_accent(self, color: QColor) -> None:
+        self._accent = color
+        self.update()
+
+    def set_ranges(self, minimum: float, maximum: float, nominal_low: float, nominal_high: float) -> None:
+        self._min = minimum
+        self._max = maximum if maximum != minimum else minimum + 1.0
+        self._nominal_low = min(max(nominal_low, self._min), self._max)
+        self._nominal_high = min(max(nominal_high, self._nominal_low), self._max)
+        self.update()
+
+    def set_value(self, value: float) -> None:
+        self._value = value
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(12, 12, -12, -12)
+        radius = min(rect.width(), rect.height())
+        side = QSize(radius, radius)
+        centered = QRectF(0, 0, side.width(), side.height())
+        centered.moveCenter(rect.center())
+        start_angle = 225
+        span_angle = -270
+
+        painter.setPen(QPen(QColor("#e2e8f0"), 12, Qt.SolidLine, Qt.RoundCap))
+        painter.drawArc(centered, start_angle * 16, span_angle * 16)
+
+        norm_span = max(self._max - self._min, 1e-6)
+        nominal_start_ratio = (self._nominal_low - self._min) / norm_span
+        nominal_end_ratio = (self._nominal_high - self._min) / norm_span
+        nominal_start_angle = start_angle + span_angle * nominal_start_ratio
+        nominal_end_angle = start_angle + span_angle * nominal_end_ratio
+        painter.setPen(QPen(QColor("#22c55e"), 12, Qt.SolidLine, Qt.RoundCap))
+        painter.drawArc(centered, int(nominal_start_angle * 16), int((nominal_end_angle - nominal_start_angle) * 16))
+
+        ratio = (self._value - self._min) / norm_span
+        ratio = min(max(ratio, 0.0), 1.0)
+        value_angle = start_angle + span_angle * ratio
+        painter.setPen(QPen(self._accent, 12, Qt.SolidLine, Qt.RoundCap))
+        painter.drawArc(centered, start_angle * 16, int((value_angle - start_angle) * 16))
+
+        indicator_radius = centered.width() * 0.35
+        center = centered.center()
+        angle_rad = math.radians(90 - value_angle)
+        end_point = QPointF(
+            center.x() + indicator_radius * math.cos(angle_rad),
+            center.y() - indicator_radius * math.sin(angle_rad),
+        )
+        painter.setPen(QPen(self._accent.darker(110), 4, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(center, end_point)
+        painter.setBrush(QBrush(QColor("#0f172a")))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(center, 6, 6)
+
+        painter.setPen(QPen(QColor("#0f172a")))
+        value_text = f"{self._value:.2f} {self._unit}".strip()
+        painter.setFont(self.font())
+        painter.drawText(centered, Qt.AlignCenter, value_text)
+
+
+class GaugeCardWidget(QFrame):
+    remove_requested = pyqtSignal(str)
+    config_changed = pyqtSignal(str, dict)
+
+    def __init__(self, signal_name: str, config: Dict[str, float], color: QColor, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self.signal_name = signal_name
+        self._config = config
+        self._color = color
+        self._unit = ""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+        header = QHBoxLayout()
+        title = QLabel(signal_name)
+        title.setStyleSheet("font-weight: 700; font-size: 14px; color: #0f172a;")
+        header.addWidget(title)
+        header.addStretch(1)
+        remove_btn = QToolButton()
+        remove_btn.setText("Remove")
+        remove_btn.setAutoRaise(True)
+        remove_btn.clicked.connect(lambda: self.remove_requested.emit(self.signal_name))
+        header.addWidget(remove_btn)
+        layout.addLayout(header)
+
+        self.gauge = GaugeDialWidget()
+        self.gauge.set_accent(color)
+        self.gauge.set_ranges(
+            config.get("min", 0.0),
+            config.get("max", 100.0),
+            config.get("nominal_low", 25.0),
+            config.get("nominal_high", 75.0),
+        )
+        layout.addWidget(self.gauge)
+
+        controls = QGridLayout()
+        controls.setHorizontalSpacing(6)
+        controls.setVerticalSpacing(4)
+        self.min_spin = QDoubleSpinBox()
+        self.min_spin.setRange(-1e6, 1e6)
+        self.min_spin.setValue(config.get("min", 0.0))
+        self.max_spin = QDoubleSpinBox()
+        self.max_spin.setRange(-1e6, 1e6)
+        self.max_spin.setValue(config.get("max", 100.0))
+        self.nominal_low_spin = QDoubleSpinBox()
+        self.nominal_low_spin.setRange(-1e6, 1e6)
+        self.nominal_low_spin.setValue(config.get("nominal_low", 25.0))
+        self.nominal_high_spin = QDoubleSpinBox()
+        self.nominal_high_spin.setRange(-1e6, 1e6)
+        self.nominal_high_spin.setValue(config.get("nominal_high", 75.0))
+
+        controls.addWidget(QLabel("Min"), 0, 0)
+        controls.addWidget(self.min_spin, 0, 1)
+        controls.addWidget(QLabel("Nominal min"), 0, 2)
+        controls.addWidget(self.nominal_low_spin, 0, 3)
+        controls.addWidget(QLabel("Max"), 1, 0)
+        controls.addWidget(self.max_spin, 1, 1)
+        controls.addWidget(QLabel("Nominal max"), 1, 2)
+        controls.addWidget(self.nominal_high_spin, 1, 3)
+        layout.addLayout(controls)
+
+        for spin in (self.min_spin, self.max_spin, self.nominal_low_spin, self.nominal_high_spin):
+            spin.valueChanged.connect(self._on_range_changed)
+
+    def _on_range_changed(self) -> None:
+        self._config = {
+            "min": self.min_spin.value(),
+            "max": self.max_spin.value(),
+            "nominal_low": self.nominal_low_spin.value(),
+            "nominal_high": self.nominal_high_spin.value(),
+        }
+        self.gauge.set_ranges(
+            self._config["min"],
+            self._config["max"],
+            self._config["nominal_low"],
+            self._config["nominal_high"],
+        )
+        self.config_changed.emit(self.signal_name, dict(self._config))
+
+    def set_unit(self, unit: str) -> None:
+        self._unit = unit
+        self.gauge.set_unit(unit)
+
+    def set_value(self, value: Optional[float]) -> None:
+        if value is None:
+            return
+        self.gauge.set_value(float(value))
+
+    def to_dict(self) -> Dict[str, float]:
+        payload = dict(self._config)
+        payload["signal"] = self.signal_name
+        return payload
 class MultiAxisPlotDock(QDockWidget):
     closed = pyqtSignal(int)
 
@@ -3886,6 +4152,8 @@ class MainWindow(QMainWindow):
         self._channel_cards: Dict[str, ChannelCardWidget] = {}
         self._channel_status: Dict[str, Dict[str, float]] = {}
         self._channel_commands: Dict[str, Dict[str, float]] = {}
+        self._gauge_cards: Dict[str, GaugeCardWidget] = {}
+        self._pending_gauge_configs: Dict[str, Dict[str, float]] = {}
         self._sequencer_configs: Dict[str, ChannelConfig] = {}
         self._sequence_runners: Dict[str, SequenceRunner] = {}
         self._state_machine_configs: Dict[str, StateMachineConfig] = {}
@@ -3940,6 +4208,7 @@ class MainWindow(QMainWindow):
         self._initializing_ui = True
         self.channels_dock: Optional[QDockWidget] = None
         self.signals_dock: Optional[QDockWidget] = None
+        self.gauge_dock: Optional[QDockWidget] = None
         self.state_machine_dock: Optional[QDockWidget] = None
         self.state_machine_graph_dock: Optional[QDockWidget] = None
         self.state_machine_states_dock: Optional[QDockWidget] = None
@@ -4030,6 +4299,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_stack)
         self._build_channels_tab()
         self._build_signals_tab()
+        self._build_gauge_dock()
         self._build_state_machine_dock()
         if not self._restore_dock_layout():
             self._apply_default_dock_layout()
@@ -4492,6 +4762,7 @@ class MainWindow(QMainWindow):
         self.signal_browser.plot_requested.connect(self._on_plot_requested)
         self.signal_browser.simulate_requested.connect(self._on_signal_simulate)
         self.watchlist_widget.remove_requested.connect(self._on_remove_from_watchlist)
+        self.watchlist_widget.gauge_requested.connect(self._on_gauge_requested)
         self.signals_splitter.addWidget(top_container)
         self.logging_container = QWidget()
         self.logging_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -4561,6 +4832,33 @@ class MainWindow(QMainWindow):
         dock.setWidget(widget)
         self.signals_dock = dock
         self._apply_log_visibility()
+
+    def _build_gauge_dock(self) -> None:
+        container = QWidget()
+        outer_layout = QVBoxLayout(container)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+        outer_layout.setSpacing(6)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        self._gauge_list_layout = QVBoxLayout(content)
+        self._gauge_list_layout.setContentsMargins(2, 2, 2, 2)
+        self._gauge_list_layout.setSpacing(10)
+        self._gauge_list_layout.addStretch(1)
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll)
+        dock = QDockWidget("Tachos", self)
+        dock.setObjectName("Dock_Gauges")
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        dock.setWidget(container)
+        self.gauge_dock = dock
+        for signal, cfg in list(self._pending_gauge_configs.items()):
+            if signal not in self.watchlist_widget.signal_names:
+                self.watchlist_widget.add_signals([signal])
+            self._add_gauge_card(signal, cfg)
+        self._pending_gauge_configs.clear()
 
     def _build_state_machine_dock(self) -> None:
         control_widget = QWidget()
@@ -5374,6 +5672,7 @@ class MainWindow(QMainWindow):
         docks = [
             self.channels_dock,
             self.signals_dock,
+            self.gauge_dock,
             self.state_machine_dock,
             self.state_machine_graph_dock,
             self.state_machine_states_dock,
@@ -5385,6 +5684,9 @@ class MainWindow(QMainWindow):
                 dock.show()
         self.addDockWidget(Qt.LeftDockWidgetArea, self.signals_dock)
         self.splitDockWidget(self.signals_dock, self.channels_dock, Qt.Horizontal)
+        if self.gauge_dock:
+            self.addDockWidget(Qt.LeftDockWidgetArea, self.gauge_dock)
+            self.splitDockWidget(self.signals_dock, self.gauge_dock, Qt.Vertical)
         try:
             self.resizeDocks([self.signals_dock, self.channels_dock], [1000, 1000], Qt.Horizontal)
         except Exception:
@@ -6752,10 +7054,18 @@ class MainWindow(QMainWindow):
                 self.watchlist_widget.set_plot_enabled(name, True)
         self._save_settings()
 
+    def _on_gauge_requested(self, name: str) -> None:
+        if name not in self.watchlist_widget.signal_names:
+            self.watchlist_widget.add_signals([name])
+        self._add_gauge_card(name, self._pending_gauge_configs.get(name))
+        self._pending_gauge_configs.pop(name, None)
+        self._save_settings()
+
     def _on_remove_from_watchlist(self, names: List[str]) -> None:
         self.watchlist_widget.remove_signals(names)
         self._pending_watchlist = [name for name in self._pending_watchlist if name not in names]
         for name in names:
+            self._remove_gauge(name)
             assignment = self._plot_assignments.pop(name, None)
             if assignment:
                 window_id, _side = assignment
@@ -6763,6 +7073,65 @@ class MainWindow(QMainWindow):
                 if dock:
                     dock.remove_signal(name)
         self._save_settings()
+
+    def _add_gauge_card(self, name: str, config: Optional[Dict[str, float]] = None) -> None:
+        if name in self._gauge_cards:
+            self.watchlist_widget.set_gauge_assigned(name, True)
+            return
+        defaults = {"min": 0.0, "max": 100.0, "nominal_low": 25.0, "nominal_high": 75.0}
+        cfg = dict(defaults)
+        if config:
+            try:
+                cfg.update(
+                    {
+                        "min": float(config.get("min", defaults["min"])),
+                        "max": float(config.get("max", defaults["max"])),
+                        "nominal_low": float(config.get("nominal_low", defaults["nominal_low"])),
+                        "nominal_high": float(config.get("nominal_high", defaults["nominal_high"])),
+                    }
+                )
+            except (TypeError, ValueError):
+                cfg = defaults
+        card = GaugeCardWidget(name, cfg, self._get_signal_color(name), self)
+        card.set_unit(self._watch_units.get(name, ""))
+        card.config_changed.connect(self._on_gauge_config_changed)
+        card.remove_requested.connect(self._remove_gauge)
+        if hasattr(self, "_gauge_list_layout"):
+            count = self._gauge_list_layout.count()
+            if count and self._gauge_list_layout.itemAt(count - 1).spacerItem():
+                self._gauge_list_layout.takeAt(count - 1)
+            self._gauge_list_layout.addWidget(card)
+            self._gauge_list_layout.addStretch(1)
+        self._gauge_cards[name] = card
+        self.watchlist_widget.set_gauge_assigned(name, True)
+
+    def _remove_gauge(self, name: str) -> None:
+        card = self._gauge_cards.pop(name, None)
+        if not card:
+            return
+        card.deleteLater()
+        if hasattr(self, "_gauge_list_layout"):
+            for index in range(self._gauge_list_layout.count() - 1, -1, -1):
+                item = self._gauge_list_layout.itemAt(index)
+                if item and item.widget() is card:
+                    self._gauge_list_layout.takeAt(index)
+                    break
+            if self._gauge_list_layout.count() == 0:
+                self._gauge_list_layout.addStretch(1)
+        self.watchlist_widget.set_gauge_assigned(name, False)
+        self._save_settings()
+
+    def _on_gauge_config_changed(self, name: str, _config: Dict[str, float]) -> None:
+        if name in self._gauge_cards:
+            self._save_settings()
+
+    def _update_gauge_units(self) -> None:
+        for name, card in self._gauge_cards.items():
+            card.set_unit(self._watch_units.get(name, ""))
+
+    def _update_gauge_values(self, values: Dict[str, Optional[float]]) -> None:
+        for name, card in self._gauge_cards.items():
+            card.set_value(values.get(name))
 
     def _apply_watchlist_plot_settings(self) -> None:
         if not self._pending_plot_signals:
@@ -7549,6 +7918,7 @@ class MainWindow(QMainWindow):
         for profile in self._channel_profiles.values():
             requested.update(profile.status.fields.values())
         requested.update(self.watchlist_widget.signal_names)
+        requested.update(self._gauge_cards.keys())
         if self.logger.is_running():
             requested.update(self.logger.signal_names)
         values = self.backend.read_signal_values(requested)
@@ -7564,11 +7934,13 @@ class MainWindow(QMainWindow):
                 feedback_value = self._extract_feedback_value(profile, status)
                 card.record_sample(timestamp, command_value, feedback_value)
         watch_values = {name: values.get(name) for name in self.watchlist_widget.signal_names}
+        gauge_values = {name: values.get(name) for name in self._gauge_cards}
         self.watchlist_widget.update_values(watch_values)
         self._pending_watchlist = self.watchlist_widget.signal_names
         self._update_multi_plot(timestamp, watch_values)
         for dock in self._plot_windows.values():
             dock.update(timestamp, watch_values)
+        self._update_gauge_values(gauge_values)
 
     def _handle_logging(self, dt: float) -> None:
         if not self.logger.is_running():
@@ -7764,6 +8136,7 @@ class MainWindow(QMainWindow):
         self.signal_browser.set_signals(self._signals_by_message)
         self._watch_units = {definition.name: definition.unit for defs in self._signals_by_message.values() for definition in defs}
         self.watchlist_widget.set_units(self._watch_units)
+        self._update_gauge_units()
         self._channel_profiles = dict(sorted(load_channel_profiles(database).items()))
         self._refresh_channel_cards()
         if self._pending_watchlist:
@@ -7851,6 +8224,24 @@ class MainWindow(QMainWindow):
         self._multi_plot_paused = self._to_bool(self._qt_settings.value("multi_plot_paused", False), False)
         self._show_dummy_advanced = self._to_bool(self._qt_settings.value("show_dummy_tab", False), False)
         self._multi_plot_enabled = self._to_bool(self._qt_settings.value("multi_plot_enabled", False), False)
+        gauges = self._qt_settings.value("gauges", [])
+        if isinstance(gauges, list):
+            for entry in gauges:
+                if not isinstance(entry, dict):
+                    continue
+                signal = entry.get("signal")
+                if not signal:
+                    continue
+                try:
+                    cfg = {
+                        "min": float(entry.get("min", 0.0)),
+                        "max": float(entry.get("max", 100.0)),
+                        "nominal_low": float(entry.get("nominal_low", 25.0)),
+                        "nominal_high": float(entry.get("nominal_high", 75.0)),
+                    }
+                except (TypeError, ValueError):
+                    continue
+                self._pending_gauge_configs[str(signal)] = cfg
         self._channel_grid_cols = int(self._qt_settings.value("channel_grid_cols", self._channel_grid_cols) or 2)
         collapse_data = self._qt_settings.value("channel_collapse", {})
         if isinstance(collapse_data, dict):
@@ -7918,6 +8309,7 @@ class MainWindow(QMainWindow):
         self._qt_settings.setValue("bitrate", int(self.bitrate_spin.value()))
         self._qt_settings.setValue("watchlist", self.watchlist_widget.signal_names)
         self._qt_settings.setValue("plot_signals", self.watchlist_widget.plot_signal_names)
+        self._qt_settings.setValue("gauges", [card.to_dict() for card in self._gauge_cards.values()])
         self._qt_settings.setValue("log_rate", self.logging_rate_spin.value())
         self._qt_settings.setValue("log_path", self.logging_path_edit.text())
         self._qt_settings.setValue("channel_plots", self._channel_plot_settings)
