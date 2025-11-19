@@ -2335,6 +2335,7 @@ class GaugeCardWidget(QFrame):
         return payload
 class MultiAxisPlotDock(QDockWidget):
     closed = pyqtSignal(int)
+    assignment_changed = pyqtSignal(str, str)
 
     def __init__(self, identifier: int, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -2359,6 +2360,13 @@ class MultiAxisPlotDock(QDockWidget):
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_all)
         controls_layout.addWidget(self.clear_button)
+        self.axis_menu_button = QToolButton()
+        self.axis_menu_button.setText("Axes")
+        self.axis_menu_button.setPopupMode(QToolButton.InstantPopup)
+        self.axis_menu = QMenu(self.axis_menu_button)
+        self.axis_menu_button.setMenu(self.axis_menu)
+        self.axis_menu_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        controls_layout.addWidget(self.axis_menu_button)
         layout.addLayout(controls_layout)
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setMinimumHeight(220)
@@ -2366,50 +2374,25 @@ class MultiAxisPlotDock(QDockWidget):
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.setMenuEnabled(False)
         self.plot_item = self.plot_widget.getPlotItem()
-        self.plot_item.showAxis('right')
+        self.top_axis = self.plot_item.getAxis('top')
+        self.bottom_axis = self.plot_item.getAxis('bottom')
         layout_item = self.plot_item.layout
-        left_axis = self.plot_item.getAxis('left')
-        right_axis = self.plot_item.getAxis('right')
-        top_axis = self.plot_item.getAxis('top')
-        bottom_axis = self.plot_item.getAxis('bottom')
-        layout_item.removeItem(left_axis)
-        layout_item.removeItem(right_axis)
-        layout_item.removeItem(top_axis)
-        layout_item.removeItem(bottom_axis)
+        for axis_name in ('left', 'right', 'top', 'bottom'):
+            axis_item = self.plot_item.getAxis(axis_name)
+            layout_item.removeItem(axis_item)
         layout_item.removeItem(self.plot_item.vb)
-        self.left_axes: Dict[str, pg.AxisItem] = {
-            "left1": left_axis,
-            "left2": pg.AxisItem("left"),
-        }
-        self.right_axes: Dict[str, pg.AxisItem] = {
-            "right1": right_axis,
-            "right2": pg.AxisItem("right"),
-        }
-        self.axis_views: Dict[str, pg.ViewBox] = {
-            "left1": self.plot_item.vb,
-            "left2": pg.ViewBox(),
-            "right1": pg.ViewBox(),
-            "right2": pg.ViewBox(),
-        }
-        for key, view in self.axis_views.items():
-            if key == "left1":
-                continue
-            self.plot_item.scene().addItem(view)
-            view.setXLink(self.plot_item.vb)
-        self.left_axes["left1"].linkToView(self.axis_views["left1"])
-        self.left_axes["left2"].linkToView(self.axis_views["left2"])
-        self.right_axes["right1"].linkToView(self.axis_views["right1"])
-        self.right_axes["right2"].linkToView(self.axis_views["right2"])
-        layout_item.addItem(self.left_axes["left2"], 1, 0)
-        layout_item.addItem(self.left_axes["left1"], 1, 1)
-        layout_item.addItem(self.plot_item.vb, 1, 2)
-        layout_item.addItem(self.right_axes["right1"], 1, 3)
-        layout_item.addItem(self.right_axes["right2"], 1, 4)
-        layout_item.addItem(top_axis, 0, 2)
-        layout_item.addItem(bottom_axis, 2, 2)
+        self.axis_registry: Dict[str, Dict[str, Any]] = {}
+        self._axis_assignments: Dict[str, List[str]] = {}
+        self._axis_counts = {"left": 0, "right": 0}
+        self._left_axis_ids: List[str] = []
+        self._right_axis_ids: List[str] = []
+        self._create_initial_axes()
         self.plot_item.vb.sigResized.connect(self._update_views)
-        self._axis_assignments: Dict[str, List[str]] = {key: [] for key in self.axis_views}
         self._update_views()
+        self.axis_menu_button.customContextMenuRequested.connect(self._show_axis_menu)
+        self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.plot_widget.customContextMenuRequested.connect(self._show_axis_menu)
+        self._build_axis_menu()
         self._measurement_cursors_enabled = False
         self._cursor_lines: Dict[str, pg.InfiniteLine] = {}
         self._cursor_labels: Dict[str, Any] = {}
@@ -2441,6 +2424,153 @@ class MultiAxisPlotDock(QDockWidget):
         layout.addWidget(self.plot_widget)
         self.setWidget(container)
 
+    def _create_initial_axes(self) -> None:
+        self.add_axis("left", axis_id="left1", view=self.plot_item.vb, axis_item=self.plot_item.getAxis("left"))
+        self.add_axis("right", axis_id="right1", axis_item=self.plot_item.getAxis("right"))
+        self._rebuild_axis_layout()
+
+    def _new_axis_id(self, side: str, desired: Optional[str] = None) -> str:
+        if desired and desired not in self.axis_registry:
+            return desired
+        self._axis_counts[side] += 1
+        candidate = f"{side}{self._axis_counts[side]}"
+        while candidate in self.axis_registry:
+            self._axis_counts[side] += 1
+            candidate = f"{side}{self._axis_counts[side]}"
+        return candidate
+
+    def add_axis(
+        self,
+        side: str,
+        axis_id: Optional[str] = None,
+        *,
+        view: Optional[pg.ViewBox] = None,
+        axis_item: Optional[pg.AxisItem] = None,
+    ) -> str:
+        normalized_side = "left" if str(side).lower().startswith("l") else "right"
+        axis_identifier = self._new_axis_id(normalized_side, desired=axis_id)
+        if axis_identifier in self.axis_registry:
+            return axis_identifier
+        suffix = axis_identifier[len(normalized_side) :]
+        if suffix.isdigit():
+            self._axis_counts[normalized_side] = max(self._axis_counts[normalized_side], int(suffix))
+        view_box = view or pg.ViewBox()
+        if view is None:
+            self.plot_item.scene().addItem(view_box)
+            view_box.setXLink(self.plot_item.vb)
+        axis = axis_item or pg.AxisItem(normalized_side)
+        axis.linkToView(view_box)
+        self.axis_registry[axis_identifier] = {"axis": axis, "view": view_box, "side": normalized_side}
+        self._axis_assignments.setdefault(axis_identifier, [])
+        if normalized_side == "left":
+            self._left_axis_ids.append(axis_identifier)
+        else:
+            self._right_axis_ids.append(axis_identifier)
+        self._rebuild_axis_layout()
+        self._refresh_axis_style(axis_identifier)
+        self._build_axis_menu()
+        self._update_views()
+        return axis_identifier
+
+    def ensure_axis(self, axis_id: Optional[str], side: str) -> str:
+        if axis_id and axis_id in self.axis_registry:
+            return axis_id
+        return self.add_axis(side, axis_id=axis_id)
+
+    def remove_axis(self, axis_id: str) -> None:
+        if axis_id not in self.axis_registry:
+            return
+        if len(self.axis_registry) <= 1:
+            return
+        target_side = self.axis_registry[axis_id]["side"]
+        fallback = self._fallback_axis(axis_id)
+        for name in list(self._axis_assignments.get(axis_id, [])):
+            self._move_signal_to_axis(name, fallback)
+        info = self.axis_registry.pop(axis_id)
+        axis = info["axis"]
+        view = info["view"]
+        layout = self.plot_item.layout
+        try:
+            layout.removeItem(axis)
+        except Exception:
+            pass
+        if view is not self.plot_item.vb and view.scene() is not None:
+            view.scene().removeItem(view)
+        if target_side == "left":
+            self._left_axis_ids = [aid for aid in self._left_axis_ids if aid != axis_id]
+        else:
+            self._right_axis_ids = [aid for aid in self._right_axis_ids if aid != axis_id]
+        self._axis_assignments.pop(axis_id, None)
+        self._rebuild_axis_layout()
+        self._build_axis_menu()
+        self._update_views()
+
+    def axis_ids(self) -> List[str]:
+        return list(self.axis_registry.keys())
+
+    def axis_side(self, axis_id: str) -> str:
+        return self.axis_registry.get(axis_id, {}).get("side", "left")
+
+    def axis_label(self, axis_id: str) -> str:
+        side = self.axis_side(axis_id)
+        return f"{axis_id} ({'Left' if side == 'left' else 'Right'})"
+
+    def _build_axis_menu(self) -> None:
+        self.axis_menu.clear()
+        add_left = self.axis_menu.addAction("Add left axis", lambda: self.add_axis("left"))
+        add_right = self.axis_menu.addAction("Add right axis", lambda: self.add_axis("right"))
+        remove_menu = self.axis_menu.addMenu("Remove axis")
+        removable = [axis_id for axis_id in self.axis_registry if len(self.axis_registry) > 1]
+        for axis_id in removable:
+            action = remove_menu.addAction(self.axis_label(axis_id))
+            action.triggered.connect(lambda _=False, aid=axis_id: self.remove_axis(aid))
+        if not removable:
+            remove_menu.setEnabled(False)
+
+    def _show_axis_menu(self, pos) -> None:
+        sender = self.sender()
+        anchor = sender if hasattr(sender, "mapToGlobal") else self.axis_menu_button
+        self.axis_menu.exec_(anchor.mapToGlobal(pos))
+
+    def _rebuild_axis_layout(self) -> None:
+        layout_item = self.plot_item.layout
+        for axis_id, info in self.axis_registry.items():
+            try:
+                layout_item.removeItem(info["axis"])
+            except Exception:
+                pass
+        try:
+            layout_item.removeItem(self.plot_item.vb)
+        except Exception:
+            pass
+        for static_axis in (self.top_axis, self.bottom_axis):
+            try:
+                layout_item.removeItem(static_axis)
+            except Exception:
+                pass
+        column = 0
+        for axis_id in self._left_axis_ids:
+            axis = self.axis_registry[axis_id]["axis"]
+            layout_item.addItem(axis, 1, column)
+            column += 1
+        view_column = column
+        layout_item.addItem(self.plot_item.vb, 1, view_column)
+        column = view_column + 1
+        for axis_id in self._right_axis_ids:
+            axis = self.axis_registry[axis_id]["axis"]
+            layout_item.addItem(axis, 1, column)
+            column += 1
+        layout_item.addItem(self.top_axis, 0, view_column)
+        layout_item.addItem(self.bottom_axis, 2, view_column)
+
+    def _fallback_axis(self, exclude: Optional[str] = None) -> str:
+        candidates = [aid for aid in self._left_axis_ids if aid != exclude]
+        if not candidates:
+            candidates = [aid for aid in self._right_axis_ids if aid != exclude]
+        if candidates:
+            return candidates[0]
+        return self.add_axis("left")
+
     def _toggle_pause(self) -> None:
         self._paused = not self._paused
         self.pause_button.setText("Resume" if self._paused else "Pause")
@@ -2455,30 +2585,31 @@ class MultiAxisPlotDock(QDockWidget):
     def _update_views(self) -> None:
         rect = self.plot_item.vb.sceneBoundingRect()
         if rect:
-            for key, view in self.axis_views.items():
-                if key == "left1":
-                    continue
+            for axis_id, info in self.axis_registry.items():
+                view = info["view"]
                 view.setGeometry(rect)
-                view.linkedViewChanged(self.plot_item.vb, view.XAxis)
+                if view is not self.plot_item.vb:
+                    view.linkedViewChanged(self.plot_item.vb, view.XAxis)
 
-    def _normalize_axis_side(self, side: Optional[str]) -> str:
-        normalized = (side or "left1").lower()
+    def _normalize_axis_id(self, axis_id: Optional[str]) -> str:
+        normalized = (axis_id or "left1").lower()
         if normalized in {"left", "l"}:
-            return "left1"
+            candidates = self._left_axis_ids or None
+            return candidates[0] if candidates else self.add_axis("left", axis_id="left1")
         if normalized in {"right", "r"}:
-            return "right1"
-        if normalized not in {"left1", "left2", "right1", "right2"}:
-            return "left1"
+            candidates = self._right_axis_ids or None
+            if candidates:
+                return candidates[0]
+            return self.add_axis("right", axis_id="right1")
+        if normalized not in self.axis_registry:
+            return self._fallback_axis()
         return normalized
 
-    def _axis_for_side(self, side: str) -> pg.AxisItem:
-        if side in self.left_axes:
-            return self.left_axes[side]
-        return self.right_axes.get(side, self.left_axes["left1"])
-
-    def _refresh_axis_style(self, side: str) -> None:
-        axis = self._axis_for_side(side)
-        signals = [name for name in self._axis_assignments.get(side, []) if name in self._signals]
+    def _refresh_axis_style(self, axis_id: str) -> None:
+        axis = self.axis_registry.get(axis_id, {}).get("axis")
+        if axis is None:
+            return
+        signals = [name for name in self._axis_assignments.get(axis_id, []) if name in self._signals]
         if not signals:
             axis.setLabel("")
             axis.setPen(pg.mkPen(QColor("#94a3b8")))
@@ -2497,13 +2628,38 @@ class MultiAxisPlotDock(QDockWidget):
         axis.setPen(pg.mkPen(color))
         axis.setTextPen(pg.mkPen(color))
 
+    def _move_signal_to_axis(self, name: str, axis_id: str) -> None:
+        if axis_id not in self.axis_registry:
+            axis_id = self._normalize_axis_id(axis_id)
+        info = self._signals.get(name)
+        if not info:
+            return
+        previous_axis = info.get("side")
+        if previous_axis == axis_id:
+            return
+        target_view = self.axis_registry.get(axis_id, {}).get("view", self.plot_item.vb)
+        if previous_axis in self.axis_registry:
+            try:
+                self.axis_registry[previous_axis]["view"].removeItem(info["curve"])
+            except Exception:
+                pass
+            self._axis_assignments[previous_axis] = [n for n in self._axis_assignments.get(previous_axis, []) if n != name]
+            self._refresh_axis_style(previous_axis)
+        target_view.addItem(info["curve"])
+        info["side"] = axis_id
+        self._axis_assignments.setdefault(axis_id, []).append(name)
+        self._refresh_axis_style(axis_id)
+        self.assignment_changed.emit(name, axis_id)
+        self._update_cursor_info()
+
     def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
-        axis_key = self._normalize_axis_side(side)
+        axis_key = self._normalize_axis_id(side)
         existing = self._signals.get(name)
         if existing:
             if existing["side"] == axis_key:
                 return
-            self.remove_signal(name)
+            self._move_signal_to_axis(name, axis_key)
+            return
         pen_color = pg.mkPen(pen if pen is not None else pg.intColor(len(self._signals)), width=2)
         curve = pg.PlotDataItem(pen=pen_color)
         curve.setZValue(len(self._signals) + 2)
@@ -2512,7 +2668,7 @@ class MultiAxisPlotDock(QDockWidget):
         elif hasattr(curve, "setClickable"):
             curve.setClickable(True)
         curve.sigClicked.connect(self._on_curve_clicked)
-        view = self.axis_views.get(axis_key, self.plot_item.vb)
+        view = self.axis_registry.get(axis_key, {}).get("view", self.plot_item.vb)
         view.addItem(curve)
         if self._legend:
             self._legend.addItem(curve, name)
@@ -2538,8 +2694,11 @@ class MultiAxisPlotDock(QDockWidget):
             curve.sigClicked.disconnect(self._on_curve_clicked)
         except Exception:
             pass
-        for view in self.axis_views.values():
-            view.removeItem(curve)
+        for axis_info in self.axis_registry.values():
+            try:
+                axis_info["view"].removeItem(curve)
+            except Exception:
+                pass
         if self._legend:
             try:
                 self._legend.removeItem(curve)
@@ -2594,13 +2753,36 @@ class MultiAxisPlotDock(QDockWidget):
                 times, samples = dec_times, dec_samples
             curve = info["curve"]
             curve.setData(times, samples)
-        for view in self.axis_views.values():
-            view.enableAutoRange(axis=pg.ViewBox.YAxis)
+        for info in self.axis_registry.values():
+            info["view"].enableAutoRange(axis=pg.ViewBox.YAxis)
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
 
     def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
         return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
+
+    def serialize_axes(self) -> List[dict]:
+        payload: List[dict] = []
+        for axis_id, info in self.axis_registry.items():
+            payload.append(
+                {
+                    "id": axis_id,
+                    "side": info.get("side", "left"),
+                    "signals": list(self._axis_assignments.get(axis_id, [])),
+                }
+            )
+        return payload
+
+    def suggest_axis_for_unit(self, unit: str) -> str:
+        normalized_unit = (unit or "").strip()
+        if normalized_unit:
+            for axis_id, names in self._axis_assignments.items():
+                for sig in names:
+                    if (self._signals.get(sig, {}).get("unit", "").strip()) == normalized_unit:
+                        return axis_id
+        if self._axis_assignments:
+            return min(self._axis_assignments.items(), key=lambda kv: len(kv[1]))[0]
+        return self._fallback_axis()
 
     def closeEvent(self, event) -> None:
         self.closed.emit(self.identifier)
@@ -6581,6 +6763,7 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable
         )
         dock.closed.connect(self._on_plot_window_closed)
+        dock.assignment_changed.connect(lambda name, axis, wid=identifier: self._on_dock_assignment_changed(wid, name, axis))
         previous: Optional[QDockWidget] = None
         if self._plot_windows:
             if self._active_plot_id and self._active_plot_id in self._plot_windows:
@@ -6616,6 +6799,11 @@ class MainWindow(QMainWindow):
         if self._active_plot_id == identifier:
             self._active_plot_id = next(iter(self._plot_windows), None)
 
+    def _on_dock_assignment_changed(self, window_id: int, name: str, axis_id: str) -> None:
+        previous = self._plot_assignments.get(name)
+        if previous and previous[0] == window_id:
+            self._plot_assignments[name] = (window_id, axis_id)
+
     def _get_signal_color(self, name: str) -> QColor:
         color = self._plot_color_map.get(name)
         if color is not None:
@@ -6641,7 +6829,6 @@ class MainWindow(QMainWindow):
             return
         window_ids = sorted(self._plot_windows.keys())
         default_window = self._active_plot_id if self._active_plot_id in self._plot_windows else window_ids[0]
-        suggested_side = self._suggest_axis_side(default_window, name)
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Assign Plot – {name}")
         dialog_layout = QVBoxLayout(dialog)
@@ -6654,12 +6841,26 @@ class MainWindow(QMainWindow):
         window_combo.setCurrentIndex(window_ids.index(default_window))
         form.addRow("Window", window_combo)
         axis_combo = QComboBox()
-        axis_combo.addItems(["Left 1", "Left 2", "Right 1", "Right 2"])
-        axis_options = ["left1", "left2", "right1", "right2"]
-        try:
-            axis_combo.setCurrentIndex(axis_options.index(suggested_side))
-        except ValueError:
-            axis_combo.setCurrentIndex(0)
+        axis_options: List[str] = []
+
+        def _refresh_axis_options() -> None:
+            axis_combo.clear()
+            axis_options.clear()
+            selected = window_combo.currentData()
+            dock = self._plot_windows.get(selected)
+            if not dock:
+                return
+            for axis_id in dock.axis_ids():
+                axis_combo.addItem(dock.axis_label(axis_id), axis_id)
+                axis_options.append(axis_id)
+            suggested = self._suggest_axis_id(int(selected), name)
+            if suggested in axis_options:
+                axis_combo.setCurrentIndex(axis_options.index(suggested))
+            elif axis_options:
+                axis_combo.setCurrentIndex(0)
+
+        window_combo.currentIndexChanged.connect(_refresh_axis_options)
+        _refresh_axis_options()
         form.addRow("Axis", axis_combo)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -6669,39 +6870,33 @@ class MainWindow(QMainWindow):
             self.watchlist_widget.set_plot_enabled(name, False)
             return
         window_id = window_combo.currentData()
+        if not axis_options:
+            return
         axis_side = axis_options[axis_combo.currentIndex()]
         self._assign_signal_to_plot(name, int(window_id), axis_side)
 
-    def _assign_signal_to_plot(self, name: str, window_id: int, side: str) -> None:
+    def _assign_signal_to_plot(self, name: str, window_id: int, axis_id: str) -> None:
         dock = self._plot_windows.get(window_id)
         if not dock:
             return
         previous = self._plot_assignments.get(name)
-        if previous and previous == (window_id, side):
+        if previous and previous == (window_id, axis_id):
             return
         if previous:
             prev_window, _prev_side = previous
             prev_dock = self._plot_windows.get(prev_window)
             if prev_dock:
                 prev_dock.remove_signal(name)
-        dock.add_signal(name, self._watch_units.get(name, ""), side, pen=self._get_signal_color(name))
-        self._plot_assignments[name] = (window_id, side)
+        dock.add_signal(name, self._watch_units.get(name, ""), axis_id, pen=self._get_signal_color(name))
+        self._plot_assignments[name] = (window_id, axis_id)
         self._active_plot_id = window_id
 
-    def _suggest_axis_side(self, window_id: int, name: str) -> str:
+    def _suggest_axis_id(self, window_id: int, name: str) -> str:
+        dock = self._plot_windows.get(window_id)
+        if not dock:
+            return "left1"
         unit = (self._watch_units.get(name) or "").strip()
-        side_counts: Dict[str, int] = {"left1": 0, "left2": 0, "right1": 0, "right2": 0}
-        for other, (win_id, side) in self._plot_assignments.items():
-            if win_id != window_id:
-                continue
-            other_unit = (self._watch_units.get(other) or "").strip()
-            side_counts[side] = side_counts.get(side, 0) + 1
-            if unit and other_unit == unit:
-                return side
-        for candidate in ("left1", "right1", "left2", "right2"):
-            if side_counts.get(candidate, 0) == 0:
-                return candidate
-        return "left1"
+        return dock.suggest_axis_for_unit(unit)
 
     def _build_dummy_tab(self) -> None:
         self.dummy_tab = QWidget()
@@ -7406,14 +7601,9 @@ class MainWindow(QMainWindow):
         ]
         windows: List[dict] = []
         if inline_signals:
-            windows.append({"id": 0, "axes": {"left": inline_signals, "right": [], "left2": [], "right2": []}})
+            windows.append({"id": 0, "axes": [{"id": "left1", "side": "left", "signals": inline_signals}]})
         for identifier, dock in sorted(self._plot_windows.items()):
-            assigned = dock.assigned_signals()
-            left = sorted([name for name, (_unit, side) in assigned.items() if side == "left1"])
-            right = sorted([name for name, (_unit, side) in assigned.items() if side == "right1"])
-            left2 = sorted([name for name, (_unit, side) in assigned.items() if side == "left2"])
-            right2 = sorted([name for name, (_unit, side) in assigned.items() if side == "right2"])
-            windows.append({"id": int(identifier), "axes": {"left": left, "right": right, "left2": left2, "right2": right2}})
+            windows.append({"id": int(identifier), "axes": dock.serialize_axes()})
         dummy_profiles: Dict[str, dict] = {}
         if isinstance(self.backend, DummyBackend):
             for name, config in self.backend.simulation_profiles().items():
@@ -7672,23 +7862,35 @@ class MainWindow(QMainWindow):
             new_id = self._create_plot_window()
             if new_id is None:
                 continue
-            axes = entry.get("axes", {}) if isinstance(entry.get("axes", {}), dict) else {}
-            left_signals = [str(name) for name in axes.get("left", [])]
-            right_signals = [str(name) for name in axes.get("right", [])]
-            left2_signals = [str(name) for name in axes.get("left2", [])]
-            right2_signals = [str(name) for name in axes.get("right2", [])]
-            for name in left_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "left1")
-            for name in right_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "right1")
-            for name in left2_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "left2")
-            for name in right2_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "right2")
+            axes_payload = entry.get("axes", [])
+            dock = self._plot_windows.get(new_id)
+            if dock is None:
+                continue
+            axis_entries: List[dict] = []
+            if isinstance(axes_payload, list):
+                axis_entries = [axis for axis in axes_payload if isinstance(axis, dict)]
+            elif isinstance(axes_payload, dict):
+                for side_key, signals in axes_payload.items():
+                    if side_key not in {"left", "right", "left2", "right2"}:
+                        continue
+                    legacy_id = side_key
+                    if side_key in {"left", "right"}:
+                        legacy_id = f"{side_key}1"
+                    axis_entries.append(
+                        {
+                            "id": legacy_id,
+                            "side": "left" if side_key.startswith("left") else "right",
+                            "signals": signals,
+                        }
+                    )
+            for axis_entry in axis_entries:
+                axis_id_value = str(axis_entry.get("id") or axis_entry.get("key") or "")
+                side = str(axis_entry.get("side", "left"))
+                axis_identifier = dock.ensure_axis(axis_id_value or None, side)
+                signals = [str(name) for name in axis_entry.get("signals", [])]
+                for name in signals:
+                    if name in plot_signals and name in self.watchlist_widget.signal_names:
+                        self._assign_signal_to_plot(name, new_id, axis_identifier)
 
     def _apply_channels_setup(self, data: dict) -> None:
         profiles_section = data.get("profiles", []) if isinstance(data, dict) else []
