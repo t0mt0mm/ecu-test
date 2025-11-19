@@ -2158,7 +2158,7 @@ class GaugeDialWidget(QWidget):
         painter.setPen(QPen(QColor(0, 0, 0, 35), 6, Qt.SolidLine, Qt.RoundCap))
         painter.drawArc(inner_rect, start_angle * 16, int((value_angle - start_angle) * 16))
 
-        indicator_radius = centered.width() * 0.42
+        indicator_radius = centered.width() * 0.34
         center = centered.center()
         angle_rad = math.radians(value_angle)
         end_point = QPointF(
@@ -2168,7 +2168,7 @@ class GaugeDialWidget(QWidget):
         painter.setPen(QPen(self._accent.darker(110), 4, Qt.SolidLine, Qt.RoundCap))
         painter.drawLine(center, end_point)
 
-        marker_radius = centered.width() * 0.48
+        marker_radius = centered.width() * 0.44
         marker_point = QPointF(
             center.x() + marker_radius * math.cos(angle_rad),
             center.y() - marker_radius * math.sin(angle_rad),
@@ -3324,9 +3324,7 @@ class ChannelCardWidget(QWidget):
             self.run_button,
             self.stop_button,
             self.toggle_sequencer_button,
-            self.duplicate_button,
             self.plot_checkbox,
-            self.delete_button,
         ):
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         layout = QVBoxLayout(self)
@@ -3340,9 +3338,9 @@ class ChannelCardWidget(QWidget):
         header_layout.addStretch(1)
         header_layout.addWidget(self.enabled_checkbox)
         header_layout.addWidget(self.toggle_sequencer_button)
-        header_layout.addWidget(self.duplicate_button)
         header_layout.addWidget(self.plot_checkbox)
-        header_layout.addWidget(self.delete_button)
+        self.duplicate_button.hide()
+        self.delete_button.hide()
         self.toggle_sequencer_button.setChecked(False)
         layout.addLayout(header_layout)
         layout.addWidget(self.state_label)
