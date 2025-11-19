@@ -2092,7 +2092,7 @@ class GaugeDialWidget(QWidget):
         self._value = 0.0
         self._unit = ""
         self._accent = QColor("#2563eb")
-        self.setMinimumSize(280, 280)
+        self.setMinimumSize(240, 240)
 
     def set_unit(self, unit: str) -> None:
         self._unit = unit
@@ -2145,9 +2145,6 @@ class GaugeDialWidget(QWidget):
         if warning_ratio > 0:
             draw_band(0.0, warning_ratio, QColor("#ef4444"))
         draw_band(warning_ratio, nominal_start_ratio, QColor("#f97316"))
-        # Nominal
-        painter.setPen(QPen(QColor("#22c55e"), 12, Qt.SolidLine, Qt.RoundCap))
-        painter.drawArc(centered, int(nominal_start_angle * 16), int((nominal_end_angle - nominal_start_angle) * 16))
         # Right side
         draw_band(nominal_end_ratio, 1.0 - overload_ratio, QColor("#f97316"))
         if overload_ratio > 0:
@@ -2156,6 +2153,10 @@ class GaugeDialWidget(QWidget):
         ratio = (self._value - self._min) / norm_span
         ratio = min(max(ratio, 0.0), 1.0)
         value_angle = start_angle + span_angle * ratio
+
+        inner_rect = centered.adjusted(20, 20, -20, -20)
+        painter.setPen(QPen(QColor(0, 0, 0, 35), 6, Qt.SolidLine, Qt.RoundCap))
+        painter.drawArc(inner_rect, start_angle * 16, int((value_angle - start_angle) * 16))
 
         indicator_radius = centered.width() * 0.42
         center = centered.center()
@@ -2200,14 +2201,6 @@ class GaugeDialWidget(QWidget):
         )
         painter.drawText(QRectF(min_point.x() - 50, min_point.y() - 14, 100, 20), Qt.AlignLeft, f"{self._min:.1f}")
         painter.drawText(QRectF(max_point.x() - 50, max_point.y() - 14, 100, 20), Qt.AlignRight, f"{self._max:.1f}")
-
-        nominal_label_rect = QRectF(centered)
-        nominal_label_rect.setBottom(center.y() - centered.height() * 0.35)
-        painter.drawText(
-            nominal_label_rect,
-            Qt.AlignHCenter | Qt.AlignBottom,
-            f"{self._nominal_low:.1f} – {self._nominal_high:.1f}",
-        )
 
 
 class GaugeCardWidget(QFrame):
@@ -4341,7 +4334,6 @@ class MainWindow(QMainWindow):
         self._toolbar_visible = True
         self._csv_preset_key = "excel_de"
         self._show_startup_tab = False
-        self._startup_tab_index: int = -1
         self._startup_config = StartupConfig()
         self._startup_on_connect = False
         self._startup_on_apply = False
@@ -4356,6 +4348,7 @@ class MainWindow(QMainWindow):
         self._startup_status_messages: List[str] = []
         self._startup_is_valid = False
         self._active_setup_path: Optional[str] = None
+        self.startup_dock: Optional[QDockWidget] = None
         self._state_machine_runner.state_changed.connect(self._on_state_machine_state_changed)
         self._state_machine_runner.stopped.connect(self._on_state_machine_runner_stopped)
         self._state_machine_runner.error_occurred.connect(self._on_state_machine_error)
@@ -4409,10 +4402,10 @@ class MainWindow(QMainWindow):
         self._build_channels_tab()
         self._build_signals_tab()
         self._build_gauge_dock()
+        self._build_startup_tab()
         self._build_state_machine_dock()
         if not self._restore_dock_layout():
             self._apply_default_dock_layout()
-        self._build_startup_tab()
         self._build_dummy_tab()
         self._update_dummy_tab_visibility()
         self._update_central_stack_visibility()
@@ -4733,16 +4726,13 @@ class MainWindow(QMainWindow):
         self._refresh_startup_tree()
         self._update_startup_status_badge()
         self._update_startup_controls()
-        self.startup_tab = widget
-        index = self.tab_widget.addTab(widget, "Startup")
-        self._startup_tab_index = index
-        if not self._show_startup_tab:
-            try:
-                self.tab_widget.setTabVisible(index, False)
-            except AttributeError:
-                widget.setVisible(False)
-        else:
-            self.tab_widget.setCurrentIndex(index)
+        dock = QDockWidget("Startup", self)
+        dock.setObjectName("Dock_Startup")
+        dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
+        dock.setWidget(widget)
+        dock.setVisible(self._show_startup_tab)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self.startup_dock = dock
     def _build_channels_tab(self) -> None:
         widget = QWidget()
         outer_layout = QVBoxLayout(widget)
@@ -4962,7 +4952,7 @@ class MainWindow(QMainWindow):
         dock.setFeatures(
             QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
         )
-        dock.setMinimumWidth(400)
+        dock.setMinimumWidth(360)
         dock.setWidget(container)
         self.gauge_dock = dock
         for signal, cfg in list(self._pending_gauge_configs.items()):
@@ -5784,6 +5774,7 @@ class MainWindow(QMainWindow):
             self.channels_dock,
             self.signals_dock,
             self.gauge_dock,
+            self.startup_dock,
             self.state_machine_dock,
             self.state_machine_graph_dock,
             self.state_machine_states_dock,
@@ -5798,6 +5789,9 @@ class MainWindow(QMainWindow):
         if self.gauge_dock:
             self.addDockWidget(Qt.LeftDockWidgetArea, self.gauge_dock)
             self.splitDockWidget(self.signals_dock, self.gauge_dock, Qt.Vertical)
+        if self.startup_dock:
+            self.addDockWidget(Qt.LeftDockWidgetArea, self.startup_dock)
+            self.splitDockWidget(self.gauge_dock or self.signals_dock, self.startup_dock, Qt.Vertical)
         try:
             self.resizeDocks([self.signals_dock, self.channels_dock], [1000, 1000], Qt.Horizontal)
         except Exception:
@@ -6501,17 +6495,8 @@ class MainWindow(QMainWindow):
             self.show_startup_action.blockSignals(True)
             self.show_startup_action.setChecked(visible)
             self.show_startup_action.blockSignals(False)
-        if hasattr(self, "tab_widget") and self._startup_tab_index >= 0:
-            try:
-                self.tab_widget.setTabVisible(self._startup_tab_index, visible)
-            except AttributeError:
-                if not visible:
-                    if self.tab_widget.currentIndex() == self._startup_tab_index:
-                        self.tab_widget.setCurrentIndex(0)
-                self.tab_widget.widget(self._startup_tab_index).setVisible(visible)
-            else:
-                if visible:
-                    self.tab_widget.setCurrentIndex(self._startup_tab_index)
+        if self.startup_dock:
+            self.startup_dock.setVisible(visible)
         self._update_central_stack_visibility()
         if hasattr(self, "logging_rate_spin"):
             self._save_settings()
