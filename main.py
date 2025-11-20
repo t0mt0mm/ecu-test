@@ -2455,16 +2455,11 @@ class MultiAxisPlotDock(QDockWidget):
         self.plot_item = self.plot_widget.getPlotItem()
         self.top_axis = self.plot_item.getAxis('top')
         self.bottom_axis = self.plot_item.getAxis('bottom')
-        layout_item = self.plot_item.layout
-        for axis_name in ('left', 'right', 'top', 'bottom'):
-            axis_item = self.plot_item.getAxis(axis_name)
-            layout_item.removeItem(axis_item)
-        layout_item.removeItem(self.plot_item.vb)
         self.axis_registry: Dict[str, Dict[str, Any]] = {}
         self._axis_assignments: Dict[str, List[str]] = {}
         self._create_initial_axes()
-        self.plot_item.vb.sigResized.connect(self._update_views)
-        self._update_views()
+        self._right_view: Optional[pg.ViewBox] = None
+        self.plot_item.vb.sigResized.connect(self._sync_right_axis_geometry)
         self.axis_menu_button.customContextMenuRequested.connect(self._show_axis_menu)
         self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self._show_axis_menu)
@@ -2501,8 +2496,12 @@ class MultiAxisPlotDock(QDockWidget):
         self.setWidget(container)
 
     def _create_initial_axes(self) -> None:
-        self.add_axis("left", axis_id="left1", view=self.plot_item.vb, axis_item=self.plot_item.getAxis("left"))
-        self._rebuild_axis_layout()
+        left_axis = self.plot_item.getAxis("left")
+        left_axis.show()
+        left_axis.setWidth(max(left_axis.width(), 60))
+        self.axis_registry["left1"] = {"axis": left_axis, "view": self.plot_item.vb, "side": "left"}
+        self._axis_assignments.setdefault("left1", [])
+        self.plot_item.showAxis("right", show=False)
 
     def add_axis(
         self,
@@ -2513,34 +2512,27 @@ class MultiAxisPlotDock(QDockWidget):
         axis_item: Optional[pg.AxisItem] = None,
     ) -> str:
         normalized_side = "left" if str(side).lower().startswith("l") else "right"
-        default_id = f"{normalized_side}1"
-        axis_identifier = (axis_id or default_id).lower()
+        axis_identifier = (axis_id or f"{normalized_side}1").lower()
         if normalized_side == "left":
-            axis_identifier = "left1"
-            if axis_identifier in self.axis_registry:
-                return axis_identifier
-        elif normalized_side == "right":
-            axis_identifier = "right1"
-            if axis_identifier in self.axis_registry:
-                return axis_identifier
+            return "left1"
         if axis_identifier in self.axis_registry:
             return axis_identifier
-        view_box = view or pg.ViewBox()
+        right_view = view or pg.ViewBox()
         if view is None:
-            self.plot_item.scene().addItem(view_box)
-            view_box.setXLink(self.plot_item.vb)
-            view_box.setMouseEnabled(x=False, y=True)
-        view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-        axis = axis_item or pg.AxisItem(normalized_side)
+            self.plot_item.scene().addItem(right_view)
+            right_view.setXLink(self.plot_item.vb)
+            right_view.setMouseEnabled(x=False, y=True)
+        right_view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        axis = axis_item or self.plot_item.getAxis("right")
         axis.show()
         axis.setWidth(max(axis.width(), 60))
-        axis.linkToView(view_box)
-        self.axis_registry[axis_identifier] = {"axis": axis, "view": view_box, "side": normalized_side}
+        axis.linkToView(right_view)
+        self.plot_item.showAxis("right", show=True)
+        self.axis_registry[axis_identifier] = {"axis": axis, "view": right_view, "side": "right"}
         self._axis_assignments.setdefault(axis_identifier, [])
-        self._rebuild_axis_layout()
-        self._refresh_axis_style(axis_identifier)
+        self._right_view = right_view
         self._build_axis_menu()
-        self._update_views()
+        self._sync_right_axis_geometry()
         return axis_identifier
 
     def ensure_axis(self, axis_id: Optional[str], side: str) -> str:
@@ -2557,19 +2549,14 @@ class MultiAxisPlotDock(QDockWidget):
         for name in list(self._axis_assignments.get(axis_id, [])):
             self._move_signal_to_axis(name, fallback)
         info = self.axis_registry.pop(axis_id)
-        axis = info["axis"]
-        view = info["view"]
-        layout = self.plot_item.layout
-        try:
-            layout.removeItem(axis)
-        except Exception:
-            pass
-        if view is not self.plot_item.vb and view.scene() is not None:
+        view = info.get("view")
+        if view and view is not self.plot_item.vb and view.scene():
             view.scene().removeItem(view)
+        self.plot_item.showAxis("right", show=False)
+        self._right_view = None
         self._axis_assignments.pop(axis_id, None)
-        self._rebuild_axis_layout()
         self._build_axis_menu()
-        self._update_views()
+        self._sync_right_axis_geometry()
 
     def axis_ids(self) -> List[str]:
         return list(self.axis_registry.keys())
@@ -2594,37 +2581,6 @@ class MultiAxisPlotDock(QDockWidget):
         anchor = sender if hasattr(sender, "mapToGlobal") else self.axis_menu_button
         self.axis_menu.exec_(anchor.mapToGlobal(pos))
 
-    def _rebuild_axis_layout(self) -> None:
-        layout_item = self.plot_item.layout
-        for axis_info in self.axis_registry.values():
-            try:
-                layout_item.removeItem(axis_info["axis"])
-            except Exception:
-                pass
-        try:
-            layout_item.removeItem(self.plot_item.vb)
-        except Exception:
-            pass
-        for static_axis in (self.top_axis, self.bottom_axis):
-            try:
-                layout_item.removeItem(static_axis)
-            except Exception:
-                pass
-        left_axis = self.axis_registry.get("left1", {}).get("axis")
-        right_axis = self.axis_registry.get("right1", {}).get("axis")
-        if left_axis:
-            layout_item.addItem(left_axis, 1, 0)
-        layout_item.addItem(self.plot_item.vb, 1, 1)
-        if right_axis:
-            self.plot_item.showAxis("right", show=True)
-            layout_item.addItem(right_axis, 1, 2)
-        else:
-            self.plot_item.showAxis("right", show=False)
-        layout_item.setColumnStretchFactor(1, 1)
-        layout_item.addItem(self.top_axis, 0, 1)
-        layout_item.addItem(self.bottom_axis, 2, 1)
-        self._update_views()
-
     def _fallback_axis(self, exclude: Optional[str] = None) -> str:
         return "left1"
 
@@ -2639,17 +2595,16 @@ class MultiAxisPlotDock(QDockWidget):
         pixmap = self.plot_widget.grab()
         pixmap.save(path, "PNG")
 
-    def _update_views(self) -> None:
+    def _sync_right_axis_geometry(self, *_args) -> None:
+        if not self._right_view:
+            return
         rect = self.plot_item.vb.sceneBoundingRect()
         mapped_rect = self.plot_item.vb.mapRectToScene(self.plot_item.vb.boundingRect())
         target = mapped_rect if mapped_rect.isValid() else rect
-        if target:
-            for axis_id, info in self.axis_registry.items():
-                view = info["view"]
-                view.setGeometry(target)
-                if view is not self.plot_item.vb:
-                    view.linkedViewChanged(self.plot_item.vb, view.XAxis)
-                    view.update()
+        if target.isValid():
+            self._right_view.setGeometry(target)
+            self._right_view.linkedViewChanged(self.plot_item.vb, self._right_view.XAxis)
+            self._right_view.update()
         
     def _normalize_axis_id(self, axis_id: Optional[str]) -> str:
         normalized = (axis_id or "left1").lower()
@@ -2806,55 +2761,16 @@ class MultiAxisPlotDock(QDockWidget):
                 times, samples = dec_times, dec_samples
             curve = info["curve"]
             curve.setData(times, samples)
-        global_x_max = 0.0
-        for buffer in (info["buffer"] for info in self._signals.values() if info["buffer"]):
-            if buffer:
-                rel_time = buffer[-1][0] - base_time
-                if rel_time > global_x_max:
-                    global_x_max = rel_time
-        if global_x_max > 0:
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.XAxis)
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+        if self._right_view:
             try:
-                self.plot_item.vb.setXRange(0.0, global_x_max, padding=0.02)
+                self._right_view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                self._right_view.autoRange(axis=pg.ViewBox.YAxis)
             except Exception:
                 pass
-        self._apply_axis_autorange()
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
-
-    def _apply_axis_autorange(self) -> None:
-        for axis_id, view_info in self.axis_registry.items():
-            view_box = view_info["view"]
-            y_min: Optional[float] = None
-            y_max: Optional[float] = None
-            for signal_name in self._axis_assignments.get(axis_id, []):
-                info = self._signals.get(signal_name)
-                if not info:
-                    continue
-                bounds = info["curve"].dataBounds(1)
-                if bounds is None:
-                    continue
-                ymin, ymax = bounds
-                if ymin is None or ymax is None or not math.isfinite(ymin) or not math.isfinite(ymax):
-                    continue
-                y_min = ymin if y_min is None else min(y_min, ymin)
-                y_max = ymax if y_max is None else max(y_max, ymax)
-            if y_min is None or y_max is None or y_min == y_max:
-                try:
-                    view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-                    view_box.autoRange(axis=pg.ViewBox.YAxis)
-                except Exception:
-                    pass
-                continue
-            span = y_max - y_min
-            padding = span * 0.05 if span > 0 else 1.0
-            try:
-                view_box.setYRange(y_min - padding, y_max + padding, padding=0.0, update=True)
-            except Exception:
-                try:
-                    view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-                    view_box.autoRange(axis=pg.ViewBox.YAxis)
-                except Exception:
-                    pass
 
     def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
         return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
