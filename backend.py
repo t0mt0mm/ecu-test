@@ -513,6 +513,53 @@ class RealBackend(QObject, BackendBase):
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
 
+    def _detect_pcan_channel(self, device_id: Optional[str] = None) -> Optional[str]:
+        try:
+            from can.interfaces.pcan.basic import PCAN_DEVICE_NUMBER
+        except Exception:
+            PCAN_DEVICE_NUMBER = None
+        hint_value: Optional[int] = None
+        if device_id:
+            try:
+                hint_value = int(str(device_id), 0)
+            except (TypeError, ValueError):
+                hint_value = None
+        channels = [f"PCAN_USBBUS{index}" for index in range(1, 17)]
+        first_available: Optional[str] = None
+        for channel in channels:
+            try:
+                probe = can.interface.Bus(
+                    interface="pcan",
+                    channel=channel,
+                    state=can.bus.BusState.PASSIVE,
+                    bitrate=self._settings.bitrate,
+                )
+            except (can.CanError, OSError, ValueError):
+                continue
+            device_number: Optional[int]
+            device_number = None
+            if PCAN_DEVICE_NUMBER is not None:
+                basic = getattr(probe, "m_objPCANBasic", None)
+                handle = getattr(probe, "m_PcanHandle", None)
+                if basic is not None and handle is not None:
+                    try:
+                        value = basic.GetValue(handle, PCAN_DEVICE_NUMBER)
+                        if isinstance(value, tuple) and len(value) > 1:
+                            device_number = value[1]
+                    except Exception:
+                        device_number = None
+            try:
+                probe.shutdown()
+            except Exception:
+                pass
+            if hint_value is not None and device_number is not None:
+                if device_number != hint_value:
+                    continue
+                return channel
+            if first_available is None:
+                first_available = channel
+        return first_available
+
     def start(self) -> None:
         if not self._settings.dbc_path:
             raise BackendError("DBC path is required")
@@ -520,10 +567,23 @@ class RealBackend(QObject, BackendBase):
             self._db = cantools.database.load_file(self._settings.dbc_path, strict=False)
         except (OSError, cantools_errors.Error, cantools_errors.ParseError) as exc:
             raise BackendError(str(exc))
+        channel_config = self._settings.channel if hasattr(self._settings, "channel") else ""
+        normalized_channel = str(channel_config or "").strip()
+        auto_channel = not normalized_channel or normalized_channel.lower() == "auto"
+        chosen_channel = normalized_channel
+        device_hint = getattr(self._settings, "device_id", None)
+        if auto_channel:
+            chosen_channel = self._detect_pcan_channel(device_hint)
+            if not chosen_channel:
+                print("No available PCAN USB channel found")
+                raise BackendError("No available PCAN USB channel found")
+            print(f"Using auto-detected PCAN channel: {chosen_channel}")
+        else:
+            print(f"Using configured PCAN channel: {chosen_channel}")
         try:
             self._bus = can.interface.Bus(
                 interface="pcan",
-                channel=self._settings.channel if hasattr(self._settings, "channel") else "PCAN_USBBUS1",
+                channel=chosen_channel,
                 state=can.bus.BusState.ACTIVE,
                 fd=True,
                 # Nominal phase (500k)

@@ -1,7 +1,7 @@
 version: 1
 backend:
   type: real
-  device_id: PCAN_USBBUS1
+  device_id: auto
 signals:
   watch:
   - hs_out01_current
