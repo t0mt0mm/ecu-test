@@ -490,7 +490,7 @@ class RealBackend(QObject, BackendBase):
     name = "Real"
 
     connection_changed = pyqtSignal(bool, str)
-    status_updated = pyqtSignal()
+    status_updated = pyqtSignal(str)
 
     def __init__(self) -> None:
         QObject.__init__(self)
@@ -509,6 +509,7 @@ class RealBackend(QObject, BackendBase):
         self._write_frame_ids: Set[Tuple[int, bool]] = set()
         self._status_signal_names: Set[str] = set()
         self._command_state: Dict[str, Dict[str, float]] = {}
+        self._last_status_message: str = ""
 
     def configure(self, settings: ConnectionSettings) -> None:
         self._settings = settings
@@ -575,11 +576,14 @@ class RealBackend(QObject, BackendBase):
         if auto_channel:
             chosen_channel = self._detect_pcan_channel(device_hint)
             if not chosen_channel:
-                print("No available PCAN USB channel found")
+                self._last_status_message = "No available PCAN USB channel found"
+                self.status_updated.emit(self._last_status_message)
                 raise BackendError("No available PCAN USB channel found")
-            print(f"Using auto-detected PCAN channel: {chosen_channel}")
+            self._last_status_message = f"Auto-detected PCAN channel: {chosen_channel}"
         else:
-            print(f"Using configured PCAN channel: {chosen_channel}")
+            self._last_status_message = f"Using configured PCAN channel: {chosen_channel}"
+        print(self._last_status_message)
+        self.status_updated.emit(self._last_status_message)
         try:
             self._bus = can.interface.Bus(
                 interface="pcan",
@@ -601,7 +605,7 @@ class RealBackend(QObject, BackendBase):
         listener = _StatusListener(self)
 
         self._notifier = can.Notifier(self._bus, [listener], 0.1)
-        self.connection_changed.emit(True, "Connected")
+        self.connection_changed.emit(True, self._last_status_message or "Connected")
 
     def stop(self) -> None:
         if self._notifier is not None:
@@ -633,7 +637,7 @@ class RealBackend(QObject, BackendBase):
                 self._frame_to_message[key] = message
         with self._lock:
             self._signal_cache = {name: 0.0 for name in self._signal_to_message}
-        self.status_updated.emit()
+        self.status_updated.emit("")
 
     def set_channel_profiles(self, profiles: Dict[str, ChannelProfile]) -> None:
         self._channels = profiles
@@ -824,7 +828,7 @@ class RealBackend(QObject, BackendBase):
         with self._lock:
             for name, value in decoded.items():
                 self._signal_cache[name] = float(value)
-        self.status_updated.emit()
+        self.status_updated.emit("")
 
 
 class _StatusListener(can.Listener):

@@ -193,7 +193,6 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDate
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus, QTimeEdit:focus {
     border: 1px solid #93c5fd;
-    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35);
 }
 
 /* Buttons */
@@ -7105,10 +7104,11 @@ class MainWindow(QMainWindow):
             except BackendError as exc:
                 self._show_error(str(exc))
                 return
+    if not isinstance(self.backend, RealBackend):
         self._update_status_indicator(True)
         self.status_message_label.setText("Connected")
-        if self._startup_on_connect:
-            self._run_startup(mode="normal", force=not self._startup_only_on_change)
+    if self._startup_on_connect:
+        self._run_startup(mode="normal", force=not self._startup_only_on_change)
 
     def _disconnect_backend(self) -> None:
         if self.backend:
@@ -7131,8 +7131,11 @@ class MainWindow(QMainWindow):
         self.status_message_label.setText(message)
         self._update_startup_controls()
 
-    def _on_status_updated(self) -> None:
-        pass
+    def _on_status_updated(self, message: str) -> None:
+        if message:
+            self.status_message_label.setText(message)
+            if hasattr(self, "statusBar"):
+                self.statusBar().showMessage(message, 5000)
 
     # Channels management
     def _refresh_channel_cards(self) -> None:
