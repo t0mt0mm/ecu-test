@@ -77,6 +77,7 @@ from PyQt5.QtCore import (
     QRectF,
     pyqtSignal,
     pyqtSlot,
+    pyqtProperty,
 )
 from PyQt5.QtGui import QColor, QPalette, QPen, QBrush, QPainterPath, QPolygonF, QPainter, QFont
 from PyQt5.QtWidgets import (
@@ -192,7 +193,6 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDate
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus, QTimeEdit:focus {
     border: 1px solid #93c5fd;
-    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35);
 }
 
 /* Buttons */
@@ -1945,6 +1945,68 @@ class SignalBrowserWidget(QWidget):
         self._allow_simulation = enabled
 
 
+class StatusBar(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._progress = 0.0
+        self._active = False
+        self._animation = QPropertyAnimation(self, b"progress")
+        self._animation.setDuration(900)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._last_pulse = 0.0
+        self._cooldown = 0.45
+        self.setMinimumHeight(14)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def set_idle(self) -> None:
+        self._active = False
+        self._animation.stop()
+        self.progress = 0.0
+
+    def set_active(self, level: float = 0.28) -> None:
+        self._active = True
+        self._animation.stop()
+        self.progress = max(0.12, min(1.0, level))
+
+    def pulse(self) -> None:
+        now = time.monotonic()
+        if now - self._last_pulse < self._cooldown:
+            return
+        self._last_pulse = now
+        self._active = True
+        self._animation.stop()
+        self._animation.setStartValue(0.18)
+        self._animation.setEndValue(0.82)
+        self._animation.start()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if not self._active or self._progress <= 0.0:
+            painter.end()
+            return
+        rect = self.rect().adjusted(1, 3, -1, -3)
+        eased = max(0.0, min(1.0, self._progress))
+        fill_width = rect.width() * (0.12 + 0.7 * eased)
+        bar_rect = QRectF(rect.x(), rect.y(), fill_width, rect.height())
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#22c55e"))
+        painter.drawRoundedRect(bar_rect, 6, 6)
+        painter.end()
+
+    def _get_progress(self) -> float:
+        return self._progress
+
+    def _set_progress(self, value: float) -> None:
+        clamped = max(0.0, min(1.0, float(value)))
+        if math.isclose(self._progress, clamped, abs_tol=1e-4):
+            return
+        self._progress = clamped
+        self.update()
+
+    progress = pyqtProperty(float, fget=_get_progress, fset=_set_progress)
+
+
 class WatchlistWidget(QWidget):
     remove_requested = pyqtSignal(list)
     plot_toggled = pyqtSignal(str, bool)
@@ -1954,12 +2016,13 @@ class WatchlistWidget(QWidget):
         super().__init__()
         self._order: List[str] = []
         self._units: Dict[str, str] = {}
-        self._last_update: Dict[str, datetime.datetime] = {}
+        self._last_values: Dict[str, Optional[float]] = {}
         self._plot_checkboxes: Dict[str, QCheckBox] = {}
         self._gauge_checkboxes: Dict[str, QCheckBox] = {}
+        self._status_bars: Dict[str, StatusBar] = {}
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Last update", "Plot", "Gauge"])
+        self.table.setHorizontalHeaderLabels(["Signal", "Value", "Unit", "Status", "Plot", "Gauge"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         header = self.table.horizontalHeader()
@@ -1995,7 +2058,9 @@ class WatchlistWidget(QWidget):
             self._update_cell(row, 0, name)
             self._update_cell(row, 1, "0.0000")
             self._update_cell(row, 2, self._units.get(name, ""))
-            self._update_cell(row, 3, "-")
+            status_bar = StatusBar()
+            self.table.setCellWidget(row, 3, status_bar)
+            self._status_bars[name] = status_bar
             checkbox = QCheckBox()
             checkbox.stateChanged.connect(lambda state, signal=name: self._on_plot_toggle(signal, state))
             self.table.setCellWidget(row, 4, checkbox)
@@ -2031,23 +2096,36 @@ class WatchlistWidget(QWidget):
         for row in reversed(rows):
             name = self._order.pop(row)
             self.table.removeRow(row)
-            self._last_update.pop(name, None)
+            self._last_values.pop(name, None)
             checkbox = self._plot_checkboxes.pop(name, None)
             if checkbox:
                 checkbox.deleteLater()
             gauge_checkbox = self._gauge_checkboxes.pop(name, None)
             if gauge_checkbox:
                 gauge_checkbox.deleteLater()
+            status_bar = self._status_bars.pop(name, None)
+            if status_bar:
+                status_bar.deleteLater()
 
     def update_values(self, values: Dict[str, float]) -> None:
-        now = datetime.datetime.now()
         for row, name in enumerate(self._order):
             value = values.get(name)
             display = "n/a" if value is None else f"{value:.4f}"
             self._update_cell(row, 1, display)
-            if value is not None:
-                self._last_update[name] = now
-                self._update_cell(row, 3, now.isoformat(timespec="seconds"))
+            status_bar = self._status_bars.get(name)
+            previous = self._last_values.get(name)
+            if status_bar:
+                if value is None or value == 0.0:
+                    status_bar.set_idle()
+                else:
+                    changed = previous is None or abs(value - previous) > max(1e-4, abs(previous) * 1e-3)
+                    status_bar.set_active(0.28 if not changed else 0.35)
+                    if changed:
+                        status_bar.pulse()
+            if value is None:
+                self._last_values.pop(name, None)
+            else:
+                self._last_values[name] = value
 
     def selected_signal_names(self) -> List[str]:
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
@@ -2335,6 +2413,7 @@ class GaugeCardWidget(QFrame):
         return payload
 class MultiAxisPlotDock(QDockWidget):
     closed = pyqtSignal(int)
+    assignment_changed = pyqtSignal(str, str)
 
     def __init__(self, identifier: int, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -2359,6 +2438,16 @@ class MultiAxisPlotDock(QDockWidget):
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_all)
         controls_layout.addWidget(self.clear_button)
+        self.axis_menu_button = QToolButton()
+        self.axis_menu_button.setText("Axes")
+        self.axis_menu_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.axis_menu_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.axis_menu_button.clicked.connect(
+            lambda: self._show_axis_menu(
+                self.axis_menu_button.mapToGlobal(self.axis_menu_button.rect().bottomLeft()), True
+            )
+        )
+        controls_layout.addWidget(self.axis_menu_button)
         layout.addLayout(controls_layout)
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setMinimumHeight(220)
@@ -2366,50 +2455,17 @@ class MultiAxisPlotDock(QDockWidget):
         self.plot_widget.showGrid(x=True, y=True)
         self.plot_widget.setMenuEnabled(False)
         self.plot_item = self.plot_widget.getPlotItem()
-        self.plot_item.showAxis('right')
-        layout_item = self.plot_item.layout
-        left_axis = self.plot_item.getAxis('left')
-        right_axis = self.plot_item.getAxis('right')
-        top_axis = self.plot_item.getAxis('top')
-        bottom_axis = self.plot_item.getAxis('bottom')
-        layout_item.removeItem(left_axis)
-        layout_item.removeItem(right_axis)
-        layout_item.removeItem(top_axis)
-        layout_item.removeItem(bottom_axis)
-        layout_item.removeItem(self.plot_item.vb)
-        self.left_axes: Dict[str, pg.AxisItem] = {
-            "left1": left_axis,
-            "left2": pg.AxisItem("left"),
-        }
-        self.right_axes: Dict[str, pg.AxisItem] = {
-            "right1": right_axis,
-            "right2": pg.AxisItem("right"),
-        }
-        self.axis_views: Dict[str, pg.ViewBox] = {
-            "left1": self.plot_item.vb,
-            "left2": pg.ViewBox(),
-            "right1": pg.ViewBox(),
-            "right2": pg.ViewBox(),
-        }
-        for key, view in self.axis_views.items():
-            if key == "left1":
-                continue
-            self.plot_item.scene().addItem(view)
-            view.setXLink(self.plot_item.vb)
-        self.left_axes["left1"].linkToView(self.axis_views["left1"])
-        self.left_axes["left2"].linkToView(self.axis_views["left2"])
-        self.right_axes["right1"].linkToView(self.axis_views["right1"])
-        self.right_axes["right2"].linkToView(self.axis_views["right2"])
-        layout_item.addItem(self.left_axes["left2"], 1, 0)
-        layout_item.addItem(self.left_axes["left1"], 1, 1)
-        layout_item.addItem(self.plot_item.vb, 1, 2)
-        layout_item.addItem(self.right_axes["right1"], 1, 3)
-        layout_item.addItem(self.right_axes["right2"], 1, 4)
-        layout_item.addItem(top_axis, 0, 2)
-        layout_item.addItem(bottom_axis, 2, 2)
-        self.plot_item.vb.sigResized.connect(self._update_views)
-        self._axis_assignments: Dict[str, List[str]] = {key: [] for key in self.axis_views}
-        self._update_views()
+        self.top_axis = self.plot_item.getAxis('top')
+        self.bottom_axis = self.plot_item.getAxis('bottom')
+        self.axis_registry: Dict[str, Dict[str, Any]] = {}
+        self._axis_assignments: Dict[str, List[str]] = {}
+        self._create_initial_axes()
+        self._right_view: Optional[pg.ViewBox] = None
+        self.plot_item.vb.sigResized.connect(self._sync_right_axis_geometry)
+        self.axis_menu_button.customContextMenuRequested.connect(self._show_axis_menu)
+        self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.plot_widget.customContextMenuRequested.connect(self._show_axis_menu)
+        self._build_axis_menu()
         self._measurement_cursors_enabled = False
         self._cursor_lines: Dict[str, pg.InfiniteLine] = {}
         self._cursor_labels: Dict[str, Any] = {}
@@ -2441,6 +2497,129 @@ class MultiAxisPlotDock(QDockWidget):
         layout.addWidget(self.plot_widget)
         self.setWidget(container)
 
+    def _create_initial_axes(self) -> None:
+        left_axis = self.plot_item.getAxis("left")
+        left_axis.show()
+        left_axis.setWidth(max(left_axis.width(), 60))
+        self.axis_registry["left1"] = {"axis": left_axis, "view": self.plot_item.vb, "side": "left"}
+        self._axis_assignments.setdefault("left1", [])
+        self.plot_item.showAxis("right", show=False)
+
+    def add_axis(
+        self,
+        side: str,
+        axis_id: Optional[str] = None,
+        *,
+        view: Optional[pg.ViewBox] = None,
+        axis_item: Optional[pg.AxisItem] = None,
+    ) -> str:
+        normalized_side = "left" if str(side).lower().startswith("l") else "right"
+        axis_identifier = (axis_id or f"{normalized_side}1").lower()
+        if normalized_side == "left":
+            return "left1"
+        if axis_identifier in self.axis_registry:
+            return axis_identifier
+        right_view = view or pg.ViewBox()
+        if view is None:
+            self.plot_item.scene().addItem(right_view)
+            right_view.setXLink(self.plot_item.vb)
+            right_view.setMouseEnabled(x=False, y=True)
+        right_view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        axis = axis_item or self.plot_item.getAxis("right")
+        axis.show()
+        axis.setWidth(max(axis.width(), 60))
+        axis.linkToView(right_view)
+        self.plot_item.showAxis("right", show=True)
+        self.axis_registry[axis_identifier] = {"axis": axis, "view": right_view, "side": "right"}
+        self._axis_assignments.setdefault(axis_identifier, [])
+        self._right_view = right_view
+        self._build_axis_menu()
+        self._sync_right_axis_geometry()
+        return axis_identifier
+
+    def ensure_axis(self, axis_id: Optional[str], side: str) -> str:
+        if axis_id and axis_id in self.axis_registry:
+            return axis_id
+        return self.add_axis(side, axis_id=axis_id)
+
+    def remove_axis(self, axis_id: str) -> None:
+        if axis_id not in self.axis_registry:
+            return
+        if axis_id == "left1":
+            return
+        fallback = self._fallback_axis(axis_id)
+        for name in list(self._axis_assignments.get(axis_id, [])):
+            self._move_signal_to_axis(name, fallback)
+        info = self.axis_registry.pop(axis_id)
+        view = info.get("view")
+        if view and view is not self.plot_item.vb and view.scene():
+            view.scene().removeItem(view)
+        self.plot_item.showAxis("right", show=False)
+        self._right_view = None
+        self._axis_assignments.pop(axis_id, None)
+        self._build_axis_menu()
+        self._sync_right_axis_geometry()
+
+    def axis_ids(self) -> List[str]:
+        return list(self.axis_registry.keys())
+
+    def axis_side(self, axis_id: str) -> str:
+        return self.axis_registry.get(axis_id, {}).get("side", "left")
+
+    def axis_label(self, axis_id: str) -> str:
+        side = self.axis_side(axis_id)
+        return "Left" if side == "left" else "Right"
+
+    def _build_axis_menu(self) -> None:
+        pass
+
+    def _show_axis_menu(self, pos, force_global: bool = False) -> None:
+        menu = QMenu(self)
+        if "right1" not in self.axis_registry:
+            menu.addAction("Add right axis", lambda: self.add_axis("right"))
+        else:
+            action = menu.addAction("Remove right axis", lambda: self.remove_axis("right1"))
+            action.setEnabled(len(self.axis_registry) > 1)
+        parent = self.parent()
+        if parent and hasattr(parent, "watchlist_widget"):
+            signals = []
+            try:
+                signals = list(parent.watchlist_widget.signal_names)
+            except Exception:
+                signals = []
+            if signals:
+                menu.addSeparator()
+                add_menu = menu.addMenu("Add signal from watchlist")
+                for name in signals:
+                    action = add_menu.addAction(name)
+                    action.triggered.connect(lambda _checked=False, signal=name: self._add_watch_signal(signal))
+        anchor = self.axis_menu_button
+        if not force_global and hasattr(self.sender(), "mapToGlobal"):
+            anchor = self.sender()
+        global_pos = pos if force_global else anchor.mapToGlobal(pos)
+        menu.exec_(global_pos)
+
+    def _add_watch_signal(self, name: str) -> None:
+        parent = self.parent()
+        if not parent or not hasattr(parent, "_assign_signal_to_plot"):
+            return
+        if hasattr(parent, "watchlist_widget") and name not in parent.watchlist_widget.signal_names:
+            return
+        axis_id = "left1"
+        if hasattr(parent, "_suggest_axis_id"):
+            try:
+                axis_id = parent._suggest_axis_id(self.identifier, name)
+            except Exception:
+                axis_id = "left1"
+        try:
+            parent._assign_signal_to_plot(name, self.identifier, axis_id)
+            parent.watchlist_widget.set_plot_enabled(name, True)
+        except Exception:
+            pass
+
+    def _fallback_axis(self, exclude: Optional[str] = None) -> str:
+        return "left1"
+
     def _toggle_pause(self) -> None:
         self._paused = not self._paused
         self.pause_button.setText("Resume" if self._paused else "Pause")
@@ -2452,58 +2631,74 @@ class MultiAxisPlotDock(QDockWidget):
         pixmap = self.plot_widget.grab()
         pixmap.save(path, "PNG")
 
-    def _update_views(self) -> None:
+    def _sync_right_axis_geometry(self, *_args) -> None:
+        if not self._right_view:
+            return
         rect = self.plot_item.vb.sceneBoundingRect()
-        if rect:
-            for key, view in self.axis_views.items():
-                if key == "left1":
-                    continue
-                view.setGeometry(rect)
-                view.linkedViewChanged(self.plot_item.vb, view.XAxis)
-
-    def _normalize_axis_side(self, side: Optional[str]) -> str:
-        normalized = (side or "left1").lower()
-        if normalized in {"left", "l"}:
+        mapped_rect = self.plot_item.vb.mapRectToScene(self.plot_item.vb.boundingRect())
+        target = mapped_rect if mapped_rect.isValid() else rect
+        if target.isValid():
+            self._right_view.setGeometry(target)
+            self._right_view.linkedViewChanged(self.plot_item.vb, self._right_view.XAxis)
+            self._right_view.update()
+        
+    def _normalize_axis_id(self, axis_id: Optional[str]) -> str:
+        normalized = (axis_id or "left1").lower()
+        if normalized in {"left", "l", "left1"}:
+            if "left1" not in self.axis_registry:
+                self.add_axis("left", axis_id="left1")
             return "left1"
-        if normalized in {"right", "r"}:
-            return "right1"
-        if normalized not in {"left1", "left2", "right1", "right2"}:
-            return "left1"
+        if normalized in {"right", "r", "right1"}:
+            return self.add_axis("right", axis_id="right1")
+        if normalized not in self.axis_registry:
+            return self._fallback_axis()
         return normalized
 
-    def _axis_for_side(self, side: str) -> pg.AxisItem:
-        if side in self.left_axes:
-            return self.left_axes[side]
-        return self.right_axes.get(side, self.left_axes["left1"])
-
-    def _refresh_axis_style(self, side: str) -> None:
-        axis = self._axis_for_side(side)
-        signals = [name for name in self._axis_assignments.get(side, []) if name in self._signals]
-        if not signals:
-            axis.setLabel("")
-            axis.setPen(pg.mkPen(QColor("#94a3b8")))
-            axis.setTextPen(pg.mkPen(QColor("#94a3b8")))
+    def _refresh_axis_style(self, axis_id: str) -> None:
+        axis = self.axis_registry.get(axis_id, {}).get("axis")
+        if axis is None:
             return
-        ref_name = signals[0]
-        sig_info = self._signals.get(ref_name, {})
-        unit = sig_info.get("unit", "")
-        color = sig_info.get("color", QColor("#2563eb"))
-        text = f"[{unit}]" if unit else "[ ]"
-        axis.setLabel(text, color=color)
+        axis.setLabel("")
+        axis.setPen(pg.mkPen(QColor("#475569")))
+        axis.setTextPen(pg.mkPen(QColor("#475569")))
+
+    def _move_signal_to_axis(self, name: str, axis_id: str) -> None:
+        if axis_id not in self.axis_registry:
+            axis_id = self._normalize_axis_id(axis_id)
+        info = self._signals.get(name)
+        if not info:
+            return
+        previous_axis = info.get("side")
+        if previous_axis == axis_id:
+            return
+        target_view = self.axis_registry.get(axis_id, {}).get("view", self.plot_item.vb)
+        if previous_axis in self.axis_registry:
+            try:
+                self.axis_registry[previous_axis]["view"].removeItem(info["curve"])
+            except Exception:
+                pass
+            self._axis_assignments[previous_axis] = [n for n in self._axis_assignments.get(previous_axis, []) if n != name]
+            self._refresh_axis_style(previous_axis)
+        target_view.addItem(info["curve"])
+        target_view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
         try:
-            axis.label.setAngle(90)
+            target_view.autoRange(axis=pg.ViewBox.YAxis)
         except Exception:
             pass
-        axis.setPen(pg.mkPen(color))
-        axis.setTextPen(pg.mkPen(color))
+        info["side"] = axis_id
+        self._axis_assignments.setdefault(axis_id, []).append(name)
+        self._refresh_axis_style(axis_id)
+        self.assignment_changed.emit(name, axis_id)
+        self._update_cursor_info()
 
     def add_signal(self, name: str, unit: str, side: Optional[str] = None, pen: Optional[QColor] = None) -> None:
-        axis_key = self._normalize_axis_side(side)
+        axis_key = self._normalize_axis_id(side)
         existing = self._signals.get(name)
         if existing:
             if existing["side"] == axis_key:
                 return
-            self.remove_signal(name)
+            self._move_signal_to_axis(name, axis_key)
+            return
         pen_color = pg.mkPen(pen if pen is not None else pg.intColor(len(self._signals)), width=2)
         curve = pg.PlotDataItem(pen=pen_color)
         curve.setZValue(len(self._signals) + 2)
@@ -2512,8 +2707,13 @@ class MultiAxisPlotDock(QDockWidget):
         elif hasattr(curve, "setClickable"):
             curve.setClickable(True)
         curve.sigClicked.connect(self._on_curve_clicked)
-        view = self.axis_views.get(axis_key, self.plot_item.vb)
+        view = self.axis_registry.get(axis_key, {}).get("view", self.plot_item.vb)
         view.addItem(curve)
+        view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        try:
+            view.autoRange(axis=pg.ViewBox.YAxis)
+        except Exception:
+            pass
         if self._legend:
             self._legend.addItem(curve, name)
         self._signals[name] = {
@@ -2538,8 +2738,11 @@ class MultiAxisPlotDock(QDockWidget):
             curve.sigClicked.disconnect(self._on_curve_clicked)
         except Exception:
             pass
-        for view in self.axis_views.values():
-            view.removeItem(curve)
+        for axis_info in self.axis_registry.values():
+            try:
+                axis_info["view"].removeItem(curve)
+            except Exception:
+                pass
         if self._legend:
             try:
                 self._legend.removeItem(curve)
@@ -2594,13 +2797,42 @@ class MultiAxisPlotDock(QDockWidget):
                 times, samples = dec_times, dec_samples
             curve = info["curve"]
             curve.setData(times, samples)
-        for view in self.axis_views.values():
-            view.enableAutoRange(axis=pg.ViewBox.YAxis)
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.XAxis)
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+        if self._right_view:
+            try:
+                self._right_view.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                self._right_view.autoRange(axis=pg.ViewBox.YAxis)
+            except Exception:
+                pass
         if self._measurement_cursors_enabled:
             self._update_cursor_info()
 
     def assigned_signals(self) -> Dict[str, Tuple[str, str]]:
         return {name: (info["unit"], info["side"]) for name, info in self._signals.items()}
+
+    def serialize_axes(self) -> List[dict]:
+        payload: List[dict] = []
+        for axis_id, info in self.axis_registry.items():
+            payload.append(
+                {
+                    "id": axis_id,
+                    "side": info.get("side", "left"),
+                    "signals": list(self._axis_assignments.get(axis_id, [])),
+                }
+            )
+        return payload
+
+    def suggest_axis_for_unit(self, unit: str) -> str:
+        normalized_unit = (unit or "").strip()
+        if normalized_unit:
+            for axis_id, names in self._axis_assignments.items():
+                for sig in names:
+                    if (self._signals.get(sig, {}).get("unit", "").strip()) == normalized_unit:
+                        return axis_id
+        if self._axis_assignments:
+            return min(self._axis_assignments.items(), key=lambda kv: len(kv[1]))[0]
+        return self._fallback_axis()
 
     def closeEvent(self, event) -> None:
         self.closed.emit(self.identifier)
@@ -3376,6 +3608,7 @@ class ChannelCardWidget(QWidget):
         self._update_sequence_buttons()
         self.run_button.setEnabled(self._has_enabled_sequences())
         self.stop_button.setEnabled(False)
+        self._update_enable_button_style(self.enabled_checkbox.isChecked())
 
     def _build_layout(self) -> None:
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
@@ -3533,6 +3766,14 @@ class ChannelCardWidget(QWidget):
     def _set_pwm_slider(self, value: int) -> None:
         self.pwm_slider.setValue(value)
         self.pwm_value.setText(f"{value} %")
+
+    def _update_enable_button_style(self, checked: bool) -> None:
+        if checked:
+            self.enabled_checkbox.setStyleSheet(
+                "QToolButton { background-color: #22c55e; color: white; border-radius: 6px; padding: 4px; }"
+            )
+        else:
+            self.enabled_checkbox.setStyleSheet("")
 
     def _on_sequencer_button_toggled(self, checked: bool) -> None:
         if self._collapsible_sync:
@@ -3990,6 +4231,7 @@ class ChannelCardWidget(QWidget):
             self._emit_command()
 
     def _on_enabled_toggled(self, checked: bool) -> None:
+        self._update_enable_button_style(checked)
         if checked:
             # direkt aktuellen PWM/Setpoint übernehmen
             self._emit_command()
@@ -4315,6 +4557,10 @@ class MainWindow(QMainWindow):
         self._active_state_machine: Optional[str] = None
         self._state_machine_runner = StateMachineRunner(self)
         self._state_machine_runner.set_sequence_controller(self._state_machine_sequence_control)
+        self._state_watch_name = "state_machine_state"
+        self._state_value_map: Dict[str, float] = {}
+        self._state_machine_state_value: Optional[float] = None
+        self._watch_units[self._state_watch_name] = "state"
         self._last_tick = time.monotonic()
         self._last_log_time = 0.0
         self._log_interval = 1.0
@@ -4352,7 +4598,7 @@ class MainWindow(QMainWindow):
             QColor("#31a354"),
         ]
         self._plot_windows: Dict[int, MultiAxisPlotDock] = {}
-        self._plot_assignments: Dict[str, Tuple[int, str]] = {}
+        self._plot_assignments: Dict[str, List[Tuple[int, str]]] = {}
         self._plot_counter = 0
         self._max_plot_windows = 8
         self._active_plot_id: Optional[int] = None
@@ -5054,6 +5300,11 @@ class MainWindow(QMainWindow):
         self.state_machine_stop_button.setEnabled(False)
         runner_controls.addWidget(self.state_machine_start_button)
         runner_controls.addWidget(self.state_machine_stop_button)
+        add_state_watch_btn = QToolButton()
+        add_state_watch_btn.setText("Watch state")
+        add_state_watch_btn.setAutoRaise(True)
+        add_state_watch_btn.clicked.connect(self._on_add_state_to_watchlist)
+        runner_controls.addWidget(add_state_watch_btn)
         runner_controls.addStretch(1)
         self.state_machine_status_label = QLabel("Idle")
         self.state_machine_status_label.setStyleSheet("color: #475569;")
@@ -5560,6 +5811,7 @@ class MainWindow(QMainWindow):
         config = self._current_state_machine()
         self._state_machine_runner.set_config(config)
         self._state_machine_runner.stop()
+        self._update_state_value_map()
         self._populate_state_machine_editor()
         self._set_state_machine_buttons()
         self._update_state_machine_status("Idle")
@@ -5740,6 +5992,7 @@ class MainWindow(QMainWindow):
         self._state_machine_runner.stop()
         config = self._current_state_machine()
         self._state_machine_runner.set_config(config)
+        self._update_state_value_map()
         self._set_state_machine_buttons()
         self._update_state_machine_graph()
         self._set_hardware_pending(True, "State machine updated. Save to persist changes.")
@@ -5805,13 +6058,41 @@ class MainWindow(QMainWindow):
     def _on_state_machine_state_changed(self, state: str) -> None:
         self._set_state_machine_buttons()
         self._update_state_machine_status(f"Active: {state}")
+        self._update_state_value_map()
+        self._state_machine_state_value = self._state_value_map.get(state, float(len(self._state_value_map) + 1))
         self._update_state_machine_graph()
         self._populate_state_machine_editor()
+        if self._state_watch_name in self.watchlist_widget.signal_names:
+            self.watchlist_widget.update_values({self._state_watch_name: self._state_machine_state_value})
+            self._update_multi_plot(time.monotonic(), {self._state_watch_name: self._state_machine_state_value})
+            for dock in self._plot_windows.values():
+                dock.update(time.monotonic(), {self._state_watch_name: self._state_machine_state_value})
 
     def _on_state_machine_runner_stopped(self) -> None:
         self._set_state_machine_buttons()
         self._update_state_machine_status("Idle")
+        self._state_machine_state_value = None
         self._update_state_machine_graph()
+
+    def _update_state_value_map(self) -> None:
+        config = self._current_state_machine()
+        names = config.state_names if config else []
+        self._state_value_map = {name: float(index) for index, name in enumerate(names, start=1)}
+        self._watch_units[self._state_watch_name] = "state"
+        if getattr(self, "watchlist_widget", None):
+            self.watchlist_widget.set_units(self._watch_units)
+
+    def _on_add_state_to_watchlist(self) -> None:
+        if self._state_watch_name not in self.watchlist_widget.signal_names:
+            self.watchlist_widget.add_signals([self._state_watch_name])
+            self.watchlist_widget.set_plot_enabled(self._state_watch_name, True)
+        self._pending_watchlist = self.watchlist_widget.signal_names
+        self._update_state_value_map()
+        self._state_machine_state_value = self._state_value_map.get(
+            self._state_machine_runner.current_state or "", None
+        )
+        if self._state_machine_state_value is not None:
+            self.watchlist_widget.update_values({self._state_watch_name: self._state_machine_state_value})
 
     def _on_state_machine_error(self, message: str) -> None:
         self._show_error(message)
@@ -6581,6 +6862,7 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable
         )
         dock.closed.connect(self._on_plot_window_closed)
+        dock.assignment_changed.connect(lambda name, axis, wid=identifier: self._on_dock_assignment_changed(wid, name, axis))
         previous: Optional[QDockWidget] = None
         if self._plot_windows:
             if self._active_plot_id and self._active_plot_id in self._plot_windows:
@@ -6610,11 +6892,20 @@ class MainWindow(QMainWindow):
             dock.deleteLater()
             if self._last_plot_dock is dock:
                 self._last_plot_dock = next(reversed(self._plot_windows.values())) if self._plot_windows else None
-        to_clear = [name for name, (win_id, _side) in self._plot_assignments.items() if win_id == identifier]
-        for name in to_clear:
-            self._plot_assignments.pop(name, None)
+        for name, assignments in list(self._plot_assignments.items()):
+            remaining = [(wid, axis) for wid, axis in assignments if wid != identifier]
+            if remaining:
+                self._plot_assignments[name] = remaining
+            else:
+                self._plot_assignments.pop(name, None)
         if self._active_plot_id == identifier:
             self._active_plot_id = next(iter(self._plot_windows), None)
+
+    def _on_dock_assignment_changed(self, window_id: int, name: str, axis_id: str) -> None:
+        entries = self._plot_assignments.get(name, [])
+        updated = [(wid, ax) for wid, ax in entries if wid != window_id]
+        updated.append((window_id, axis_id))
+        self._plot_assignments[name] = updated
 
     def _get_signal_color(self, name: str) -> QColor:
         color = self._plot_color_map.get(name)
@@ -6641,7 +6932,6 @@ class MainWindow(QMainWindow):
             return
         window_ids = sorted(self._plot_windows.keys())
         default_window = self._active_plot_id if self._active_plot_id in self._plot_windows else window_ids[0]
-        suggested_side = self._suggest_axis_side(default_window, name)
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Assign Plot – {name}")
         dialog_layout = QVBoxLayout(dialog)
@@ -6654,12 +6944,26 @@ class MainWindow(QMainWindow):
         window_combo.setCurrentIndex(window_ids.index(default_window))
         form.addRow("Window", window_combo)
         axis_combo = QComboBox()
-        axis_combo.addItems(["Left 1", "Left 2", "Right 1", "Right 2"])
-        axis_options = ["left1", "left2", "right1", "right2"]
-        try:
-            axis_combo.setCurrentIndex(axis_options.index(suggested_side))
-        except ValueError:
-            axis_combo.setCurrentIndex(0)
+        axis_options: List[str] = []
+
+        def _refresh_axis_options() -> None:
+            axis_combo.clear()
+            axis_options.clear()
+            selected = window_combo.currentData()
+            dock = self._plot_windows.get(selected)
+            if not dock:
+                return
+            for axis_id in dock.axis_ids():
+                axis_combo.addItem(dock.axis_label(axis_id), axis_id)
+                axis_options.append(axis_id)
+            suggested = self._suggest_axis_id(int(selected), name)
+            if suggested in axis_options:
+                axis_combo.setCurrentIndex(axis_options.index(suggested))
+            elif axis_options:
+                axis_combo.setCurrentIndex(0)
+
+        window_combo.currentIndexChanged.connect(_refresh_axis_options)
+        _refresh_axis_options()
         form.addRow("Axis", axis_combo)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -6669,39 +6973,30 @@ class MainWindow(QMainWindow):
             self.watchlist_widget.set_plot_enabled(name, False)
             return
         window_id = window_combo.currentData()
+        if not axis_options:
+            return
         axis_side = axis_options[axis_combo.currentIndex()]
         self._assign_signal_to_plot(name, int(window_id), axis_side)
 
-    def _assign_signal_to_plot(self, name: str, window_id: int, side: str) -> None:
+    def _assign_signal_to_plot(self, name: str, window_id: int, axis_id: str) -> None:
         dock = self._plot_windows.get(window_id)
         if not dock:
             return
-        previous = self._plot_assignments.get(name)
-        if previous and previous == (window_id, side):
+        entries = self._plot_assignments.get(name, [])
+        if any(prev_window == window_id and prev_axis == axis_id for prev_window, prev_axis in entries):
             return
-        if previous:
-            prev_window, _prev_side = previous
-            prev_dock = self._plot_windows.get(prev_window)
-            if prev_dock:
-                prev_dock.remove_signal(name)
-        dock.add_signal(name, self._watch_units.get(name, ""), side, pen=self._get_signal_color(name))
-        self._plot_assignments[name] = (window_id, side)
+        dock.add_signal(name, self._watch_units.get(name, ""), axis_id, pen=self._get_signal_color(name))
+        entries = [(wid, ax) for wid, ax in entries if wid != window_id]
+        entries.append((window_id, axis_id))
+        self._plot_assignments[name] = entries
         self._active_plot_id = window_id
 
-    def _suggest_axis_side(self, window_id: int, name: str) -> str:
+    def _suggest_axis_id(self, window_id: int, name: str) -> str:
+        dock = self._plot_windows.get(window_id)
+        if not dock:
+            return "left1"
         unit = (self._watch_units.get(name) or "").strip()
-        side_counts: Dict[str, int] = {"left1": 0, "left2": 0, "right1": 0, "right2": 0}
-        for other, (win_id, side) in self._plot_assignments.items():
-            if win_id != window_id:
-                continue
-            other_unit = (self._watch_units.get(other) or "").strip()
-            side_counts[side] = side_counts.get(side, 0) + 1
-            if unit and other_unit == unit:
-                return side
-        for candidate in ("left1", "right1", "left2", "right2"):
-            if side_counts.get(candidate, 0) == 0:
-                return candidate
-        return "left1"
+        return dock.suggest_axis_for_unit(unit)
 
     def _build_dummy_tab(self) -> None:
         self.dummy_tab = QWidget()
@@ -6809,10 +7104,11 @@ class MainWindow(QMainWindow):
             except BackendError as exc:
                 self._show_error(str(exc))
                 return
+    if not isinstance(self.backend, RealBackend):
         self._update_status_indicator(True)
         self.status_message_label.setText("Connected")
-        if self._startup_on_connect:
-            self._run_startup(mode="normal", force=not self._startup_only_on_change)
+    if self._startup_on_connect:
+        self._run_startup(mode="normal", force=not self._startup_only_on_change)
 
     def _disconnect_backend(self) -> None:
         if self.backend:
@@ -6835,8 +7131,11 @@ class MainWindow(QMainWindow):
         self.status_message_label.setText(message)
         self._update_startup_controls()
 
-    def _on_status_updated(self) -> None:
-        pass
+    def _on_status_updated(self, message: str) -> None:
+        if message:
+            self.status_message_label.setText(message)
+            if hasattr(self, "statusBar"):
+                self.statusBar().showMessage(message, 5000)
 
     # Channels management
     def _refresh_channel_cards(self) -> None:
@@ -7217,9 +7516,8 @@ class MainWindow(QMainWindow):
         self._pending_watchlist = [name for name in self._pending_watchlist if name not in names]
         for name in names:
             self._remove_gauge(name)
-            assignment = self._plot_assignments.pop(name, None)
-            if assignment:
-                window_id, _side = assignment
+            assignments = self._plot_assignments.pop(name, [])
+            for window_id, _side in assignments:
                 dock = self._plot_windows.get(window_id)
                 if dock:
                     dock.remove_signal(name)
@@ -7319,9 +7617,8 @@ class MainWindow(QMainWindow):
             if not self._plot_windows and not self.multi_plot_enable.isChecked():
                 self.multi_plot_enable.setChecked(True)
         else:
-            assignment = self._plot_assignments.pop(name, None)
-            if assignment:
-                window_id, _side = assignment
+            assignments = self._plot_assignments.pop(name, [])
+            for window_id, _side in assignments:
                 dock = self._plot_windows.get(window_id)
                 if dock:
                     dock.remove_signal(name)
@@ -7398,22 +7695,17 @@ class MainWindow(QMainWindow):
     def _collect_setup_payload(self) -> dict:
         backend_type = "dummy" if self.backend_name == DummyBackend.name else "real"
         device_id = self.channel_edit.text().strip() if backend_type == "real" else None
-        dock_assignments = {name: assignment for name, assignment in self._plot_assignments.items()}
+        dock_assignments = {name: assignments for name, assignments in self._plot_assignments.items()}
         inline_signals = [
             name
             for name in self.watchlist_widget.plot_signal_names
-            if name not in dock_assignments
+            if not dock_assignments.get(name)
         ]
         windows: List[dict] = []
         if inline_signals:
-            windows.append({"id": 0, "axes": {"left": inline_signals, "right": [], "left2": [], "right2": []}})
+            windows.append({"id": 0, "axes": [{"id": "left1", "side": "left", "signals": inline_signals}]})
         for identifier, dock in sorted(self._plot_windows.items()):
-            assigned = dock.assigned_signals()
-            left = sorted([name for name, (_unit, side) in assigned.items() if side == "left1"])
-            right = sorted([name for name, (_unit, side) in assigned.items() if side == "right1"])
-            left2 = sorted([name for name, (_unit, side) in assigned.items() if side == "left2"])
-            right2 = sorted([name for name, (_unit, side) in assigned.items() if side == "right2"])
-            windows.append({"id": int(identifier), "axes": {"left": left, "right": right, "left2": left2, "right2": right2}})
+            windows.append({"id": int(identifier), "axes": dock.serialize_axes()})
         dummy_profiles: Dict[str, dict] = {}
         if isinstance(self.backend, DummyBackend):
             for name, config in self.backend.simulation_profiles().items():
@@ -7672,23 +7964,35 @@ class MainWindow(QMainWindow):
             new_id = self._create_plot_window()
             if new_id is None:
                 continue
-            axes = entry.get("axes", {}) if isinstance(entry.get("axes", {}), dict) else {}
-            left_signals = [str(name) for name in axes.get("left", [])]
-            right_signals = [str(name) for name in axes.get("right", [])]
-            left2_signals = [str(name) for name in axes.get("left2", [])]
-            right2_signals = [str(name) for name in axes.get("right2", [])]
-            for name in left_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "left1")
-            for name in right_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "right1")
-            for name in left2_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "left2")
-            for name in right2_signals:
-                if name in plot_signals and name in self.watchlist_widget.signal_names:
-                    self._assign_signal_to_plot(name, new_id, "right2")
+            axes_payload = entry.get("axes", [])
+            dock = self._plot_windows.get(new_id)
+            if dock is None:
+                continue
+            axis_entries: List[dict] = []
+            if isinstance(axes_payload, list):
+                axis_entries = [axis for axis in axes_payload if isinstance(axis, dict)]
+            elif isinstance(axes_payload, dict):
+                for side_key, signals in axes_payload.items():
+                    if side_key not in {"left", "right", "left2", "right2"}:
+                        continue
+                    legacy_id = side_key
+                    if side_key in {"left", "right"}:
+                        legacy_id = f"{side_key}1"
+                    axis_entries.append(
+                        {
+                            "id": legacy_id,
+                            "side": "left" if side_key.startswith("left") else "right",
+                            "signals": signals,
+                        }
+                    )
+            for axis_entry in axis_entries:
+                axis_id_value = str(axis_entry.get("id") or axis_entry.get("key") or "")
+                side = str(axis_entry.get("side", "left"))
+                axis_identifier = dock.ensure_axis(axis_id_value or None, side)
+                signals = [str(name) for name in axis_entry.get("signals", [])]
+                for name in signals:
+                    if name in plot_signals and name in self.watchlist_widget.signal_names:
+                        self._assign_signal_to_plot(name, new_id, axis_identifier)
 
     def _apply_channels_setup(self, data: dict) -> None:
         profiles_section = data.get("profiles", []) if isinstance(data, dict) else []
@@ -8089,7 +8393,7 @@ class MainWindow(QMainWindow):
         requested: set[str] = set()
         for profile in self._channel_profiles.values():
             requested.update(profile.status.fields.values())
-        requested.update(self.watchlist_widget.signal_names)
+        requested.update(name for name in self.watchlist_widget.signal_names if name != self._state_watch_name)
         requested.update(self._gauge_cards.keys())
         if self.logger.is_running():
             requested.update(self.logger.signal_names)
@@ -8107,6 +8411,8 @@ class MainWindow(QMainWindow):
                 feedback_value = self._extract_feedback_value(profile, status)
                 card.record_sample(timestamp, command_value, feedback_value)
         watch_values = {name: values.get(name) for name in self.watchlist_widget.signal_names}
+        if self._state_watch_name in watch_values:
+            watch_values[self._state_watch_name] = self._state_machine_state_value
         gauge_values = {name: values.get(name) for name in self._gauge_cards}
         self.watchlist_widget.update_values(watch_values)
         self._pending_watchlist = self.watchlist_widget.signal_names
@@ -8128,6 +8434,8 @@ class MainWindow(QMainWindow):
         if not self.backend:
             return
         values = self.backend.read_signal_values(signals)
+        if self._state_watch_name in signals:
+            values[self._state_watch_name] = self._state_machine_state_value
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
         self.logger.log_row(timestamp, values)
 
